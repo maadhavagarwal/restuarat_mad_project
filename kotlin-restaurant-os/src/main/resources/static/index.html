@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Restaurant OS - Kotlin Edition</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div>
+        <div class="brand">
+          <div class="brand-icon">K</div>
+          <div>
+            <div class="brand-title">Restaurant OS</div>
+            <div class="brand-subtitle">Kotlin Backend</div>
+          </div>
+        </div>
+
+        <ul class="nav-menu">
+          <li class="nav-item">
+            <button class="active" onclick="switchView('pos')">
+              <i data-lucide="shopping-bag"></i> Point of Sale
+            </button>
+          </li>
+          <li class="nav-item">
+            <button onclick="switchView('kds')">
+              <i data-lucide="chef-hat"></i> Kitchen KDS
+            </button>
+          </li>
+          <li class="nav-item">
+            <button onclick="switchView('tables')">
+              <i data-lucide="layout-grid"></i> Tables Layout
+            </button>
+          </li>
+          <li class="nav-item">
+            <button onclick="switchView('customer')">
+              <i data-lucide="smartphone"></i> Customer Store
+            </button>
+          </li>
+          <li class="nav-item">
+            <button onclick="switchView('analytics')">
+              <i data-lucide="bar-chart-3"></i> Analytics
+            </button>
+          </li>
+        </ul>
+      </div>
+
+      <div class="sidebar-status">
+        <div class="status-badge">
+          <span class="dot-pulse"></span> Kotlin REST Engine Online
+        </div>
+        <p style="color: var(--text-muted); font-size: 11px; margin-top: 4px;">Spring Boot 3.4.3</p>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <!-- Header -->
+      <header class="top-header">
+        <div class="header-title">
+          <h1 id="view-title">Point of Sale</h1>
+          <p id="view-desc">Offline-ready Kotlin REST Billing Engine</p>
+        </div>
+
+        <div class="search-box">
+          <i data-lucide="search" class="search-icon"></i>
+          <input type="text" id="menu-search" placeholder="Search menu..." oninput="onSearchMenu(this.value)">
+        </div>
+      </header>
+
+      <!-- Dynamic Views -->
+      <div class="view-container">
+        <!-- 1. POS View -->
+        <div id="view-pos" class="pos-layout">
+          <div class="pos-left">
+            <div class="categories-bar" id="categories-bar">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="menu-grid" id="menu-grid">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- POS Cart -->
+          <div class="pos-right">
+            <div class="cart-header">
+              <h3 style="font-weight: 800; font-size: 16px;">Current Order</h3>
+              <span id="selected-table-badge" style="font-size: 12px; font-weight: 700; color: var(--primary); background: var(--primary-light); padding: 4px 10px; border-radius: 8px;">Table: Quick Sale</span>
+            </div>
+
+            <div class="customer-link-banner" id="customer-banner">
+              <button class="btn-outline" onclick="openCustomerModal()">
+                + Link Customer Profile
+              </button>
+            </div>
+
+            <div class="cart-items" id="cart-items">
+              <!-- Cart items -->
+            </div>
+
+            <div class="cart-footer">
+              <div class="summary-row">
+                <span>Subtotal</span>
+                <span id="cart-subtotal">₹0.00</span>
+              </div>
+              <div class="summary-row">
+                <span>GST (5%)</span>
+                <span id="cart-tax">₹0.00</span>
+              </div>
+              <div class="summary-row total">
+                <span>Total</span>
+                <span id="cart-grandtotal" style="color: var(--primary);">₹0.00</span>
+              </div>
+
+              <div class="payment-buttons">
+                <button class="pay-btn" onclick="checkout('Cash')">
+                  💵 Cash
+                </button>
+                <button class="pay-btn" onclick="checkout('Card')">
+                  💳 Card
+                </button>
+                <button class="pay-btn" onclick="checkout('UPI')">
+                  📱 UPI
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. KDS View -->
+        <div id="view-kds" class="kds-kanban" style="display: none;">
+          <div class="kds-column">
+            <div class="col-header" style="color: #2563eb;">
+              <span>🔵 New Orders</span>
+              <span id="count-new-kots" style="background: #dbeafe; padding: 2px 8px; border-radius: 12px;">0</span>
+            </div>
+            <div id="kds-new-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
+          </div>
+
+          <div class="kds-column" style="background: #fffbeb; border-color: #fef3c7;">
+            <div class="col-header" style="color: #d97706;">
+              <span>🟠 Preparing</span>
+              <span id="count-prep-kots" style="background: #fef3c7; padding: 2px 8px; border-radius: 12px;">0</span>
+            </div>
+            <div id="kds-prep-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
+          </div>
+
+          <div class="kds-column" style="background: #f0fdf4; border-color: #dcfce7;">
+            <div class="col-header" style="color: #16a34a;">
+              <span>🟢 Ready to Serve</span>
+              <span id="count-ready-kots" style="background: #dcfce7; padding: 2px 8px; border-radius: 12px;">0</span>
+            </div>
+            <div id="kds-ready-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
+          </div>
+        </div>
+
+        <!-- 3. Tables Management View -->
+        <div id="view-tables" style="display: none;">
+          <div class="table-grid" id="table-grid">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- 4. Customer Storefront View -->
+        <div id="view-customer" style="display: none; justify-content: center;">
+          <div style="width: 420px; background: white; border-radius: 32px; border: 12px solid #1e293b; overflow: hidden; box-shadow: var(--shadow-lg);">
+            <div style="background: var(--primary); padding: 24px; color: white;">
+              <h2 style="font-size: 22px; font-weight: 800;">Restaurant OS</h2>
+              <p style="font-size: 13px; opacity: 0.9;">Digital Self-Ordering & Loyalty App</p>
+            </div>
+            <div style="padding: 20px;" id="customer-store-content">
+              <!-- Customer App content -->
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. Analytics View -->
+        <div id="view-analytics" style="display: none;">
+          <div class="analytics-grid" id="analytics-grid">
+            <!-- Analytics Cards -->
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Customer Modal -->
+  <div id="customer-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 style="font-weight: 800;">Link Customer Profile</h3>
+        <button class="close-btn" onclick="closeCustomerModal()">✕</button>
+      </div>
+      <div>
+        <label style="font-size: 13px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Customer Phone Number</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="cust-phone-input" placeholder="e.g. 9876543210" style="flex: 1; padding: 10px; border-radius: 10px; border: 1px solid var(--border-color);">
+          <button onclick="searchCustomer()" style="background: var(--primary); color: white; border: none; padding: 10px 16px; border-radius: 10px; font-weight: 700; cursor: pointer;">Search</button>
+        </div>
+      </div>
+      <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+        <h4 style="font-size: 13px; font-weight: 700; margin-bottom: 8px;">Or Create New Customer</h4>
+        <input type="text" id="cust-name-input" placeholder="Full Name" style="width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--border-color); margin-bottom: 8px;">
+        <button onclick="createCustomer()" style="width: 100%; background: #0f172a; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer;">Create & Link Customer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
