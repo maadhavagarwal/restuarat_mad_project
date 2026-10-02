@@ -61,3 +61,181 @@ fun AuthScreen(vm: DeliveryViewModel) {
     }
 }
 
+@Composable
+fun Discovery(vm: DeliveryViewModel) {
+    val restaurant = vm.catalog.restaurants.find { it.id == vm.restaurantId }
+    val detail = vm.route == "Restaurant"
+    val dishes =
+        vm.catalog.dishes
+            .filter {
+                (!detail || it.restaurantId == vm.restaurantId) &&
+                    (!vm.vegetarian || it.vegetarian) &&
+                    (vm.category.isBlank() || it.category == vm.category) &&
+                    (vm.query.isBlank() || it.name.contains(vm.query, true))
+            }
+            .let { if (vm.sortPrice) it.sortedBy { d -> d.price } else it }
+    val restaurants =
+        vm.catalog.restaurants.filter {
+            (vm.route != "Favorites" || it.id in vm.favorites) &&
+                (vm.query.isBlank() ||
+                    it.name.contains(vm.query, true) ||
+                    it.cuisine.contains(vm.query, true) ||
+                    vm.catalog.dishes.any { d ->
+                        d.restaurantId == it.id && d.name.contains(vm.query, true)
+                    })
+        }
+    LazyColumn(
+        Modifier.fillMaxSize().testTag("discovery-list"),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        item {
+            Heading(
+                if (detail) restaurant?.name ?: "Restaurant"
+                else if (vm.route == "Favorites") "Your favourites" else "What sounds\ngood today?",
+                if (detail) restaurant?.description else "Discover a delicious reason to stay in.",
+            )
+        }
+        if (detail && restaurant != null)
+            item {
+                RestaurantCard(restaurant, vm, false)
+                Row {
+                    TextButton(onClick = { vm.route = "Reviews" }) {
+                        Text("Read reviews (${vm.reviews.size})")
+                    }
+                    val context = LocalContext.current
+                    TextButton(
+                        onClick = {
+                            val uri =
+                                Uri.parse(
+                                    "geo:${restaurant.latitude},${restaurant.longitude}?q=${Uri.encode(restaurant.address)}"
+                                )
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                                .onFailure { vm.error = "No map application is installed." }
+                        }
+                    ) {
+                        Text("View on map")
+                    }
+                }
+            }
+        item {
+            OutlinedTextField(
+                value = vm.query,
+                onValueChange = { vm.query = it },
+                placeholder = {
+                    Text(if (detail) "Search this menu" else "Restaurants, dishes, cravings")
+                },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = {
+                    if (vm.query.isNotEmpty())
+                        IconButton(onClick = { vm.query = "" }) {
+                            Icon(Icons.Default.Close, "Clear search")
+                        }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(24.dp),
+            )
+        }
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    FilterChip(
+                        selected = vm.vegetarian,
+                        onClick = { vm.vegetarian = !vm.vegetarian },
+                        label = { Text("Vegetarian") },
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = vm.sortPrice,
+                        onClick = { vm.sortPrice = !vm.sortPrice },
+                        label = { Text("Price: low to high") },
+                    )
+                }
+                item {
+                    FilterChip(
+                        selected = vm.category.isEmpty(),
+                        onClick = { vm.category = "" },
+                        label = { Text("All") },
+                    )
+                }
+                items(vm.catalog.dishes.map { it.category }.distinct()) { category ->
+                    FilterChip(
+                        selected = vm.category == category,
+                        onClick = { vm.category = category },
+                        label = { Text(category) },
+                    )
+                }
+            }
+        }
+        if (!detail) {
+            items(restaurants, key = { "restaurant-${it.id}" }) { RestaurantCard(it, vm, true) }
+            if (restaurants.isEmpty())
+                item {
+                    Text(
+                        if (vm.route == "Favorites")
+                            "Save a restaurant using its heart button to find it here."
+                        else "No restaurants found. Try another search.",
+                        color = RestroTokens.muted,
+                    )
+                }
+        }
+        if (vm.route != "Favorites") {
+            item {
+                Text(
+                    if (detail) "On the menu" else "Find your next favourite",
+                    style = MaterialTheme.typography.headlineMedium,
+                )
+            }
+            items(dishes, key = { "dish-${it.id}" }) { dish ->
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clickable {
+                            vm.dishId = dish.id
+                            vm.restaurantId = dish.restaurantId
+                            vm.route = "Food"
+                        }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            if (dish.vegetarian) "● VEGETARIAN" else "NON-VEGETARIAN",
+                            fontSize = 10.sp,
+                            color = if (dish.vegetarian) RestroTokens.green else RestroTokens.muted,
+                        )
+                        Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                        Text(
+                            dish.description,
+                            color = RestroTokens.muted,
+                            maxLines = 2,
+                            fontSize = 13.sp,
+                        )
+                        Text(money(dish.price), fontWeight = FontWeight.Bold)
+                        Text(
+                            if (dish.available) "Customize +" else "Unavailable",
+                            color = RestroTokens.coral,
+                        )
+                    }
+                    Photo(dish.image, dish.name, Modifier.size(116.dp).clip(RestroTokens.shape))
+                }
+                HorizontalDivider(color = Color.White.copy(alpha = .08f))
+            }
+            if (dishes.isEmpty())
+                item {
+                    Text("No dishes match these filters.")
+                    TextButton(
+                        onClick = {
+                            vm.query = ""
+                            vm.category = ""
+                            vm.vegetarian = false
+                        }
+                    ) {
+                        Text("Clear filters")
+                    }
+                }
+        }
+    }
+}
+
