@@ -239,3 +239,49 @@ fun Discovery(vm: DeliveryViewModel) {
     }
 }
 
+@Composable
+fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
+    val layer = rememberGraphicsLayer()
+    val backdrop = remember(layer) { Backdrop(layer) }
+    Box(
+        Modifier.fillMaxWidth()
+            .height(268.dp)
+            .clip(RestroTokens.shape)
+            .then(if (clickable) Modifier.clickable { vm.openRestaurant(r.id) } else Modifier)
+    ) {
+        Photo(r.image, r.name, Modifier.fillMaxSize().capture(backdrop))
+        FilledIconButton(
+            onClick = { vm.favorite(r.id) },
+            enabled = !vm.busy,
+            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+            colors =
+                IconButtonDefaults.filledIconButtonColors(
+                    containerColor = RestroTokens.canvas.copy(alpha = .7f)
+                ),
+        ) {
+            Icon(
+                if (r.id in vm.favorites) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                if (r.id in vm.favorites) "Remove favourite" else "Save restaurant",
+                tint = RestroTokens.coral,
+            )
+        }
+        Glass(
+            Modifier.align(Alignment.BottomCenter).padding(10.dp).fillMaxWidth(),
+            backdrop,
+            vm.profile?.reducedGlass == true,
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(r.name, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text(r.cuisine, fontSize = 13.sp)
+                Text(
+                    if (r.open)
+                        "${r.deliveryMinutes}–${r.deliveryMinutes+10} min · ${money(r.deliveryFee)} delivery"
+                    else "Currently closed",
+                    color = RestroTokens.muted,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
