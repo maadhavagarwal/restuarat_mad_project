@@ -36,11 +36,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            RestaurantMobileApp(
-                onShowToast = { msg ->
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                }
-            )
+            com.restaurant.mobile.delivery.DeliveryApp()
         }
     }
 }
@@ -49,7 +45,6 @@ enum class NavigationScreen(val title: String, val icon: ImageVector) {
     POS("POS Cashier", Icons.Default.ShoppingCart),
     KDS("Kitchen KDS", Icons.Default.SoupKitchen),
     TABLES("Tables", Icons.Default.TableBar),
-    CUSTOMER("Customers", Icons.Default.Person),
     ANALYTICS("Analytics", Icons.Default.BarChart)
 }
 
@@ -201,7 +196,6 @@ fun RestaurantMobileApp(onShowToast: (String) -> Unit) {
                             }
                         }
                     )
-                    NavigationScreen.CUSTOMER -> CustomerScreenView()
                     NavigationScreen.ANALYTICS -> AnalyticsScreenView(analytics = analytics)
                 }
 
@@ -492,46 +486,6 @@ fun TablesScreenView(
                             .background(color.copy(alpha = 0.15f), CircleShape)
                             .padding(horizontal = 10.dp, vertical = 2.dp)
                     )
-                }
-            }
-        }
-    }
-}
-
-// 4. Customer Screen Component
-@Composable
-fun CustomerScreenView() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF6366F1)),
-            modifier = Modifier.fillMaxWidth().height(160.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(20.dp),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Customer Loyalty Pass",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    Column {
-                        Text(text = "Rahul Sharma", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                        Text(text = "+91 98765 43210", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
-                    }
-                    Text(text = "35 Pts", color = Color.Yellow, fontWeight = FontWeight.Black, fontSize = 22.sp)
                 }
             }
         }
