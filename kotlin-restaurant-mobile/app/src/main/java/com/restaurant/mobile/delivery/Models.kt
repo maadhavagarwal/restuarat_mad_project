@@ -474,3 +474,11 @@ data class DiningTab(
     val updatedAt: String = Instant.now().toString()
 )
 
+data class DineInPaymentResult(
+    val tab: DiningTab,
+    val paymentMethod: String,
+    val transactionId: String,
+    val timestamp: String = Instant.now().toString()
+)
+
+

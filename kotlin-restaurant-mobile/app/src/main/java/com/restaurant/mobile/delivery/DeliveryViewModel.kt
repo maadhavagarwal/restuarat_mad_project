@@ -564,6 +564,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     // Active Dine-in Table Tab State & Real-Time Observer
     var activeTableTab by mutableStateOf<DiningTab?>(null)
     var walkInTableError by mutableStateOf<String?>(null)
+    var lastDineInPaymentResult by mutableStateOf<DineInPaymentResult?>(null)
     private var tableTabObservationJob: Job? = null
     private var observedTableNumber: String? = null
 
@@ -640,6 +641,22 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             error = msg
             null
         }
+    }
+
+    /**
+     * Records an authorized dine-in payment result without yet marking the tab as settled in SQLite / backend.
+     * Settlement, table booking completion, and notifications are handled in subsequent implementation steps.
+     *
+     * @return The recorded DineInPaymentResult.
+     */
+    fun recordDineInPaymentAuthorized(tab: DiningTab, paymentMethod: String, transactionId: String): DineInPaymentResult {
+        val result = DineInPaymentResult(
+            tab = tab,
+            paymentMethod = paymentMethod,
+            transactionId = transactionId
+        )
+        lastDineInPaymentResult = result
+        return result
     }
 
     fun loadUserTableBookings() {
@@ -719,6 +736,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         observedTableNumber = null
         activeTableTab = null
         walkInTableError = null
+        lastDineInPaymentResult = null
         selectedBookingForDetails = null
         cancellingBookingId = null
         bookingCancellationNotice = null

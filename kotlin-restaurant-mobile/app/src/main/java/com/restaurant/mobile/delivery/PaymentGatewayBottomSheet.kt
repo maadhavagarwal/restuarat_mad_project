@@ -46,12 +46,28 @@ enum class PaymentProcessingState {
 @Composable
 fun PaymentGatewayBottomSheet(
     vm: DeliveryViewModel,
-    totalAmount: Long,
-    selectedAddressId: String,
+    totalAmount: Long = 0L,
+    selectedAddressId: String = "",
     initialMethod: String = "UPI",
+    diningTab: DiningTab? = null,
+    onPaymentSuccess: ((paymentMethod: String, transactionId: String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
-    var selectedTab by rememberSaveable { mutableStateOf(if (initialMethod == "Card") 1 else 0) } // 0: UPI, 1: Card
+    val effectiveDiningTab = diningTab ?: if (selectedAddressId.startsWith("DINE_IN")) vm.activeTableTab else null
+    val isDineIn = effectiveDiningTab != null || selectedAddressId.startsWith("DINE_IN")
+    val effectiveTotal = if (isDineIn && effectiveDiningTab != null) effectiveDiningTab.total
+        else if (totalAmount > 0L) totalAmount
+        else (vm.quote?.total ?: 0L)
+
+    var selectedTab by rememberSaveable {
+        mutableStateOf(
+            when (initialMethod.trim().lowercase()) {
+                "card" -> 1
+                "netbanking" -> 2
+                else -> 0
+            }
+        )
+    } // 0: UPI, 1: Card, 2: Netbanking
     var processingState by remember { mutableStateOf(PaymentProcessingState.INPUT) }
     var transactionId by remember { mutableStateOf("TXN-${UUID.randomUUID().toString().take(8).uppercase()}") }
 
@@ -93,14 +109,30 @@ fun PaymentGatewayBottomSheet(
     }
     val isCardFormValid = cleanCardNumber.length in 15..16 && isLuhnValid && isExpiryValid && isCvvValid
 
+    // Netbanking State
+    var selectedBank by rememberSaveable { mutableStateOf("HDFC Bank") }
+
     // 1.5-second simulated verification animation
     LaunchedEffect(processingState) {
         if (processingState == PaymentProcessingState.VERIFYING) {
             delay(1500L) // Exact 1.5s simulated bank verification animation
             processingState = PaymentProcessingState.AUTHORIZED
             delay(700L)
-            val methodLabel = if (selectedTab == 0) "UPI ($selectedUpiApp)" else "Card ($cardIssuer)"
-            vm.checkout(selectedAddressId, methodLabel)
+            val methodLabel = when (selectedTab) {
+                0 -> "UPI ($selectedUpiApp)"
+                1 -> "Card ($cardIssuer)"
+                2 -> "Netbanking ($selectedBank)"
+                else -> "UPI"
+            }
+            if (isDineIn) {
+                effectiveDiningTab?.let { tab ->
+                    vm.recordDineInPaymentAuthorized(tab, methodLabel, transactionId)
+                }
+                onPaymentSuccess?.invoke(methodLabel, transactionId)
+            } else {
+                vm.checkout(selectedAddressId, methodLabel)
+                onPaymentSuccess?.invoke(methodLabel, transactionId)
+            }
             onDismiss()
         }
     }
@@ -138,19 +170,29 @@ fun PaymentGatewayBottomSheet(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(Icons.Default.Lock, null, tint = RestroTokens.green, modifier = Modifier.size(16.dp))
-                                    Text("Secure Payment Gateway", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                    Text(
+                                        if (isDineIn && effectiveDiningTab != null) "Table ${effectiveDiningTab.tableNumber} Bill"
+                                        else "Secure Payment Gateway",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 17.sp
+                                    )
                                 }
-                                Text("256-bit Bank Grade Encrypted", fontSize = 11.sp, color = RestroTokens.muted)
+                                Text(
+                                    if (isDineIn && effectiveDiningTab != null) "Dine-In Settlement · 256-bit Encrypted"
+                                    else "256-bit Bank Grade Encrypted",
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.muted
+                                )
                             }
                             Text(
-                                money(totalAmount),
+                                money(effectiveTotal),
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = RestroTokens.coral
                             )
                         }
 
-                        // Tab Switcher (UPI vs Card)
+                        // Tab Switcher (UPI vs Card vs Netbanking)
                         TabRow(
                             selectedTabIndex = selectedTab,
                             containerColor = Color(0xFF16191F),
@@ -166,7 +208,7 @@ fun PaymentGatewayBottomSheet(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Icon(Icons.Default.QrCodeScanner, null, modifier = Modifier.size(16.dp))
-                                        Text("UPI Apps", fontWeight = FontWeight.Bold)
+                                        Text("UPI", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             )
@@ -179,7 +221,20 @@ fun PaymentGatewayBottomSheet(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Icon(Icons.Default.CreditCard, null, modifier = Modifier.size(16.dp))
-                                        Text("Credit / Debit Card", fontWeight = FontWeight.Bold)
+                                        Text("Card", fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            )
+                            Tab(
+                                selected = selectedTab == 2,
+                                onClick = { selectedTab = 2 },
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(Icons.Default.AccountBalance, null, modifier = Modifier.size(16.dp))
+                                        Text("Netbanking", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             )
@@ -378,10 +433,72 @@ fun PaymentGatewayBottomSheet(
                             }
                         }
 
+                        // Tab 2: Netbanking
+                        if (selectedTab == 2) {
+                            Text("Select Netbanking Bank", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+
+                            val banks = listOf(
+                                "HDFC Bank" to "Popular · Instant authorization",
+                                "ICICI Bank" to "iMobile & Retail Internet Banking",
+                                "State Bank of India" to "SBI YONO & Retail Banking",
+                                "Axis Bank" to "Axis NetBanking Direct",
+                                "Kotak Mahindra Bank" to "Kotak 811 & Retail Banking",
+                                "Punjab National Bank" to "PNB One & Retail Banking"
+                            )
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                banks.forEach { (bankName, bankDesc) ->
+                                    val isSelected = selectedBank == bankName
+                                    Surface(
+                                        onClick = { selectedBank = bankName },
+                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else Color(0xFF1A1D24),
+                                        shape = RoundedCornerShape(14.dp),
+                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, RestroTokens.coral) else null,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(14.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            RadioButton(
+                                                selected = isSelected,
+                                                onClick = { selectedBank = bankName },
+                                                colors = RadioButtonDefaults.colors(selectedColor = RestroTokens.coral)
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(bankName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                Text(bankDesc, fontSize = 12.sp, color = RestroTokens.muted)
+                                            }
+                                            if (bankName in listOf("HDFC Bank", "ICICI Bank", "State Bank of India")) {
+                                                Surface(
+                                                    color = RestroTokens.green.copy(alpha = 0.2f),
+                                                    shape = RoundedCornerShape(6.dp)
+                                                ) {
+                                                    Text(
+                                                        "INSTANT",
+                                                        fontSize = 10.sp,
+                                                        color = RestroTokens.green,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Spacer(Modifier.height(4.dp))
 
                         // Pay Button
-                        val isActionEnabled = if (selectedTab == 0) isUpiValid else isCardFormValid
+                        val isActionEnabled = when (selectedTab) {
+                            0 -> isUpiValid
+                            1 -> isCardFormValid
+                            2 -> selectedBank.isNotBlank()
+                            else -> false
+                        }
 
                         Button(
                             onClick = {
@@ -397,7 +514,7 @@ fun PaymentGatewayBottomSheet(
                             Icon(Icons.Default.Security, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "Pay ${money(totalAmount)}",
+                                "Pay ${money(effectiveTotal)}",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
                             )
@@ -427,7 +544,8 @@ fun PaymentGatewayBottomSheet(
                             modifier = Modifier.size(56.dp)
                         )
                         Text(
-                            "Verifying with Bank...",
+                            if (selectedTab == 2) "Connecting to $selectedBank..."
+                            else "Verifying with Bank...",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = RestroTokens.text
@@ -486,7 +604,8 @@ fun PaymentGatewayBottomSheet(
                             color = RestroTokens.muted
                         )
                         Text(
-                            "Placing your order with restaurant...",
+                            if (isDineIn && effectiveDiningTab != null) "Payment authorized for Table ${effectiveDiningTab.tableNumber}..."
+                            else "Placing your order with restaurant...",
                             fontSize = 13.sp,
                             color = RestroTokens.text
                         )

@@ -346,7 +346,8 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
         val paymentOptions = listOf(
             Triple("Cash on delivery", "Cash or UPI on Delivery", Icons.Default.Payments),
             Triple("UPI", "Google Pay / PhonePe / Paytm / QR", Icons.Default.QrCodeScanner),
-            Triple("Card", "Credit / Debit Card (Visa, RuPay, MC)", Icons.Default.CreditCard)
+            Triple("Card", "Credit / Debit Card (Visa, RuPay, MC)", Icons.Default.CreditCard),
+            Triple("Netbanking", "NetBanking (HDFC, ICICI, SBI, Axis)", Icons.Default.AccountBalance)
         )
 
         paymentOptions.forEach { (methodKey, methodTitle, icon) ->
@@ -356,7 +357,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
                     .clip(RoundedCornerShape(16.dp))
                     .clickable { selectedPaymentMethod = methodKey }
                     .background(if (isChosen) RestroTokens.coral.copy(alpha = 0.15f) else RestroTokens.surface)
-                    .padding(14.dp),
+                .padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -383,7 +384,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
         val quoteTotal = vm.quote?.total ?: 0L
         BillRow("Grand Total", quoteTotal)
 
-        val isOnlinePayment = selectedPaymentMethod in listOf("UPI", "Card")
+        val isOnlinePayment = selectedPaymentMethod in listOf("UPI", "Card", "Netbanking")
         Action(
             label = if (isOnlinePayment) "Proceed to Pay · ${money(quoteTotal)}"
             else if (quoteTotal > 0) "Place Order · ${money(quoteTotal)}" else "Place Order",
