@@ -861,6 +861,64 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return updateTableBookingStatus(id, TableBookingStatus.CANCELLED)
     }
 
+    /**
+     * Safely cancels a customer's reservation with ownership and status validation inside an exclusive SQLite transaction.
+     * Guarantees:
+     * - Only the reservation owner (matching [userId]) can cancel.
+     * - Only currently CONFIRMED reservations can be cancelled.
+     * - Concurrency safe via ALLOCATION_LOCK and SQLite transaction.
+     * - Does NOT delete the record; sets status to CANCELLED.
+     */
+    fun cancelTableBookingForUser(bookingId: String, userId: String): TableCancellationResult {
+        if (bookingId.isBlank()) {
+            return TableCancellationResult.Failure("Invalid reservation ID.")
+        }
+        if (userId.isBlank()) {
+            return TableCancellationResult.Failure("Customer identification is required.")
+        }
+        val db = writableDatabase
+        synchronized(ALLOCATION_LOCK) {
+            db.beginTransaction()
+            try {
+                val cursor = db.rawQuery(
+                    "SELECT * FROM $TABLE_BOOKINGS WHERE id = ? LIMIT 1",
+                    arrayOf(bookingId)
+                )
+                val existing = try {
+                    if (cursor.moveToFirst()) cursorToTableBooking(cursor) else null
+                } finally {
+                    cursor.close()
+                }
+
+                val validation = TableBookingManagementRules.validateCancellationEligibility(existing, userId)
+                if (validation is TableCancellationResult.Failure) {
+                    return validation
+                }
+
+                val cv = ContentValues().apply {
+                    put("status", TableBookingStatus.CANCELLED)
+                }
+                val affected = db.update(
+                    TABLE_BOOKINGS,
+                    cv,
+                    "id = ? AND user_id = ? AND status = ?",
+                    arrayOf(bookingId, userId, TableBookingStatus.CONFIRMED)
+                )
+
+                if (affected != 1) {
+                    throw IllegalStateException("Failed to update reservation status in database.")
+                }
+
+                db.setTransactionSuccessful()
+                return validation
+            } catch (e: Exception) {
+                return TableCancellationResult.Failure(e.message ?: "Database error during cancellation.")
+            } finally {
+                db.endTransaction()
+            }
+        }
+    }
+
     fun deleteTableBooking(id: String): Boolean {
         val db = writableDatabase
         val affected = db.delete(TABLE_BOOKINGS, "id = ?", arrayOf(id))

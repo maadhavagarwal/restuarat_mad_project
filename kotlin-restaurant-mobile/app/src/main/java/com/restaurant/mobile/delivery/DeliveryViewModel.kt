@@ -528,6 +528,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                         confirmedBooking = result.booking
                         bookingConfirmationError = null
                         isConfirmingBooking = false
+                        userTableBookings = listOf(result.booking) + userTableBookings.filterNot { it.id == result.booking.id }
                         if (onSuccess != null) {
                             onSuccess(result.booking)
                         } else {
@@ -546,6 +547,75 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Customer Table Booking Management State
+    var userTableBookings by mutableStateOf<List<TableBooking>>(emptyList())
+        private set
+    var isLoadingBookings by mutableStateOf(false)
+        private set
+    var bookingManagementError by mutableStateOf<String?>(null)
+    var cancellingBookingId by mutableStateOf<String?>(null)
+        private set
+    var selectedBookingForDetails by mutableStateOf<TableBooking?>(null)
+    var bookingManagementFilter by mutableStateOf(TableBookingFilter.UPCOMING)
+    var bookingCancellationNotice by mutableStateOf<String?>(null)
+
+    fun loadUserTableBookings() {
+        val currentUserId = profile?.id ?: "guest"
+        isLoadingBookings = true
+        bookingManagementError = null
+        viewModelScope.launch {
+            try {
+                val list = sqlDb.getTableBookingsForUser(currentUserId)
+                userTableBookings = list
+            } catch (e: Exception) {
+                bookingManagementError = e.message ?: "Failed to load table bookings."
+            } finally {
+                isLoadingBookings = false
+            }
+        }
+    }
+
+    fun cancelUserTableBooking(bookingId: String, onSuccess: (() -> Unit)? = null) {
+        if (cancellingBookingId != null) return
+        val currentUserId = profile?.id ?: "guest"
+        cancellingBookingId = bookingId
+        bookingManagementError = null
+
+        viewModelScope.launch {
+            try {
+                val result = sqlDb.cancelTableBookingForUser(bookingId, currentUserId)
+                when (result) {
+                    is TableCancellationResult.Success -> {
+                        userTableBookings = userTableBookings.map {
+                            if (it.id == bookingId) result.booking else it
+                        }
+                        if (selectedBookingForDetails?.id == bookingId) {
+                            selectedBookingForDetails = result.booking
+                        }
+                        cancellingBookingId = null
+                        bookingCancellationNotice = "Reservation ${result.booking.id} cancelled successfully."
+                        onSuccess?.invoke()
+                    }
+                    is TableCancellationResult.Failure -> {
+                        cancellingBookingId = null
+                        bookingManagementError = result.reason
+                    }
+                }
+            } catch (e: Exception) {
+                cancellingBookingId = null
+                bookingManagementError = e.message ?: "Failed to cancel reservation."
+            }
+        }
+    }
+
+    fun dismissBookingCancellationNotice() {
+        bookingCancellationNotice = null
+    }
+
+    fun dismissBookingManagementError() {
+        bookingManagementError = null
+    }
+
     fun revokeSession(reason: String = "Your session has expired. Please sign in again.") {
         session.save(null)
         session.saveProfile(null)
@@ -560,6 +630,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         addresses = emptyList()
         orders = emptyList()
         favorites = emptyList()
+        userTableBookings = emptyList()
+        selectedBookingForDetails = null
+        cancellingBookingId = null
+        bookingCancellationNotice = null
+        bookingManagementError = null
         route = "Home"
         sessionExpiredBanner = reason
     }
@@ -618,6 +693,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             if (storedOrders.isNotEmpty()) {
                 orders = storedOrders
             }
+            val storedBookings = sqlDb.getTableBookingsForUser(profile?.id ?: "guest")
+            if (storedBookings.isNotEmpty()) {
+                userTableBookings = storedBookings
+            }
             if (api.token != null) refreshAccount()
             starting = false
         }
@@ -666,10 +745,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             addresses = api.call("/addresses")
             favorites = api.call("/favorites")
             orders = api.call("/orders")
+            val currentUserId = profile?.id ?: "guest"
+            userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
         } catch (_: Exception) {
             if (profile == null) {
                 profile = session.loadProfile()
             }
+            val currentUserId = profile?.id ?: "guest"
+            userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
         }
     }
 
@@ -1314,7 +1397,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 "Edit address" -> "Addresses"
                 "Addresses",
                 "Settings",
-                "Edit profile" -> "Profile"
+                "Edit profile",
+                "MyBookings" -> "Profile"
                 else -> "Home"
             }
     }

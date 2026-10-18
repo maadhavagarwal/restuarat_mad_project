@@ -255,7 +255,17 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                                 vm.confirmedBooking = null
                                                 vm.resetTableBookingDraft(currentRest?.id ?: "", currentRest?.name ?: "")
                                                 vm.route = "BookTable"
+                                            },
+                                            onViewMyBookings = {
+                                                vm.confirmedBooking = null
+                                                vm.loadUserTableBookings()
+                                                vm.route = "MyBookings"
                                             }
+                                        )
+                                        "MyBookings" -> MyTableBookingsScreen(
+                                            vm = vm,
+                                            onBack = { vm.back() },
+                                            onBookNewTable = { vm.route = "Home" }
                                         )
                                         else -> ProfileScreen(vm, onOpenStaffPortal)
                                     }

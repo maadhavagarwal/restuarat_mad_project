@@ -367,3 +367,84 @@ object TableAllocationEngine {
         return TableAllocationResult.Success(confirmedBooking, chosenTable)
     }
 }
+
+object TableBookingFilter {
+    const val UPCOMING = "Upcoming"
+    const val COMPLETED = "Completed"
+    const val CANCELLED = "Cancelled"
+    const val ALL = "All"
+    val ALL_FILTERS = listOf(UPCOMING, COMPLETED, CANCELLED, ALL)
+}
+
+sealed class TableCancellationResult {
+    data class Success(val booking: TableBooking) : TableCancellationResult()
+    data class Failure(val reason: String) : TableCancellationResult()
+}
+
+val TableBooking.isEligibleForCancellation: Boolean
+    get() = status == TableBookingStatus.CONFIRMED
+
+object TableBookingManagementRules {
+    private val DEFAULT_SLOT_ORDER = listOf(
+        "12:00 PM", "1:00 PM", "2:00 PM",
+        "7:00 PM", "8:00 PM", "9:00 PM"
+    )
+
+    fun filterAndSort(
+        bookings: List<TableBooking>,
+        filter: String,
+        slotOrder: List<String> = DEFAULT_SLOT_ORDER
+    ): List<TableBooking> {
+        return when (filter) {
+            TableBookingFilter.UPCOMING -> bookings
+                .filter { it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED }
+                .sortedWith(
+                    compareBy<TableBooking> { it.bookingDate }
+                        .thenBy { booking ->
+                            val idx = slotOrder.indexOf(booking.timeSlot)
+                            if (idx >= 0) idx else 99
+                        }
+                        .thenBy { it.timeSlot }
+                        .thenBy { it.tableNumber }
+                )
+            TableBookingFilter.COMPLETED -> bookings
+                .filter { it.status == TableBookingStatus.COMPLETED }
+                .sortedWith(
+                    compareByDescending<TableBooking> { it.bookingDate }
+                        .thenByDescending { it.timeSlot }
+                )
+            TableBookingFilter.CANCELLED -> bookings
+                .filter { it.status == TableBookingStatus.CANCELLED }
+                .sortedWith(
+                    compareByDescending<TableBooking> { it.bookingDate }
+                        .thenByDescending { it.timeSlot }
+                )
+            else -> bookings.sortedWith(
+                compareByDescending<TableBooking> { it.bookingDate }
+                    .thenByDescending { it.timeSlot }
+            )
+        }
+    }
+
+    fun validateCancellationEligibility(booking: TableBooking?, requestingUserId: String): TableCancellationResult {
+        if (booking == null) {
+            return TableCancellationResult.Failure("Reservation not found.")
+        }
+        if (requestingUserId.isBlank()) {
+            return TableCancellationResult.Failure("Customer identification is required.")
+        }
+        if (booking.userId != requestingUserId) {
+            return TableCancellationResult.Failure("You are not authorized to cancel this reservation.")
+        }
+        if (booking.status == TableBookingStatus.CANCELLED) {
+            return TableCancellationResult.Failure("This reservation is already cancelled.")
+        }
+        if (booking.status == TableBookingStatus.COMPLETED) {
+            return TableCancellationResult.Failure("Completed reservations cannot be cancelled.")
+        }
+        if (booking.status != TableBookingStatus.CONFIRMED) {
+            return TableCancellationResult.Failure("Only confirmed reservations can be cancelled (current status: ${booking.status}).")
+        }
+        return TableCancellationResult.Success(booking.copy(status = TableBookingStatus.CANCELLED))
+    }
+}

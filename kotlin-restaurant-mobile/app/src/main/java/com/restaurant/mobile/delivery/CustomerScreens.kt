@@ -932,6 +932,28 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
         Row(
             Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
+                .clickable {
+                    vm.loadUserTableBookings()
+                    vm.route = "MyBookings"
+                }
+                .background(RestroTokens.surface)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.EventSeat, null, tint = RestroTokens.coral)
+                Column {
+                    Text("My Table Bookings", fontWeight = FontWeight.Medium)
+                    Text("View, inspect and cancel dine-in reservations", fontSize = 11.sp, color = RestroTokens.muted)
+                }
+            }
+            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
+        }
+
+        Row(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
                 .clickable { vm.route = "Favorites" }
                 .background(RestroTokens.surface)
                 .padding(16.dp),

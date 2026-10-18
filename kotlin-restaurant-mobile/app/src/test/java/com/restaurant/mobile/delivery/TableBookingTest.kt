@@ -808,4 +808,326 @@ class TableBookingTest {
         assertEquals("Party size cannot exceed 20 guests", computeBookingValidationError(validDraft.copy(partySize = 21)))
         assertEquals("Please select a seating area preference", computeBookingValidationError(validDraft.copy(seatingArea = "")))
     }
+
+    @Test
+    fun testQueryBookingsByCustomerIdentity() {
+        val allBookings = listOf(
+            TableBooking(
+                id = "TB-ALICE-1",
+                userId = "usr-alice",
+                userName = "Alice",
+                userPhone = "+91 99999 11111",
+                tableId = "rest-1_T1",
+                tableNumber = "T1",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                restaurantId = "rest-1"
+            ),
+            TableBooking(
+                id = "TB-BOB-1",
+                userId = "usr-bob",
+                userName = "Bob",
+                userPhone = "+91 99999 22222",
+                tableId = "rest-1_T2",
+                tableNumber = "T2",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                restaurantId = "rest-1"
+            ),
+            TableBooking(
+                id = "TB-ALICE-2",
+                userId = "usr-alice",
+                userName = "Alice",
+                userPhone = "+91 99999 11111",
+                tableId = "rest-2_T3",
+                tableNumber = "T3",
+                bookingDate = "2026-10-26",
+                timeSlot = "8:00 PM",
+                partySize = 4,
+                restaurantId = "rest-2"
+            )
+        )
+
+        val aliceBookings = allBookings.filter { it.userId == "usr-alice" }
+        assertEquals(2, aliceBookings.size)
+        assertTrue(aliceBookings.all { it.userId == "usr-alice" })
+        assertFalse(aliceBookings.any { it.userId == "usr-bob" })
+
+        val bobBookings = allBookings.filter { it.userId == "usr-bob" }
+        assertEquals(1, bobBookings.size)
+        assertEquals("TB-BOB-1", bobBookings.first().id)
+    }
+
+    @Test
+    fun testEmptyBookingListHandling() {
+        val emptyBookings = emptyList<TableBooking>()
+
+        val upcoming = TableBookingManagementRules.filterAndSort(emptyBookings, TableBookingFilter.UPCOMING)
+        assertTrue(upcoming.isEmpty())
+
+        val completed = TableBookingManagementRules.filterAndSort(emptyBookings, TableBookingFilter.COMPLETED)
+        assertTrue(completed.isEmpty())
+
+        val cancelled = TableBookingManagementRules.filterAndSort(emptyBookings, TableBookingFilter.CANCELLED)
+        assertTrue(cancelled.isEmpty())
+
+        val all = TableBookingManagementRules.filterAndSort(emptyBookings, TableBookingFilter.ALL)
+        assertTrue(all.isEmpty())
+    }
+
+    @Test
+    fun testSortingAndStatusFiltering() {
+        val testBookings = listOf(
+            TableBooking(
+                id = "TB-LATER-UPCOMING",
+                userId = "usr-1",
+                userName = "User",
+                userPhone = "+91",
+                tableId = "rest-1_T1",
+                tableNumber = "T1",
+                bookingDate = "2026-10-28",
+                timeSlot = "8:00 PM",
+                partySize = 2,
+                status = TableBookingStatus.CONFIRMED
+            ),
+            TableBooking(
+                id = "TB-EARLIER-UPCOMING",
+                userId = "usr-1",
+                userName = "User",
+                userPhone = "+91",
+                tableId = "rest-1_T2",
+                tableNumber = "T2",
+                bookingDate = "2026-10-22",
+                timeSlot = "1:00 PM",
+                partySize = 4,
+                status = TableBookingStatus.CONFIRMED
+            ),
+            TableBooking(
+                id = "TB-COMPLETED-1",
+                userId = "usr-1",
+                userName = "User",
+                userPhone = "+91",
+                tableId = "rest-1_T3",
+                tableNumber = "T3",
+                bookingDate = "2026-10-15",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                status = TableBookingStatus.COMPLETED
+            ),
+            TableBooking(
+                id = "TB-CANCELLED-1",
+                userId = "usr-1",
+                userName = "User",
+                userPhone = "+91",
+                tableId = "rest-1_T4",
+                tableNumber = "T4",
+                bookingDate = "2026-10-18",
+                timeSlot = "9:00 PM",
+                partySize = 2,
+                status = TableBookingStatus.CANCELLED
+            )
+        )
+
+        val upcoming = TableBookingManagementRules.filterAndSort(testBookings, TableBookingFilter.UPCOMING)
+        assertEquals(2, upcoming.size)
+        assertEquals("TB-EARLIER-UPCOMING", upcoming[0].id)
+        assertEquals("TB-LATER-UPCOMING", upcoming[1].id)
+
+        val completed = TableBookingManagementRules.filterAndSort(testBookings, TableBookingFilter.COMPLETED)
+        assertEquals(1, completed.size)
+        assertEquals("TB-COMPLETED-1", completed.first().id)
+
+        val cancelled = TableBookingManagementRules.filterAndSort(testBookings, TableBookingFilter.CANCELLED)
+        assertEquals(1, cancelled.size)
+        assertEquals("TB-CANCELLED-1", cancelled.first().id)
+
+        val all = TableBookingManagementRules.filterAndSort(testBookings, TableBookingFilter.ALL)
+        assertEquals(4, all.size)
+    }
+
+    @Test
+    fun testDetailsLookupForExistingAndMissingBooking() {
+        val booking = TableBooking(
+            id = "TB-DETAIL-100",
+            userId = "usr-1",
+            userName = "Neha Sen",
+            userPhone = "+91 98888 77777",
+            tableId = "rest-1_T9",
+            tableNumber = "T9",
+            bookingDate = "2026-10-30",
+            timeSlot = "8:00 PM",
+            partySize = 4,
+            seatingArea = "Private Booth",
+            specialRequests = "Anniversary celebration with dessert surprise",
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière"
+        )
+        val lookupMap = mapOf(booking.id to booking)
+
+        val found = lookupMap["TB-DETAIL-100"]
+        assertNotNull(found)
+        assertEquals("Neha Sen", found?.userName)
+        assertEquals("Anniversary celebration with dessert surprise", found?.specialRequests)
+        assertEquals("Private Booth", found?.seatingArea)
+        assertEquals("TB-DETAIL-100", found?.id)
+
+        val missing = lookupMap["TB-NON-EXISTENT"]
+        assertNull(missing)
+    }
+
+    @Test
+    fun testSuccessfulCancellationByOwner() {
+        val booking = TableBooking(
+            id = "TB-CANCEL-OK",
+            userId = "usr-alice",
+            userName = "Alice",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            status = TableBookingStatus.CONFIRMED
+        )
+
+        val result = TableBookingManagementRules.validateCancellationEligibility(booking, "usr-alice")
+        assertTrue(result is TableCancellationResult.Success)
+        val success = result as TableCancellationResult.Success
+        assertEquals(TableBookingStatus.CANCELLED, success.booking.status)
+        assertEquals("TB-CANCEL-OK", success.booking.id)
+    }
+
+    @Test
+    fun testCancellationRejectedForAnotherCustomer() {
+        val booking = TableBooking(
+            id = "TB-AUTH-CHECK",
+            userId = "usr-alice",
+            userName = "Alice",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            status = TableBookingStatus.CONFIRMED
+        )
+
+        val result = TableBookingManagementRules.validateCancellationEligibility(booking, "usr-bob")
+        assertTrue(result is TableCancellationResult.Failure)
+        val failure = result as TableCancellationResult.Failure
+        assertTrue(failure.reason.contains("not authorized", ignoreCase = true))
+    }
+
+    @Test
+    fun testCancellationRejectedForIneligibleStatus() {
+        val baseBooking = TableBooking(
+            id = "TB-STATUS-TEST",
+            userId = "usr-alice",
+            userName = "Alice",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2
+        )
+
+        val cancelledBooking = baseBooking.copy(status = TableBookingStatus.CANCELLED)
+        val cancelResult = TableBookingManagementRules.validateCancellationEligibility(cancelledBooking, "usr-alice")
+        assertTrue(cancelResult is TableCancellationResult.Failure)
+        assertTrue((cancelResult as TableCancellationResult.Failure).reason.contains("already cancelled", ignoreCase = true))
+
+        val completedBooking = baseBooking.copy(status = TableBookingStatus.COMPLETED)
+        val completeResult = TableBookingManagementRules.validateCancellationEligibility(completedBooking, "usr-alice")
+        assertTrue(completeResult is TableCancellationResult.Failure)
+        assertTrue((completeResult as TableCancellationResult.Failure).reason.contains("Completed reservations cannot be cancelled", ignoreCase = true))
+
+        val seatedBooking = baseBooking.copy(status = TableBookingStatus.SEATED)
+        val seatedResult = TableBookingManagementRules.validateCancellationEligibility(seatedBooking, "usr-alice")
+        assertTrue(seatedResult is TableCancellationResult.Failure)
+    }
+
+    @Test
+    fun testRepeatedCancellationAttemptsIdempotencyGuard() {
+        var booking = TableBooking(
+            id = "TB-REPEAT-CANCEL",
+            userId = "usr-alice",
+            userName = "Alice",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            status = TableBookingStatus.CONFIRMED
+        )
+
+        val firstResult = TableBookingManagementRules.validateCancellationEligibility(booking, "usr-alice")
+        assertTrue(firstResult is TableCancellationResult.Success)
+        booking = (firstResult as TableCancellationResult.Success).booking
+        assertEquals(TableBookingStatus.CANCELLED, booking.status)
+
+        val secondResult = TableBookingManagementRules.validateCancellationEligibility(booking, "usr-alice")
+        assertTrue(secondResult is TableCancellationResult.Failure)
+        assertEquals(TableBookingStatus.CANCELLED, booking.status)
+    }
+
+    @Test
+    fun testCancelledBookingsNoLongerBlockAvailability() {
+        val confirmedBooking = TableBooking(
+            id = "TB-OCCUPY-T1",
+            userId = "usr-1",
+            userName = "User 1",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            status = TableBookingStatus.CONFIRMED,
+            restaurantId = "rest-1"
+        )
+
+        val nextResultOccupied = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro",
+            userId = "usr-2",
+            userName = "User 2",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = listOf(confirmedBooking)
+        )
+        assertTrue(nextResultOccupied is TableAllocationResult.Success)
+        assertEquals("T2", (nextResultOccupied as TableAllocationResult.Success).allocatedTable.tableNumber)
+
+        val cancelledBooking = confirmedBooking.copy(status = TableBookingStatus.CANCELLED)
+
+        val nextResultFreed = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro",
+            userId = "usr-3",
+            userName = "User 3",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = listOf(cancelledBooking)
+        )
+        assertTrue(nextResultFreed is TableAllocationResult.Success)
+        assertEquals("T1", (nextResultFreed as TableAllocationResult.Success).allocatedTable.tableNumber)
+    }
+
+    @Test
+    fun testCancellationFailureDoesNotShowFalseSuccess() {
+        val failureResult: TableCancellationResult = TableCancellationResult.Failure("Network database lock timeout.")
+        assertFalse(failureResult is TableCancellationResult.Success)
+        assertEquals("Network database lock timeout.", (failureResult as TableCancellationResult.Failure).reason)
+    }
 }

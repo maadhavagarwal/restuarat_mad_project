@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -1476,6 +1477,11 @@ fun TableBookingSuccessScreen(
         vm.confirmedBooking = null
         vm.resetTableBookingDraft(currentRest?.id ?: "", currentRest?.name ?: "")
         vm.route = "BookTable"
+    },
+    onViewMyBookings: () -> Unit = {
+        vm.confirmedBooking = null
+        vm.loadUserTableBookings()
+        vm.route = "MyBookings"
     }
 ) {
     val booking = vm.confirmedBooking
@@ -1499,7 +1505,8 @@ fun TableBookingSuccessScreen(
         booking = booking,
         restaurant = restaurant,
         onDone = onDone,
-        onBookAnother = onBookAnother
+        onBookAnother = onBookAnother,
+        onViewMyBookings = onViewMyBookings
     )
 }
 
@@ -1512,6 +1519,7 @@ fun TableBookingSuccessContent(
     restaurant: Restaurant? = null,
     onDone: () -> Unit,
     onBookAnother: () -> Unit,
+    onViewMyBookings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -1800,6 +1808,27 @@ fun TableBookingSuccessContent(
                         fontSize = 14.sp
                     )
                 }
+
+                TextButton(
+                    onClick = onViewMyBookings,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                ) {
+                    Icon(
+                        Icons.Default.EventSeat,
+                        contentDescription = null,
+                        tint = RestroTokens.text,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "View My Table Bookings",
+                        color = RestroTokens.text,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp
+                    )
+                }
             }
         }
     }
@@ -1838,5 +1867,770 @@ private fun ReviewDetailRow(
             fontWeight = FontWeight.SemiBold,
             color = RestroTokens.text
         )
+    }
+}
+
+/**
+ * Visual badge representing a TableBooking status with accessible colors and labels.
+ */
+@Composable
+fun BookingStatusBadge(
+    status: String,
+    modifier: Modifier = Modifier
+) {
+    val (bgColor, textColor, label) = when (status) {
+        TableBookingStatus.CONFIRMED -> Triple(RestroTokens.green.copy(alpha = 0.18f), RestroTokens.green, "CONFIRMED")
+        TableBookingStatus.SEATED -> Triple(Color(0xFF3B82F6).copy(alpha = 0.18f), Color(0xFF60A5FA), "SEATED")
+        TableBookingStatus.COMPLETED -> Triple(Color.White.copy(alpha = 0.10f), RestroTokens.muted, "COMPLETED")
+        TableBookingStatus.CANCELLED -> Triple(RestroTokens.coral.copy(alpha = 0.18f), RestroTokens.coral, "CANCELLED")
+        else -> Triple(Color.White.copy(alpha = 0.10f), RestroTokens.muted, status)
+    }
+
+    Surface(
+        color = bgColor,
+        shape = RoundedCornerShape(8.dp),
+        modifier = modifier
+    ) {
+        Text(
+            text = label,
+            color = textColor,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
+    }
+}
+
+/**
+ * Individual reservation card for the customer's My Table Bookings screen.
+ */
+@Composable
+fun CustomerBookingCard(
+    booking: TableBooking,
+    onViewDetails: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header: Restaurant name and Status Badge
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = booking.restaurantName.ifBlank { "Restro Fine Dining" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = RestroTokens.text,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                BookingStatusBadge(status = booking.status)
+            }
+
+            // Booking Reference
+            Surface(
+                color = Color.White.copy(alpha = 0.05f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Booking Reference",
+                        fontSize = 11.sp,
+                        color = RestroTokens.muted
+                    )
+                    Text(
+                        text = booking.id,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RestroTokens.text
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+
+            // Details Rows
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.DateRange,
+                            contentDescription = null,
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = formatDisplayDate(booking.bookingDate),
+                            fontSize = 13.sp,
+                            color = RestroTokens.text,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = booking.timeSlot,
+                            fontSize = 13.sp,
+                            color = RestroTokens.text,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.People,
+                            contentDescription = null,
+                            tint = RestroTokens.muted,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "${booking.partySize} ${if (booking.partySize == 1) "Guest" else "Guests"}",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.EventSeat,
+                            contentDescription = null,
+                            tint = RestroTokens.muted,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "${booking.seatingArea} · Table ${booking.tableNumber}",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+                }
+            }
+
+            // Special Requests if present
+            if (booking.specialRequests.isNotBlank()) {
+                Surface(
+                    color = Color.White.copy(alpha = 0.03f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Notes,
+                            contentDescription = null,
+                            tint = RestroTokens.muted,
+                            modifier = Modifier.size(14.dp).padding(top = 2.dp)
+                        )
+                        Text(
+                            text = booking.specialRequests,
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            maxLines = 2
+                        )
+                    }
+                }
+            }
+
+            // Bottom Actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onViewDetails,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Details", color = RestroTokens.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                if (booking.isEligibleForCancellation) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = RestroTokens.coral),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Cancel", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Modal dialog showing all persisted booking attributes.
+ */
+@Composable
+fun BookingDetailsDialog(
+    booking: TableBooking,
+    onDismiss: () -> Unit,
+    onCancelRequest: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Reservation Details",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = RestroTokens.text
+                )
+                BookingStatusBadge(status = booking.status)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    color = Color.White.copy(alpha = 0.04f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = booking.restaurantName.ifBlank { "Restro Fine Dining" },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = RestroTokens.text
+                        )
+                        Text(
+                            text = "Reference: ${booking.id}",
+                            fontSize = 12.sp,
+                            color = RestroTokens.coral,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SummaryRow(label = "Guest Name", value = booking.userName.ifBlank { "Valued Diner" })
+                    if (booking.userPhone.isNotBlank()) {
+                        SummaryRow(label = "Phone", value = booking.userPhone)
+                    }
+                    SummaryRow(label = "Date", value = formatDisplayDate(booking.bookingDate))
+                    SummaryRow(label = "Time Slot", value = booking.timeSlot)
+                    SummaryRow(label = "Party Size", value = "${booking.partySize} Guests")
+                    SummaryRow(label = "Assigned Table", value = "Table ${booking.tableNumber} (${booking.tableId})")
+                    SummaryRow(label = "Seating Area", value = booking.seatingArea)
+                    SummaryRow(
+                        label = "Special Requests",
+                        value = booking.specialRequests.ifBlank { "None specified" }
+                    )
+                    SummaryRow(label = "Booking Status", value = booking.status)
+                }
+
+                if (booking.status == TableBookingStatus.CANCELLED) {
+                    Surface(
+                        color = RestroTokens.coral.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "This reservation was cancelled. The table has been freed for other diners.",
+                            color = RestroTokens.coral,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (booking.isEligibleForCancellation) {
+                    Button(
+                        onClick = onCancelRequest,
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Cancel Table", fontWeight = FontWeight.Bold)
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Close", color = RestroTokens.text)
+                }
+            }
+        },
+        containerColor = RestroTokens.surface,
+        shape = RoundedCornerShape(20.dp),
+        modifier = modifier
+    )
+}
+
+/**
+ * Confirmation dialog before cancelling an active table reservation.
+ */
+@Composable
+fun CancelBookingConfirmationDialog(
+    booking: TableBooking,
+    isCancelling: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isCancelling) onDismiss() },
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = RestroTokens.coral,
+                    modifier = Modifier.size(22.dp)
+                )
+                Text(
+                    text = "Cancel Table Reservation?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = RestroTokens.text
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Are you sure you want to cancel your table for ${booking.partySize} at ${booking.restaurantName} on ${formatDisplayDate(booking.bookingDate)} at ${booking.timeSlot}?",
+                    color = RestroTokens.text,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = "Assigned Table ${booking.tableNumber} will be immediately released for other diners. This action cannot be undone.",
+                    color = RestroTokens.muted,
+                    fontSize = 12.sp
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isCancelling,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RestroTokens.coral,
+                    disabledContainerColor = RestroTokens.coral.copy(alpha = 0.5f)
+                ),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                if (isCancelling) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Cancelling...", color = Color.White)
+                } else {
+                    Text("Yes, Cancel Reservation", fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isCancelling
+            ) {
+                Text("Keep Table", color = RestroTokens.muted)
+            }
+        },
+        containerColor = RestroTokens.surface,
+        shape = RoundedCornerShape(20.dp),
+        modifier = modifier
+    )
+}
+
+/**
+ * Main customer-facing screen for managing existing table reservations.
+ */
+@Composable
+fun MyTableBookingsScreen(
+    vm: DeliveryViewModel,
+    onBack: () -> Unit = { vm.back() },
+    onBookNewTable: () -> Unit = { vm.route = "Home" }
+) {
+    var detailsBooking by remember { mutableStateOf<TableBooking?>(null) }
+    var bookingToCancel by remember { mutableStateOf<TableBooking?>(null) }
+
+    LaunchedEffect(Unit) {
+        vm.loadUserTableBookings()
+    }
+
+    val bookings = vm.userTableBookings
+    val currentFilter = vm.bookingManagementFilter
+    val filteredBookings = remember(bookings, currentFilter) {
+        TableBookingManagementRules.filterAndSort(bookings, currentFilter)
+    }
+
+    // Modal dialogs
+    detailsBooking?.let { b ->
+        val liveBooking = bookings.find { it.id == b.id } ?: b
+        BookingDetailsDialog(
+            booking = liveBooking,
+            onDismiss = { detailsBooking = null },
+            onCancelRequest = {
+                detailsBooking = null
+                bookingToCancel = liveBooking
+            }
+        )
+    }
+
+    bookingToCancel?.let { b ->
+        CancelBookingConfirmationDialog(
+            booking = b,
+            isCancelling = vm.cancellingBookingId == b.id,
+            onDismiss = { bookingToCancel = null },
+            onConfirm = {
+                vm.cancelUserTableBooking(b.id) {
+                    bookingToCancel = null
+                }
+            }
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(RestroTokens.canvas)
+    ) {
+        // Top App Bar
+        Surface(
+            color = RestroTokens.canvas,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = RestroTokens.text
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "My Table Bookings",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = RestroTokens.text
+                        )
+                        Text(
+                            text = "Manage your dine-in table reservations",
+                            fontSize = 11.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { vm.loadUserTableBookings() },
+                    enabled = !vm.isLoadingBookings
+                ) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = "Refresh Bookings",
+                        tint = RestroTokens.coral
+                    )
+                }
+            }
+        }
+
+        if (vm.isLoadingBookings) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = RestroTokens.coral,
+                trackColor = Color.White.copy(alpha = 0.1f)
+            )
+        }
+
+        // Cancellation Notice Banner
+        vm.bookingCancellationNotice?.let { notice ->
+            Surface(
+                color = RestroTokens.green.copy(alpha = 0.15f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = RestroTokens.green,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = notice,
+                            color = RestroTokens.green,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    IconButton(
+                        onClick = { vm.dismissBookingCancellationNotice() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Dismiss",
+                            tint = RestroTokens.green,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Error Banner
+        vm.bookingManagementError?.let { err ->
+            Surface(
+                color = RestroTokens.coral.copy(alpha = 0.15f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = err,
+                            color = RestroTokens.coral,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    IconButton(
+                        onClick = { vm.dismissBookingManagementError() },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Dismiss",
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Filter Chips Row
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(TableBookingFilter.ALL_FILTERS) { filterName ->
+                val count = when (filterName) {
+                    TableBookingFilter.UPCOMING -> bookings.count { it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED }
+                    TableBookingFilter.COMPLETED -> bookings.count { it.status == TableBookingStatus.COMPLETED }
+                    TableBookingFilter.CANCELLED -> bookings.count { it.status == TableBookingStatus.CANCELLED }
+                    else -> bookings.size
+                }
+
+                val isSelected = currentFilter == filterName
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { vm.bookingManagementFilter = filterName },
+                    label = {
+                        Text(
+                            text = "$filterName ($count)",
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            fontSize = 12.sp
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = RestroTokens.coral,
+                        selectedLabelColor = Color.White,
+                        containerColor = RestroTokens.surface,
+                        labelColor = RestroTokens.muted
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSelected) RestroTokens.coral else Color.White.copy(alpha = 0.1f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        }
+
+        // Content: List or Empty State
+        if (filteredBookings.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.widthIn(max = 380.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color.White.copy(alpha = 0.05f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.EventSeat,
+                            contentDescription = null,
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+
+                    Text(
+                        text = when (currentFilter) {
+                            TableBookingFilter.UPCOMING -> "No upcoming reservations"
+                            TableBookingFilter.COMPLETED -> "No completed visits yet"
+                            TableBookingFilter.CANCELLED -> "No cancelled reservations"
+                            else -> "No table reservations found"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = RestroTokens.text
+                    )
+
+                    Text(
+                        text = when (currentFilter) {
+                            TableBookingFilter.UPCOMING -> "Reserve a table for your next dine-in lunch or dinner in seconds."
+                            TableBookingFilter.COMPLETED -> "Past completed table visits will be tracked here for reference."
+                            TableBookingFilter.CANCELLED -> "Cancelled bookings will appear here."
+                            else -> "Explore premier restaurants and book tables with live instant confirmation."
+                        },
+                        fontSize = 13.sp,
+                        color = RestroTokens.muted,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+
+                    Spacer(Modifier.height(4.dp))
+
+                    Button(
+                        onClick = onBookNewTable,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral)
+                    ) {
+                        Icon(Icons.Default.Restaurant, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Reserve a Table", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
+            ) {
+                items(filteredBookings, key = { it.id }) { booking ->
+                    CustomerBookingCard(
+                        booking = booking,
+                        onViewDetails = { detailsBooking = booking },
+                        onCancel = { bookingToCancel = booking }
+                    )
+                }
+            }
+        }
     }
 }
