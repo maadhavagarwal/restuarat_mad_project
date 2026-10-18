@@ -40,7 +40,8 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun WalkInPayBillSheet(
     onTableSelected: (tableNumber: String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    errorMessage: String? = null
 ) {
     // Preset table labels
     val presetTables = (1..12).map { "T$it" }
@@ -49,6 +50,12 @@ fun WalkInPayBillSheet(
     var selectedPreset by rememberSaveable { mutableStateOf<String?>(null) }
     var manualInput by rememberSaveable { mutableStateOf("") }
     var useManualInput by rememberSaveable { mutableStateOf(false) }
+    var localErrorDismissed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(errorMessage) {
+        localErrorDismissed = false
+    }
+    val displayedError = if (localErrorDismissed) null else errorMessage
 
     // Derived: the effective table number the user has chosen
     val effectiveTable = if (useManualInput) manualInput.trim() else selectedPreset
@@ -129,6 +136,7 @@ fun WalkInPayBillSheet(
                                 onClick = {
                                     selectedPreset = table
                                     useManualInput = false
+                                    localErrorDismissed = true
                                 },
                                 color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f)
                                 else Color(0xFF161920),
@@ -200,6 +208,7 @@ fun WalkInPayBillSheet(
                         useManualInput = true
                         selectedPreset = null
                     }
+                    localErrorDismissed = true
                 },
                 placeholder = { Text("e.g. T15, VIP-1, Patio-3") },
                 leadingIcon = {
@@ -275,6 +284,36 @@ fun WalkInPayBillSheet(
                             contentDescription = null,
                             tint = RestroTokens.coral,
                             modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+
+            // Error Message (e.g. No active unpaid bill found)
+            if (!displayedError.isNullOrBlank()) {
+                Surface(
+                    color = Color(0xFFEF4444).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = displayedError,
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }

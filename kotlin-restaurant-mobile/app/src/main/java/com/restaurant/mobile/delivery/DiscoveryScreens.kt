@@ -428,6 +428,7 @@ fun Discovery(vm: DeliveryViewModel) {
         }
 
     var showTabPaymentSheet by rememberSaveable { mutableStateOf(false) }
+    var showWalkInSheet by rememberSaveable { mutableStateOf(false) }
 
     LazyColumn(
         Modifier.fillMaxSize().testTag("discovery-list"),
@@ -438,6 +439,46 @@ fun Discovery(vm: DeliveryViewModel) {
         vm.activeTableTab?.let { tab ->
             item(key = "live-dine-in-tab") {
                 LiveDineInTabCard(tab = tab, onPayClick = { showTabPaymentSheet = true })
+            }
+        } ?: run {
+            // Horizontal quick-action card when activeTableTab == null (Prompt 11)
+            item(key = "walk-in-pay-bill-card") {
+                WalkInPayBillActionCard(onClick = {
+                    vm.walkInTableError = null
+                    showWalkInSheet = true
+                })
+            }
+        }
+
+        // Error notice if walk-in table bill lookup failed
+        if (vm.activeTableTab == null && vm.walkInTableError != null) {
+            item(key = "walk-in-error-notice") {
+                Surface(
+                    color = Color(0xFFEF4444).copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Info, null, tint = Color(0xFFEF4444), modifier = Modifier.size(20.dp))
+                        Text(
+                            vm.walkInTableError ?: "",
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 13.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { vm.walkInTableError = null },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Close, "Dismiss error", tint = RestroTokens.muted, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
             }
         }
 
@@ -891,6 +932,19 @@ fun Discovery(vm: DeliveryViewModel) {
             )
         }
     }
+
+    if (showWalkInSheet) {
+        WalkInPayBillSheet(
+            onTableSelected = { tableNumber ->
+                val tab = vm.lookupWalkInTableBill(tableNumber)
+                if (tab != null) {
+                    showWalkInSheet = false
+                }
+            },
+            onDismiss = { showWalkInSheet = false },
+            errorMessage = vm.walkInTableError
+        )
+    }
 }
 
 /**
@@ -1097,6 +1151,59 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
                     fontSize = 14.sp
                 )
             }
+        }
+    }
+}
+
+/**
+ * Horizontal quick-action card shown when activeTableTab is null.
+ * Prompts walk-in diners to pay their table bill directly from their phone.
+ */
+@Composable
+fun WalkInPayBillActionCard(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = RestroTokens.surface,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().testTag("walk-in-pay-bill-card")
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(RestroTokens.coral.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Receipt,
+                    contentDescription = null,
+                    tint = RestroTokens.coral,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Dining In? Pay Table Bill directly from your phone",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = RestroTokens.text
+                )
+                Text(
+                    "Tap to select your table and view bill",
+                    fontSize = 12.sp,
+                    color = RestroTokens.muted
+                )
+            }
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = "Pay Table Bill",
+                tint = RestroTokens.muted
+            )
         }
     }
 }

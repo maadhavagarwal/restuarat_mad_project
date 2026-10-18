@@ -563,6 +563,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
     // Active Dine-in Table Tab State & Real-Time Observer
     var activeTableTab by mutableStateOf<DiningTab?>(null)
+    var walkInTableError by mutableStateOf<String?>(null)
     private var tableTabObservationJob: Job? = null
     private var observedTableNumber: String? = null
 
@@ -607,6 +608,37 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             } catch (_: Exception) {
                 // Keep active tab state on network/transient failure
             }
+        }
+    }
+
+    /**
+     * Retrieves the active unpaid DiningTab for the selected table using the SQLite / Firebase architecture.
+     * If an active unpaid bill exists, updates activeTableTab and starts real-time observation.
+     * If no active unpaid bill exists, records the message:
+     * "No active unpaid bill found for Table {tableNumber}. Please check with your server."
+     *
+     * @return The active unpaid DiningTab if found, or null otherwise.
+     */
+    fun lookupWalkInTableBill(tableNumber: String): DiningTab? {
+        val cleanTable = tableNumber.trim()
+        if (cleanTable.isBlank()) {
+            val msg = "Please enter a valid table number."
+            walkInTableError = msg
+            error = msg
+            return null
+        }
+        val tab = sqlDb.getOpenTabForTable(cleanTable) ?: backend.getOpenTabForTable(cleanTable)
+        return if (tab != null && tab.status != "SETTLED") {
+            activeTableTab = tab
+            walkInTableError = null
+            error = null
+            observeActiveTableTab(cleanTable)
+            tab
+        } else {
+            val msg = "No active unpaid bill found for Table $cleanTable. Please check with your server."
+            walkInTableError = msg
+            error = msg
+            null
         }
     }
 
@@ -686,6 +718,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         tableTabObservationJob = null
         observedTableNumber = null
         activeTableTab = null
+        walkInTableError = null
         selectedBookingForDetails = null
         cancellingBookingId = null
         bookingCancellationNotice = null
