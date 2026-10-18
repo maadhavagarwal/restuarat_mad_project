@@ -729,4 +729,83 @@ class TableBookingTest {
         assertEquals("rest-2_T1", success2.booking.tableId)
         assertEquals("rest-2", success2.booking.restaurantId)
     }
+
+    @Test
+    fun testCrossRestaurantIsolationWithLegacyTableIdPrefix() {
+        val legacyBookingRest1 = TableBooking(
+            id = "TB-LEGACY-1",
+            userId = "u1",
+            userName = "User 1",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            status = TableBookingStatus.CONFIRMED,
+            restaurantId = ""
+        )
+
+        assertFalse(TableAllocationEngine.isSameRestaurant(legacyBookingRest1, "rest-2"))
+        assertTrue(TableAllocationEngine.isSameRestaurant(legacyBookingRest1, "rest-1"))
+
+        val resultRest2 = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-2",
+            restaurantName = "Trattoria Milano",
+            userId = "u2",
+            userName = "User 2",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = listOf(legacyBookingRest1)
+        )
+
+        assertTrue(resultRest2 is TableAllocationResult.Success)
+        val success = resultRest2 as TableAllocationResult.Success
+        assertEquals("T1", success.allocatedTable.tableNumber)
+        assertEquals("rest-2_T1", success.booking.tableId)
+    }
+
+    @Test
+    fun testRestaurantTableDefaultsInventoryScoping() {
+        val restId = "bistro-99"
+        val tables = RestaurantTableDefaults.getTablesForRestaurant(restId)
+        assertEquals(12, tables.size)
+        tables.forEach { table ->
+            assertEquals(restId, table.restaurantId)
+            assertTrue(table.tableId.startsWith("${restId}_"))
+            assertEquals("${restId}_${table.tableNumber}", table.tableId)
+        }
+    }
+
+    @Test
+    fun testConcurrencyLockIsSharedAcrossDatabaseInstances() {
+        val lock1 = RestroSqlDatabase.ALLOCATION_LOCK
+        val lock2 = RestroSqlDatabase.ALLOCATION_LOCK
+        assertTrue(lock1 === lock2)
+    }
+
+    @Test
+    fun testComputeBookingValidationErrorAllScenarios() {
+        val validDraft = TableBookingDraft(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 4,
+            seatingArea = "Main Dining Room"
+        )
+        assertNull(computeBookingValidationError(validDraft))
+
+        assertEquals("Please select a booking date to proceed", computeBookingValidationError(validDraft.copy(bookingDate = "")))
+        assertEquals("The selected booking date cannot be in the past", computeBookingValidationError(validDraft.copy(bookingDate = "2020-01-01")))
+        assertEquals("Please select a dining time slot to proceed", computeBookingValidationError(validDraft.copy(timeSlot = "")))
+        assertEquals("Party size must be at least 1 guest", computeBookingValidationError(validDraft.copy(partySize = 0)))
+        assertEquals("Party size must be at least 1 guest", computeBookingValidationError(validDraft.copy(partySize = -2)))
+        assertEquals("Party size cannot exceed 20 guests", computeBookingValidationError(validDraft.copy(partySize = 21)))
+        assertEquals("Please select a seating area preference", computeBookingValidationError(validDraft.copy(seatingArea = "")))
+    }
 }

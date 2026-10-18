@@ -32,6 +32,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         const val TABLE_STAFF_PINS = "staff_pins"
         const val TABLE_BOOKINGS = "table_bookings"
         const val TABLE_TABLE_BOOKINGS = TABLE_BOOKINGS
+
+        val ALLOCATION_LOCK = Any()
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -865,15 +867,14 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return affected > 0
     }
 
-    private val allocationLock = Any()
-
     /**
      * Atomically validates booking parameters, rechecks slot availability inside an exclusive
      * SQLite transaction, allocates the best-fit table matching capacity and seating area,
      * and inserts the confirmed booking.
      *
      * Concurrency & Invariants:
-     * - Uses synchronized(allocationLock) and SQLite transaction to protect against concurrent overlapping bookings.
+     * - Uses synchronized(ALLOCATION_LOCK) across all database helper instances and SQLite transaction
+     *   to protect against concurrent overlapping bookings.
      * - Re-reads active reservations directly from SQLite inside the transaction.
      * - On failure or conflict, the transaction is rolled back leaving no partial or orphaned records.
      */
@@ -891,7 +892,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         inventory: List<RestaurantTable> = RestaurantTableDefaults.DEFAULT_TABLES
     ): TableAllocationResult {
         val db = writableDatabase
-        synchronized(allocationLock) {
+        synchronized(ALLOCATION_LOCK) {
             db.beginTransaction()
             try {
                 // Fetch existing bookings for this date and time slot inside the transaction
@@ -969,17 +970,22 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         timeSlot: String,
         inventory: List<RestaurantTable> = RestaurantTableDefaults.DEFAULT_TABLES
     ): List<RestaurantTable> {
+        val effectiveInventory = if (inventory === RestaurantTableDefaults.DEFAULT_TABLES && restaurantId.isNotBlank()) {
+            RestaurantTableDefaults.getTablesForRestaurant(restaurantId)
+        } else {
+            inventory
+        }
         val activeBookings = getTableBookingsForSlot(bookingDate, timeSlot)
         val blockingStatuses = setOf(TableBookingStatus.CONFIRMED, TableBookingStatus.SEATED)
         val bookedNumbers = activeBookings
             .filter {
                 blockingStatuses.contains(it.status) &&
-                (it.restaurantId.isBlank() || restaurantId.isBlank() || it.restaurantId == restaurantId)
+                TableAllocationEngine.isSameRestaurant(it, restaurantId)
             }
             .map { it.tableNumber }
             .toSet()
 
-        return inventory.filter { !bookedNumbers.contains(it.tableNumber) }
+        return effectiveInventory.filter { !bookedNumbers.contains(it.tableNumber) }
     }
 
     private fun cursorToTableBooking(c: Cursor): TableBooking {

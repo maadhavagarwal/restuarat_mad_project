@@ -206,6 +206,7 @@ data class RestaurantTable(
     val tableNumber: String,
     val capacity: Int,
     val seatingArea: String,
+    val restaurantId: String = "",
 )
 
 object RestaurantTableDefaults {
@@ -223,6 +224,15 @@ object RestaurantTableDefaults {
         RestaurantTable("T11", "T11", 2, "Rooftop Lounge"),
         RestaurantTable("T12", "T12", 4, "Rooftop Lounge"),
     )
+
+    fun getTablesForRestaurant(restaurantId: String): List<RestaurantTable> {
+        return DEFAULT_TABLES.map { table ->
+            table.copy(
+                tableId = if (restaurantId.isNotBlank()) "${restaurantId}_${table.tableNumber}" else table.tableId,
+                restaurantId = restaurantId
+            )
+        }
+    }
 }
 
 sealed class TableAllocationResult {
@@ -231,6 +241,20 @@ sealed class TableAllocationResult {
 }
 
 object TableAllocationEngine {
+    /**
+     * Determines whether a booking belongs to the target restaurant.
+     * Prevents cross-restaurant availability collisions while maintaining backward compatibility.
+     */
+    fun isSameRestaurant(booking: TableBooking, targetRestaurantId: String): Boolean {
+        return when {
+            targetRestaurantId.isBlank() -> true
+            booking.restaurantId.isNotBlank() -> booking.restaurantId == targetRestaurantId
+            booking.tableId.startsWith("${targetRestaurantId}_") -> true
+            booking.tableId.contains("_") -> false
+            else -> false
+        }
+    }
+
     /**
      * Determines table availability and selects the best-fit table matching the requested criteria.
      *
@@ -267,6 +291,12 @@ object TableAllocationEngine {
             return TableAllocationResult.Failure("Party size cannot exceed 20 guests.")
         }
 
+        val effectiveInventory = if (inventory === RestaurantTableDefaults.DEFAULT_TABLES && restaurantId.isNotBlank()) {
+            RestaurantTableDefaults.getTablesForRestaurant(restaurantId)
+        } else {
+            inventory
+        }
+
         val blockingStatuses = setOf(TableBookingStatus.CONFIRMED, TableBookingStatus.SEATED)
 
         val bookedTableNumbers = existingBookings
@@ -274,17 +304,17 @@ object TableAllocationEngine {
                 booking.bookingDate == bookingDate &&
                 booking.timeSlot == timeSlot &&
                 blockingStatuses.contains(booking.status) &&
-                (booking.restaurantId.isBlank() || restaurantId.isBlank() || booking.restaurantId == restaurantId)
+                isSameRestaurant(booking, restaurantId)
             }
             .map { it.tableNumber }
             .toSet()
 
-        val availableTables = inventory.filter { !bookedTableNumbers.contains(it.tableNumber) }
+        val availableTables = effectiveInventory.filter { !bookedTableNumbers.contains(it.tableNumber) }
 
         val areaMatching = availableTables.filter { it.seatingArea.equals(seatingArea, ignoreCase = true) }
 
         if (areaMatching.isEmpty()) {
-            val totalInArea = inventory.filter { it.seatingArea.equals(seatingArea, ignoreCase = true) }
+            val totalInArea = effectiveInventory.filter { it.seatingArea.equals(seatingArea, ignoreCase = true) }
             val reason = if (totalInArea.isEmpty()) {
                 "Seating area '$seatingArea' does not exist in this restaurant."
             } else if (totalInArea.none { it.capacity >= partySize }) {
@@ -308,7 +338,13 @@ object TableAllocationEngine {
             compareBy<RestaurantTable> { it.capacity }.thenBy { it.tableNumber }
         ).first()
 
-        val assignedTableId = if (restaurantId.isNotBlank()) "${restaurantId}_${chosenTable.tableNumber}" else chosenTable.tableId
+        val assignedTableId = if (chosenTable.restaurantId.isNotBlank()) {
+            chosenTable.tableId
+        } else if (restaurantId.isNotBlank()) {
+            "${restaurantId}_${chosenTable.tableNumber}"
+        } else {
+            chosenTable.tableId
+        }
 
         val confirmedBooking = TableBooking(
             id = TableBooking.generateId(),
