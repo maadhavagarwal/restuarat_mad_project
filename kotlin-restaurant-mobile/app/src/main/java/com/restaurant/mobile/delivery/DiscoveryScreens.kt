@@ -950,6 +950,13 @@ fun Discovery(vm: DeliveryViewModel) {
             errorMessage = vm.walkInTableError
         )
     }
+
+    if (vm.showDineInReceipt && vm.lastDineInPaymentResult != null) {
+        DineInReceiptBottomSheet(
+            receipt = vm.lastDineInPaymentResult!!,
+            onDismiss = { vm.dismissDineInReceipt() }
+        )
+    }
 }
 
 /**

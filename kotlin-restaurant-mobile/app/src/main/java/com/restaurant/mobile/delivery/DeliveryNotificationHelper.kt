@@ -24,6 +24,10 @@ class DeliveryNotificationHelper(private val context: Context) {
         const val NOTIFICATION_ID_PLACED = 1001
         const val NOTIFICATION_ID_PROXIMITY = 1002
         const val NOTIFICATION_ID_DELIVERED = 1003
+        const val NOTIFICATION_ID_DINE_IN_SETTLED = 1004
+
+        fun formatDineInSettlementMessage(total: String, tableNumber: String): String =
+            "Bill Settled! Payment of $total for Table $tableNumber verified. Thank you for dining with us!"
     }
 
     init {
@@ -129,6 +133,31 @@ class DeliveryNotificationHelper(private val context: Context) {
             .setAutoCancel(true)
 
         sendNotification(NOTIFICATION_ID_DELIVERED, builder)
+    }
+
+    /**
+     * Notification 4 (Dine-In Bill Settled):
+     * "Bill Settled! Payment of {total} for Table {tableNumber} verified. Thank you for dining with us!"
+     */
+    fun notifyDineInBillSettled(total: String, tableNumber: String) {
+        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val message = formatDineInSettlementMessage(total, tableNumber)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_restro)
+            .setContentTitle("Bill Settled! 🎉")
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setSound(soundUri)
+            .setContentIntent(getPendingIntent())
+            .setAutoCancel(true)
+
+        sendNotification(NOTIFICATION_ID_DINE_IN_SETTLED, builder)
+    }
+
+    fun notifyDineInBillSettled(totalPaise: Long, tableNumber: String) {
+        notifyDineInBillSettled(money(totalPaise), tableNumber)
     }
 
     private fun sendNotification(notificationId: Int, builder: NotificationCompat.Builder) {

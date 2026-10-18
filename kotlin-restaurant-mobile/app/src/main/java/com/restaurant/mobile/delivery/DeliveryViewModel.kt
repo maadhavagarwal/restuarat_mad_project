@@ -566,8 +566,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var activeTableTab by mutableStateOf<DiningTab?>(null)
     var walkInTableError by mutableStateOf<String?>(null)
     var lastDineInPaymentResult by mutableStateOf<DineInPaymentResult?>(null)
+    var showDineInReceipt by mutableStateOf(false)
     private var tableTabObservationJob: Job? = null
     private var observedTableNumber: String? = null
+
+    fun dismissDineInReceipt() {
+        showDineInReceipt = false
+    }
 
     /**
      * Connects activeTableTab to the reactive Flow from RestroFirebaseBackendEngine.
@@ -730,7 +735,34 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         // 3. Update floor-plan table status to Available
         sqlDb.updateFloorTableStatus(targetTab.tableNumber, "Available")
 
-        // 4. Clear activeTableTab and stop observation so customer homepage returns to normal state
+        // 4. Update last payment result and show digital GST receipt
+        val resolvedTxnId = transactionId?.trim()?.ifBlank { null }
+            ?: lastDineInPaymentResult?.transactionId
+            ?: "TXN-${UUID.randomUUID().toString().take(8).uppercase()}"
+
+        val result = DineInPaymentResult(
+            tab = targetTab.copy(
+                status = "SETTLED",
+                paymentMethod = paymentMethod,
+                updatedAt = Instant.now().toString()
+            ),
+            paymentMethod = paymentMethod,
+            transactionId = resolvedTxnId
+        )
+        lastDineInPaymentResult = result
+        showDineInReceipt = true
+
+        // 5. Trigger native notification: "Bill Settled! Payment of {total} for Table {tableNumber} verified. Thank you for dining with us!"
+        try {
+            notificationHelper.notifyDineInBillSettled(
+                total = money(targetTab.total),
+                tableNumber = targetTab.tableNumber
+            )
+        } catch (_: Exception) {
+            // Graceful fallback in environments without notification service
+        }
+
+        // 6. Clear activeTableTab and stop observation so customer homepage returns to normal state
         tableTabObservationJob?.cancel()
         tableTabObservationJob = null
         observedTableNumber = null
@@ -834,6 +866,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         activeTableTab = null
         walkInTableError = null
         lastDineInPaymentResult = null
+        showDineInReceipt = false
         selectedBookingForDetails = null
         cancellingBookingId = null
         bookingCancellationNotice = null
