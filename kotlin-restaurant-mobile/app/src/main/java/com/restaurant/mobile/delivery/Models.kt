@@ -448,3 +448,29 @@ object TableBookingManagementRules {
         return TableCancellationResult.Success(booking.copy(status = TableBookingStatus.CANCELLED))
     }
 }
+
+data class TableBillItem(
+    val dishId: String,
+    val name: String,
+    val quantity: Int,
+    val price: Long,
+    val total: Long,
+    val orderedAt: String = Instant.now().toString()
+)
+
+data class DiningTab(
+    val id: String = UUID.randomUUID().toString(),
+    val tableNumber: String,
+    val bookingId: String? = null,
+    val userId: String? = null,
+    val userName: String = "Guest Diner",
+    val items: List<TableBillItem> = emptyList(),
+    val subtotal: Long = 0L,
+    val tax: Long = 0L,          // 5% GST
+    val serviceCharge: Long = 0L, // Optional 5% service charge
+    val total: Long = 0L,
+    val status: String = "OPEN",  // OPEN, PAYMENT_PENDING, SETTLED
+    val paymentMethod: String? = null,
+    val updatedAt: String = Instant.now().toString()
+)
+
