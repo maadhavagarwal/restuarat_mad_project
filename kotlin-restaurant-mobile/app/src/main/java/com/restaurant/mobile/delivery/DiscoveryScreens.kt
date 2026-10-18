@@ -2,6 +2,14 @@ package com.restaurant.mobile.delivery
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
@@ -419,11 +427,20 @@ fun Discovery(vm: DeliveryViewModel) {
                     })
         }
 
+    var showTabPaymentSheet by rememberSaveable { mutableStateOf(false) }
+
     LazyColumn(
         Modifier.fillMaxSize().testTag("discovery-list"),
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
+        // Live Dine-In Tab Card (Prompt 10)
+        vm.activeTableTab?.let { tab ->
+            item(key = "live-dine-in-tab") {
+                LiveDineInTabCard(tab = tab, onPayClick = { showTabPaymentSheet = true })
+            }
+        }
+
         item {
             Heading(
                 if (detail) restaurant?.name ?: "Restaurant"
@@ -861,6 +878,226 @@ fun Discovery(vm: DeliveryViewModel) {
             vm = vm,
             onDismiss = { showLandmarkSheet = false }
         )
+    }
+
+    if (showTabPaymentSheet) {
+        vm.activeTableTab?.let { tab ->
+            PaymentGatewayBottomSheet(
+                vm = vm,
+                totalAmount = tab.total,
+                selectedAddressId = "DINE_IN_${tab.tableNumber}",
+                initialMethod = "UPI",
+                onDismiss = { showTabPaymentSheet = false }
+            )
+        }
+    }
+}
+
+/**
+ * Live Dine-In Tab card displayed at the top of the Discovery screen
+ * when the user has an active dining session. Shows real-time bill
+ * with pulsing status indicator, expandable item list, and pay CTA.
+ */
+@Composable
+fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 800),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse-alpha"
+    )
+
+    Surface(
+        color = RestroTokens.surface,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header row: Table badge + pulsing status
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Table number badge
+                    Surface(
+                        color = RestroTokens.coral.copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            "TABLE ${tab.tableNumber}",
+                            color = RestroTokens.coral,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                    // Pulsing green dot + "Dining in Session"
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF22C55E).copy(alpha = pulseAlpha))
+                        )
+                        Text(
+                            "Dining in Session",
+                            color = Color(0xFF22C55E),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Title
+            Text(
+                "Live Dine-In Tab \u2014 Table ${tab.tableNumber}",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = RestroTokens.text
+            )
+
+            // Expandable items list
+            Surface(
+                onClick = { expanded = !expanded },
+                color = Color.Transparent,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${tab.items.size} item${if (tab.items.size != 1) "s" else ""} ordered",
+                        fontSize = 13.sp,
+                        color = RestroTokens.muted
+                    )
+                    Icon(
+                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "Collapse items" else "Expand items",
+                        tint = RestroTokens.muted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    tab.items.forEach { item ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    "x${item.quantity}",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RestroTokens.coral
+                                )
+                                Text(
+                                    item.name,
+                                    fontSize = 13.sp,
+                                    color = RestroTokens.text,
+                                    maxLines = 1
+                                )
+                            }
+                            Text(
+                                money(item.total),
+                                fontSize = 13.sp,
+                                color = RestroTokens.text
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+            // Bill breakdown
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Subtotal", fontSize = 13.sp, color = RestroTokens.muted)
+                    Text(money(tab.subtotal), fontSize = 13.sp, color = RestroTokens.text)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("GST (5%)", fontSize = 13.sp, color = RestroTokens.muted)
+                    Text(money(tab.tax), fontSize = 13.sp, color = RestroTokens.text)
+                }
+                if (tab.serviceCharge > 0L) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Service Charge", fontSize = 13.sp, color = RestroTokens.muted)
+                        Text(money(tab.serviceCharge), fontSize = 13.sp, color = RestroTokens.text)
+                    }
+                }
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Grand Total", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RestroTokens.text)
+                    Text(money(tab.total), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = RestroTokens.coral)
+                }
+            }
+
+            // CTA Button
+            Button(
+                onClick = onPayClick,
+                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Icon(
+                    Icons.Default.Payment,
+                    contentDescription = null,
+                    tint = RestroTokens.canvas,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Review & Pay Table Bill (${money(tab.total)})",
+                    color = RestroTokens.canvas,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+        }
     }
 }
 
