@@ -930,7 +930,8 @@ fun Discovery(vm: DeliveryViewModel) {
                 diningTab = tab,
                 initialMethod = "UPI",
                 onPaymentSuccess = { paymentMethod, transactionId ->
-                    vm.recordDineInPaymentAuthorized(tab, paymentMethod, transactionId)
+                    vm.settleDineInTab(tab, paymentMethod, transactionId)
+                    showTabPaymentSheet = false
                 },
                 onDismiss = { showTabPaymentSheet = false }
             )

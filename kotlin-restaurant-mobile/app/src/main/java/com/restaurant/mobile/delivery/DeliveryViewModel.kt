@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -602,7 +603,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         tableTabObservationJob = viewModelScope.launch {
             try {
                 backend.listenToTableTab(targetTable).collect { updatedTab ->
-                    activeTableTab = updatedTab
+                    if (updatedTab.status == "SETTLED") {
+                        activeTableTab = null
+                        tableTabObservationJob?.cancel()
+                        tableTabObservationJob = null
+                        observedTableNumber = null
+                    } else {
+                        activeTableTab = updatedTab
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -658,6 +666,95 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         lastDineInPaymentResult = result
         return result
     }
+
+    /**
+     * Settles an active dine-in table tab after successful payment authorization.
+     *
+     * 1. Updates the corresponding dining_tabs record to SETTLED and stores the payment method in SQLite.
+     * 2. Updates the associated table_bookings record to COMPLETED, where applicable.
+     * 3. Updates the floor-plan table status to Available, using the existing table and booking logic.
+     * 4. Clears activeTableTab, walkInTableError, and cancels real-time observation so the customer
+     *    homepage returns to its normal state.
+     *
+     * @param tab The DiningTab to settle (defaults to activeTableTab).
+     * @param paymentMethod The authorized payment method (e.g., UPI, Card, Netbanking).
+     * @param transactionId The payment authorization transaction ID.
+     * @return True if settlement succeeded, false otherwise.
+     */
+    fun settleDineInTab(
+        tab: DiningTab? = activeTableTab,
+        paymentMethod: String,
+        transactionId: String? = null
+    ): Boolean {
+        val targetTab = tab ?: activeTableTab ?: return false
+
+        // 1. Update corresponding dining_tabs record to SETTLED and store payment method
+        val settledInDb = sqlDb.markTabSettled(targetTab.id, paymentMethod)
+        if (!settledInDb) {
+            sqlDb.saveOrUpdateTab(
+                targetTab.copy(
+                    status = "SETTLED",
+                    paymentMethod = paymentMethod,
+                    updatedAt = Instant.now().toString()
+                )
+            )
+        }
+
+        // 2. Update associated table_bookings record to COMPLETED where applicable
+        val targetBookingId = if (!targetTab.bookingId.isNullOrBlank()) {
+            targetTab.bookingId
+        } else {
+            val inMemory = userTableBookings.firstOrNull {
+                it.tableNumber.equals(targetTab.tableNumber, ignoreCase = true) &&
+                    (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
+            }?.id
+            inMemory ?: sqlDb.getAllTableBookings().firstOrNull {
+                it.tableNumber.equals(targetTab.tableNumber, ignoreCase = true) &&
+                    (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
+            }?.id
+        }
+
+        if (!targetBookingId.isNullOrBlank()) {
+            sqlDb.updateTableBookingStatus(targetBookingId, TableBookingStatus.COMPLETED)
+            userTableBookings = userTableBookings.map {
+                if (it.id == targetBookingId) it.copy(status = TableBookingStatus.COMPLETED) else it
+            }
+            if (selectedBookingForDetails?.id == targetBookingId) {
+                selectedBookingForDetails = selectedBookingForDetails?.copy(status = TableBookingStatus.COMPLETED)
+            }
+            if (confirmedBooking?.id == targetBookingId) {
+                confirmedBooking = confirmedBooking?.copy(status = TableBookingStatus.COMPLETED)
+            }
+        }
+
+        // 3. Update floor-plan table status to Available
+        sqlDb.updateFloorTableStatus(targetTab.tableNumber, "Available")
+
+        // 4. Clear activeTableTab and stop observation so customer homepage returns to normal state
+        tableTabObservationJob?.cancel()
+        tableTabObservationJob = null
+        observedTableNumber = null
+        activeTableTab = null
+        walkInTableError = null
+
+        return true
+    }
+
+    /**
+     * Overload for settling from a DineInPaymentResult.
+     */
+    fun settleDineInTab(result: DineInPaymentResult): Boolean {
+        return settleDineInTab(
+            tab = result.tab,
+            paymentMethod = result.paymentMethod,
+            transactionId = result.transactionId
+        )
+    }
+
+    /**
+     * Resolves the current floor-plan status of a table ("Available" or "Occupied").
+     */
+    fun getFloorTableStatus(tableNumber: String): String = sqlDb.getFloorTableStatus(tableNumber)
 
     fun loadUserTableBookings() {
         val currentUserId = profile?.id ?: "guest"

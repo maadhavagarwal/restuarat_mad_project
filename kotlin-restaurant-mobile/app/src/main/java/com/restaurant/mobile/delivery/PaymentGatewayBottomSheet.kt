@@ -127,6 +127,7 @@ fun PaymentGatewayBottomSheet(
             if (isDineIn) {
                 effectiveDiningTab?.let { tab ->
                     vm.recordDineInPaymentAuthorized(tab, methodLabel, transactionId)
+                    vm.settleDineInTab(tab, methodLabel, transactionId)
                 }
                 onPaymentSuccess?.invoke(methodLabel, transactionId)
             } else {

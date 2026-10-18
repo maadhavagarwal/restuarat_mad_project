@@ -1200,6 +1200,49 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return affected > 0
     }
 
+    /**
+     * Resolves the real-time floor status of a table using table bookings and dining tabs.
+     * Returns "Occupied" if an open dining tab or active (CONFIRMED/SEATED) booking exists,
+     * otherwise returns "Available".
+     */
+    fun getFloorTableStatus(tableNumber: String): String {
+        val clean = tableNumber.trim()
+        if (clean.isBlank()) return "Available"
+        val openTab = getOpenTabForTable(clean)
+        if (openTab != null && openTab.status != "SETTLED") {
+            return "Occupied"
+        }
+        val activeBooking = getAllTableBookings().firstOrNull {
+            it.tableNumber.equals(clean, ignoreCase = true) &&
+                (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
+        }
+        return if (activeBooking != null) "Occupied" else "Available"
+    }
+
+    /**
+     * Updates the floor-plan table status to the specified status (e.g. "Available").
+     * When marked "Available", completes any active bookings for the table and settles open tabs.
+     */
+    fun updateFloorTableStatus(tableNumber: String, status: String): Boolean {
+        val clean = tableNumber.trim()
+        if (clean.isBlank()) return false
+        if (status.equals("Available", ignoreCase = true)) {
+            val activeBookings = getAllTableBookings().filter {
+                it.tableNumber.equals(clean, ignoreCase = true) &&
+                    (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
+            }
+            activeBookings.forEach { booking ->
+                updateTableBookingStatus(booking.id, TableBookingStatus.COMPLETED)
+            }
+            val openTab = getOpenTabForTable(clean)
+            if (openTab != null && openTab.status != "SETTLED") {
+                markTabSettled(openTab.id, openTab.paymentMethod ?: "Cash")
+            }
+            return true
+        }
+        return false
+    }
+
     fun getDiningTab(id: String): DiningTab? {
         if (id.isBlank()) return null
         val db = readableDatabase

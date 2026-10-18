@@ -335,6 +335,10 @@ class RestroFirebaseBackendEngine(private val context: Context) {
 
     fun markTabSettled(tabId: String, paymentMethod: String): Boolean = sqlDb.markTabSettled(tabId, paymentMethod)
 
+    fun getFloorTableStatus(tableNumber: String): String = sqlDb.getFloorTableStatus(tableNumber)
+
+    fun updateFloorTableStatus(tableNumber: String, status: String): Boolean = sqlDb.updateFloorTableStatus(tableNumber, status)
+
     /**
      * Real-time reactive listener for active dine-in table tab.
      * Continuously emits updates for the specified table from the SQLite / Firebase storage engine.
