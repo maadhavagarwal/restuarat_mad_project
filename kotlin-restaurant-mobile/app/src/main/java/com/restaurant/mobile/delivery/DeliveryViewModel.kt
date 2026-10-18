@@ -559,6 +559,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var bookingManagementFilter by mutableStateOf(TableBookingFilter.UPCOMING)
     var bookingCancellationNotice by mutableStateOf<String?>(null)
 
+    // Active Dine-in Table Tab State
+    var activeTableTab by mutableStateOf<DiningTab?>(null)
+
     fun loadUserTableBookings() {
         val currentUserId = profile?.id ?: "guest"
         isLoadingBookings = true
@@ -631,6 +634,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         orders = emptyList()
         favorites = emptyList()
         userTableBookings = emptyList()
+        activeTableTab = null
         selectedBookingForDetails = null
         cancellingBookingId = null
         bookingCancellationNotice = null
@@ -697,6 +701,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             if (storedBookings.isNotEmpty()) {
                 userTableBookings = storedBookings
             }
+            profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
             if (api.token != null) refreshAccount()
             starting = false
         }
@@ -747,12 +752,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             orders = api.call("/orders")
             val currentUserId = profile?.id ?: "guest"
             userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
+            profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
         } catch (_: Exception) {
             if (profile == null) {
                 profile = session.loadProfile()
             }
             val currentUserId = profile?.id ?: "guest"
             userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
+            profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
         }
     }
 
@@ -765,6 +772,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             catalog = MockCatalog.sample
         }
+        profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
         if (api.token != null) refreshAccount()
     }
 
