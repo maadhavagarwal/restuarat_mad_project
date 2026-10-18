@@ -19,7 +19,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "restro_delivery.db"
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 6
 
         // Table Names
         const val TABLE_USERS = "users"
@@ -32,6 +32,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         const val TABLE_STAFF_PINS = "staff_pins"
         const val TABLE_BOOKINGS = "table_bookings"
         const val TABLE_TABLE_BOOKINGS = TABLE_BOOKINGS
+        const val TABLE_DINING_TABS = "dining_tabs"
+        const val TABLE_TABS = TABLE_DINING_TABS
 
         val ALLOCATION_LOCK = Any()
     }
@@ -164,6 +166,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
         // Table Bookings Table
         createTableBookingsTable(db)
+
+        // Dining Tabs Table
+        createDiningTabsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -174,6 +179,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_id TEXT NOT NULL DEFAULT '';")
             db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_name TEXT NOT NULL DEFAULT '';")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_restaurant ON $TABLE_BOOKINGS (restaurant_id, booking_date, time_slot);")
+        }
+        if (oldVersion < 6) {
+            createDiningTabsTable(db)
         }
     }
 
@@ -203,6 +211,34 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_table_id ON $TABLE_BOOKINGS (table_id);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_user_id ON $TABLE_BOOKINGS (user_id);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_restaurant ON $TABLE_BOOKINGS (restaurant_id, booking_date, time_slot);")
+    }
+
+    private fun createDiningTabsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_DINING_TABS (
+                id TEXT PRIMARY KEY,
+                table_number TEXT NOT NULL,
+                booking_id TEXT,
+                user_id TEXT,
+                user_name TEXT NOT NULL DEFAULT 'Guest Diner',
+                items_json TEXT NOT NULL DEFAULT '[]',
+                subtotal INTEGER NOT NULL DEFAULT 0,
+                tax INTEGER NOT NULL DEFAULT 0,
+                gst INTEGER NOT NULL DEFAULT 0,
+                service_charge INTEGER NOT NULL DEFAULT 0,
+                total INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                payment_method TEXT,
+                updated_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_table_number ON $TABLE_DINING_TABS (table_number);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_user_id ON $TABLE_DINING_TABS (user_id);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_status ON $TABLE_DINING_TABS (status);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_table_status ON $TABLE_DINING_TABS (table_number, status);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_user_status ON $TABLE_DINING_TABS (user_id, status);")
     }
 
     // -------------------------------------------------------------
