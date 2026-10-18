@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 data class AuthResult(val token: String, val profile: Profile)
@@ -529,6 +530,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                         bookingConfirmationError = null
                         isConfirmingBooking = false
                         userTableBookings = listOf(result.booking) + userTableBookings.filterNot { it.id == result.booking.id }
+                        observeActiveTableTab(result.booking.tableNumber)
                         if (onSuccess != null) {
                             onSuccess(result.booking)
                         } else {
@@ -559,8 +561,54 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var bookingManagementFilter by mutableStateOf(TableBookingFilter.UPCOMING)
     var bookingCancellationNotice by mutableStateOf<String?>(null)
 
-    // Active Dine-in Table Tab State
+    // Active Dine-in Table Tab State & Real-Time Observer
     var activeTableTab by mutableStateOf<DiningTab?>(null)
+    private var tableTabObservationJob: Job? = null
+    private var observedTableNumber: String? = null
+
+    /**
+     * Connects activeTableTab to the reactive Flow from RestroFirebaseBackendEngine.
+     * Observes real-time additions of dishes/items by waiters without requiring an app restart.
+     */
+    fun observeActiveTableTab(explicitTableNumber: String? = null) {
+        val user = profile
+        val bookingTable = userTableBookings
+            .firstOrNull { it.status == TableBookingStatus.SEATED || it.status == TableBookingStatus.CONFIRMED }
+            ?.tableNumber
+            ?: (user?.id?.let { sqlDb.getTableBookingsForUser(it) }
+                ?.firstOrNull { it.status == TableBookingStatus.SEATED || it.status == TableBookingStatus.CONFIRMED }
+                ?.tableNumber)
+
+        val targetTable = explicitTableNumber?.trim()?.ifBlank { null }
+            ?: activeTableTab?.tableNumber
+            ?: bookingTable
+
+        if (targetTable.isNullOrBlank()) {
+            tableTabObservationJob?.cancel()
+            tableTabObservationJob = null
+            observedTableNumber = null
+            return
+        }
+
+        if (observedTableNumber.equals(targetTable, ignoreCase = true) && tableTabObservationJob?.isActive == true) {
+            return
+        }
+
+        tableTabObservationJob?.cancel()
+        observedTableNumber = targetTable
+
+        tableTabObservationJob = viewModelScope.launch {
+            try {
+                backend.listenToTableTab(targetTable).collect { updatedTab ->
+                    activeTableTab = updatedTab
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Keep active tab state on network/transient failure
+            }
+        }
+    }
 
     fun loadUserTableBookings() {
         val currentUserId = profile?.id ?: "guest"
@@ -634,6 +682,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         orders = emptyList()
         favorites = emptyList()
         userTableBookings = emptyList()
+        tableTabObservationJob?.cancel()
+        tableTabObservationJob = null
+        observedTableNumber = null
         activeTableTab = null
         selectedBookingForDetails = null
         cancellingBookingId = null
@@ -702,6 +753,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 userTableBookings = storedBookings
             }
             profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
+            observeActiveTableTab()
             if (api.token != null) refreshAccount()
             starting = false
         }
@@ -753,6 +805,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             val currentUserId = profile?.id ?: "guest"
             userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
             profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
+            observeActiveTableTab()
         } catch (_: Exception) {
             if (profile == null) {
                 profile = session.loadProfile()
@@ -760,6 +813,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             val currentUserId = profile?.id ?: "guest"
             userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
             profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
+            observeActiveTableTab()
         }
     }
 
@@ -773,6 +827,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             catalog = MockCatalog.sample
         }
         profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
+        observeActiveTableTab()
         if (api.token != null) refreshAccount()
     }
 
