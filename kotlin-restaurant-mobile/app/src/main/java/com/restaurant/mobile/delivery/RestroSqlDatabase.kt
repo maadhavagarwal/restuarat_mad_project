@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.time.Instant
+import java.util.UUID
 
 /**
  * Embedded Kotlin SQL Database Engine for Restro
@@ -1115,6 +1116,154 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             createdAt = if (c.isNull(createdAtIdx)) Instant.now().toString() else (c.getString(createdAtIdx) ?: Instant.now().toString()),
             restaurantId = if (restIdIdx != -1 && !c.isNull(restIdIdx)) c.getString(restIdIdx) else "",
             restaurantName = if (restNameIdx != -1 && !c.isNull(restNameIdx)) c.getString(restNameIdx) else ""
+        )
+    }
+
+    // -------------------------------------------------------------
+    // DINING TABS
+    // -------------------------------------------------------------
+
+    fun getOpenTabForTable(tableNumber: String): DiningTab? {
+        if (tableNumber.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_DINING_TABS WHERE table_number = ? COLLATE NOCASE AND status != 'SETTLED' ORDER BY updated_at DESC LIMIT 1",
+            arrayOf(tableNumber.trim())
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    fun getOpenTabForUser(userId: String): DiningTab? {
+        if (userId.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_DINING_TABS WHERE user_id = ? AND status != 'SETTLED' ORDER BY updated_at DESC LIMIT 1",
+            arrayOf(userId.trim())
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    fun saveOrUpdateTab(tab: DiningTab): Boolean {
+        if (tab.tableNumber.isBlank()) return false
+        val db = writableDatabase
+        val effectiveId = if (tab.id.isNotBlank()) tab.id else UUID.randomUUID().toString()
+        val updatedAt = if (tab.updatedAt.isNotBlank()) tab.updatedAt else Instant.now().toString()
+        val cv = ContentValues().apply {
+            put("id", effectiveId)
+            put("table_number", tab.tableNumber.trim())
+            put("booking_id", tab.bookingId)
+            put("user_id", tab.userId)
+            put("user_name", tab.userName)
+            put("items_json", gson.toJson(tab.items))
+            put("subtotal", tab.subtotal)
+            put("tax", tab.tax)
+            put("gst", tab.tax)
+            put("service_charge", tab.serviceCharge)
+            put("total", tab.total)
+            put("status", tab.status)
+            put("payment_method", tab.paymentMethod)
+            put("updated_at", updatedAt)
+        }
+        val rowId = try {
+            db.insertWithOnConflict(TABLE_DINING_TABS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        } catch (_: Exception) {
+            -1L
+        }
+        return rowId != -1L
+    }
+
+    fun markTabSettled(tabId: String, paymentMethod: String): Boolean {
+        if (tabId.isBlank()) return false
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("status", "SETTLED")
+            put("payment_method", paymentMethod)
+            put("updated_at", Instant.now().toString())
+        }
+        val affected = try {
+            db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId.trim()))
+        } catch (_: Exception) {
+            0
+        }
+        return affected > 0
+    }
+
+    fun getDiningTab(id: String): DiningTab? {
+        if (id.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1",
+            arrayOf(id.trim())
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    private fun cursorToDiningTab(c: Cursor): DiningTab {
+        val idIdx = c.getColumnIndexOrThrow("id")
+        val tableNumberIdx = c.getColumnIndexOrThrow("table_number")
+        val bookingIdIdx = c.getColumnIndex("booking_id")
+        val userIdIdx = c.getColumnIndex("user_id")
+        val userNameIdx = c.getColumnIndex("user_name")
+        val itemsJsonIdx = c.getColumnIndex("items_json")
+        val subtotalIdx = c.getColumnIndex("subtotal")
+        val taxIdx = c.getColumnIndex("tax")
+        val gstIdx = c.getColumnIndex("gst")
+        val serviceChargeIdx = c.getColumnIndex("service_charge")
+        val totalIdx = c.getColumnIndex("total")
+        val statusIdx = c.getColumnIndex("status")
+        val paymentMethodIdx = c.getColumnIndex("payment_method")
+        val updatedAtIdx = c.getColumnIndex("updated_at")
+
+        val items: List<TableBillItem> = if (itemsJsonIdx != -1 && !c.isNull(itemsJsonIdx)) {
+            val json = c.getString(itemsJsonIdx)
+            try {
+                val listType = object : TypeToken<List<TableBillItem>>() {}.type
+                gson.fromJson<List<TableBillItem>>(json, listType) ?: emptyList()
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
+        val taxVal = when {
+            taxIdx != -1 && !c.isNull(taxIdx) -> c.getLong(taxIdx)
+            gstIdx != -1 && !c.isNull(gstIdx) -> c.getLong(gstIdx)
+            else -> 0L
+        }
+
+        return DiningTab(
+            id = c.getString(idIdx) ?: "",
+            tableNumber = c.getString(tableNumberIdx) ?: "",
+            bookingId = if (bookingIdIdx != -1 && !c.isNull(bookingIdIdx)) c.getString(bookingIdIdx) else null,
+            userId = if (userIdIdx != -1 && !c.isNull(userIdIdx)) c.getString(userIdIdx) else null,
+            userName = if (userNameIdx != -1 && !c.isNull(userNameIdx)) c.getString(userNameIdx) else "Guest Diner",
+            items = items,
+            subtotal = if (subtotalIdx != -1 && !c.isNull(subtotalIdx)) c.getLong(subtotalIdx) else 0L,
+            tax = taxVal,
+            serviceCharge = if (serviceChargeIdx != -1 && !c.isNull(serviceChargeIdx)) c.getLong(serviceChargeIdx) else 0L,
+            total = if (totalIdx != -1 && !c.isNull(totalIdx)) c.getLong(totalIdx) else 0L,
+            status = if (statusIdx != -1 && !c.isNull(statusIdx)) c.getString(statusIdx) else "OPEN",
+            paymentMethod = if (paymentMethodIdx != -1 && !c.isNull(paymentMethodIdx)) c.getString(paymentMethodIdx) else null,
+            updatedAt = if (updatedAtIdx != -1 && !c.isNull(updatedAtIdx)) c.getString(updatedAtIdx) else Instant.now().toString()
         )
     }
 }
