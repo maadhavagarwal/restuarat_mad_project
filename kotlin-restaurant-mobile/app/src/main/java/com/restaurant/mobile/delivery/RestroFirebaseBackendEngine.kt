@@ -5,9 +5,11 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.*
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.isActive
 
 /**
  * 100% Pure Kotlin Serverless Firebase & SQL Engine.
@@ -319,6 +321,62 @@ class RestroFirebaseBackendEngine(private val context: Context) {
 
             if (step < totalUpdates) {
                 delay(10_000L) // 10-second updates
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 6. DINE-IN TABLE TAB REACTIVE ENGINE
+    // -------------------------------------------------------------
+
+    fun getOpenTabForTable(tableNumber: String): DiningTab? = sqlDb.getOpenTabForTable(tableNumber)
+
+    fun saveOrUpdateTab(tab: DiningTab): Boolean = sqlDb.saveOrUpdateTab(tab)
+
+    fun markTabSettled(tabId: String, paymentMethod: String): Boolean = sqlDb.markTabSettled(tabId, paymentMethod)
+
+    /**
+     * Real-time reactive listener for active dine-in table tab.
+     * Continuously emits updates for the specified table from the SQLite / Firebase storage engine.
+     * Automatically handles coroutine cancellation and listener lifecycle management.
+     */
+    fun listenToTableTab(tableNumber: String, pollIntervalMs: Long = 1000L): Flow<DiningTab> = flow {
+        val cleanTable = tableNumber.trim()
+        if (cleanTable.isBlank()) {
+            return@flow
+        }
+
+        // 1. Resolve initial active tab or initialize if none exists yet
+        var currentTab = sqlDb.getOpenTabForTable(cleanTable) ?: run {
+            val activeBooking = sqlDb.getAllTableBookings().firstOrNull {
+                it.tableNumber.equals(cleanTable, ignoreCase = true) &&
+                    (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
+            }
+            val initial = DiningTab(
+                id = UUID.randomUUID().toString(),
+                tableNumber = cleanTable,
+                bookingId = activeBooking?.id,
+                userId = activeBooking?.userId,
+                userName = activeBooking?.userName ?: "Guest Diner",
+                status = "OPEN"
+            )
+            sqlDb.saveOrUpdateTab(initial)
+            initial
+        }
+
+        emit(currentTab)
+
+        // 2. Stream subsequent tab updates until cancelled
+        var lastEmittedTab = currentTab
+        while (currentCoroutineContext().isActive) {
+            delay(pollIntervalMs)
+
+            val latest = sqlDb.getOpenTabForTable(cleanTable)
+                ?: (lastEmittedTab.id.takeIf { it.isNotBlank() }?.let { sqlDb.getDiningTab(it) })
+
+            if (latest != null && latest != lastEmittedTab) {
+                lastEmittedTab = latest
+                emit(latest)
             }
         }
     }
