@@ -571,4 +571,313 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         cursor.close()
         return list
     }
+
+    // -------------------------------------------------------------
+    // TABLE BOOKINGS PERSISTENCE
+    // -------------------------------------------------------------
+
+    fun insertTableBooking(booking: TableBooking): Boolean {
+        if (!TableBookingStatus.ALL.contains(booking.status) || booking.partySize <= 0) {
+            return false
+        }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("id", booking.id)
+            put("user_id", booking.userId)
+            put("user_name", booking.userName)
+            put("user_phone", booking.userPhone)
+            put("table_id", booking.tableId)
+            put("table_number", booking.tableNumber)
+            put("booking_date", booking.bookingDate)
+            put("time_slot", booking.timeSlot)
+            put("party_size", booking.partySize)
+            put("seating_area", booking.seatingArea)
+            put("special_requests", booking.specialRequests)
+            put("status", booking.status)
+            put("created_at", booking.createdAt)
+        }
+        val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        return rowId != -1L
+    }
+
+    fun saveTableBooking(booking: TableBooking): Boolean {
+        if (!TableBookingStatus.ALL.contains(booking.status) || booking.partySize <= 0) {
+            return false
+        }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("id", booking.id)
+            put("user_id", booking.userId)
+            put("user_name", booking.userName)
+            put("user_phone", booking.userPhone)
+            put("table_id", booking.tableId)
+            put("table_number", booking.tableNumber)
+            put("booking_date", booking.bookingDate)
+            put("time_slot", booking.timeSlot)
+            put("party_size", booking.partySize)
+            put("seating_area", booking.seatingArea)
+            put("special_requests", booking.specialRequests)
+            put("status", booking.status)
+            put("created_at", booking.createdAt)
+        }
+        val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        return rowId != -1L
+    }
+
+    fun saveTableBookingsBatch(bookings: List<TableBooking>): Boolean {
+        if (bookings.isEmpty()) return true
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (booking in bookings) {
+                if (!TableBookingStatus.ALL.contains(booking.status) || booking.partySize <= 0) {
+                    throw IllegalArgumentException("Invalid booking status or non-positive party size: ${booking.id}")
+                }
+                val cv = ContentValues().apply {
+                    put("id", booking.id)
+                    put("user_id", booking.userId)
+                    put("user_name", booking.userName)
+                    put("user_phone", booking.userPhone)
+                    put("table_id", booking.tableId)
+                    put("table_number", booking.tableNumber)
+                    put("booking_date", booking.bookingDate)
+                    put("time_slot", booking.timeSlot)
+                    put("party_size", booking.partySize)
+                    put("seating_area", booking.seatingArea)
+                    put("special_requests", booking.specialRequests)
+                    put("status", booking.status)
+                    put("created_at", booking.createdAt)
+                }
+                val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+                if (rowId == -1L) {
+                    throw IllegalStateException("Failed to insert or replace booking ${booking.id}")
+                }
+            }
+            db.setTransactionSuccessful()
+            return true
+        } catch (_: Exception) {
+            return false
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun getTableBookingById(id: String): TableBooking? {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE id = ? LIMIT 1",
+            arrayOf(id)
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToTableBooking(cursor) else null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    fun getTableBookingsForUser(userId: String): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE user_id = ? ORDER BY booking_date DESC, time_slot DESC",
+            arrayOf(userId)
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun getTableBookingsForSlot(date: String, timeSlot: String): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE booking_date = ? AND time_slot = ? ORDER BY table_number ASC",
+            arrayOf(date, timeSlot)
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun getTableBookingsForDate(date: String): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE booking_date = ? ORDER BY time_slot ASC, table_number ASC",
+            arrayOf(date)
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun getTableBookingsForTable(tableId: String): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE table_id = ? ORDER BY booking_date DESC, time_slot DESC",
+            arrayOf(tableId)
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun getTableBookingsForTableAndDate(tableId: String, date: String): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE table_id = ? AND booking_date = ? ORDER BY time_slot ASC",
+            arrayOf(tableId, date)
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun getAllTableBookings(): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS ORDER BY booking_date DESC, time_slot DESC",
+            null
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun updateTableBookingStatus(id: String, newStatus: String): Boolean {
+        if (!TableBookingStatus.ALL.contains(newStatus)) {
+            return false
+        }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("status", newStatus)
+        }
+        val affected = db.update(TABLE_BOOKINGS, cv, "id = ?", arrayOf(id))
+        return affected > 0
+    }
+
+    fun updateTableBooking(booking: TableBooking): Boolean {
+        if (!TableBookingStatus.ALL.contains(booking.status) || booking.partySize <= 0) {
+            return false
+        }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("user_id", booking.userId)
+            put("user_name", booking.userName)
+            put("user_phone", booking.userPhone)
+            put("table_id", booking.tableId)
+            put("table_number", booking.tableNumber)
+            put("booking_date", booking.bookingDate)
+            put("time_slot", booking.timeSlot)
+            put("party_size", booking.partySize)
+            put("seating_area", booking.seatingArea)
+            put("special_requests", booking.specialRequests)
+            put("status", booking.status)
+        }
+        val affected = db.update(TABLE_BOOKINGS, cv, "id = ?", arrayOf(booking.id))
+        return affected > 0
+    }
+
+    fun updateTableBookingDetails(
+        id: String,
+        partySize: Int? = null,
+        seatingArea: String? = null,
+        specialRequests: String? = null,
+        bookingDate: String? = null,
+        timeSlot: String? = null,
+        tableId: String? = null,
+        tableNumber: String? = null
+    ): Boolean {
+        if (partySize != null && partySize <= 0) {
+            return false
+        }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            partySize?.let { put("party_size", it) }
+            seatingArea?.let { put("seating_area", it) }
+            specialRequests?.let { put("special_requests", it) }
+            bookingDate?.let { put("booking_date", it) }
+            timeSlot?.let { put("time_slot", it) }
+            tableId?.let { put("table_id", it) }
+            tableNumber?.let { put("table_number", it) }
+        }
+        if (cv.size() == 0) return false
+        val affected = db.update(TABLE_BOOKINGS, cv, "id = ?", arrayOf(id))
+        return affected > 0
+    }
+
+    fun cancelTableBooking(id: String): Boolean {
+        return updateTableBookingStatus(id, TableBookingStatus.CANCELLED)
+    }
+
+    fun deleteTableBooking(id: String): Boolean {
+        val db = writableDatabase
+        val affected = db.delete(TABLE_BOOKINGS, "id = ?", arrayOf(id))
+        return affected > 0
+    }
+
+    private fun cursorToTableBooking(c: Cursor): TableBooking {
+        val idIdx = c.getColumnIndexOrThrow("id")
+        val userIdIdx = c.getColumnIndexOrThrow("user_id")
+        val userNameIdx = c.getColumnIndexOrThrow("user_name")
+        val userPhoneIdx = c.getColumnIndexOrThrow("user_phone")
+        val tableIdIdx = c.getColumnIndexOrThrow("table_id")
+        val tableNumberIdx = c.getColumnIndexOrThrow("table_number")
+        val bookingDateIdx = c.getColumnIndexOrThrow("booking_date")
+        val timeSlotIdx = c.getColumnIndexOrThrow("time_slot")
+        val partySizeIdx = c.getColumnIndexOrThrow("party_size")
+        val seatingAreaIdx = c.getColumnIndexOrThrow("seating_area")
+        val specialRequestsIdx = c.getColumnIndexOrThrow("special_requests")
+        val statusIdx = c.getColumnIndexOrThrow("status")
+        val createdAtIdx = c.getColumnIndexOrThrow("created_at")
+
+        return TableBooking(
+            id = c.getString(idIdx) ?: "",
+            userId = c.getString(userIdIdx) ?: "",
+            userName = c.getString(userNameIdx) ?: "",
+            userPhone = c.getString(userPhoneIdx) ?: "",
+            tableId = c.getString(tableIdIdx) ?: "",
+            tableNumber = c.getString(tableNumberIdx) ?: "",
+            bookingDate = c.getString(bookingDateIdx) ?: "",
+            timeSlot = c.getString(timeSlotIdx) ?: "",
+            partySize = if (c.isNull(partySizeIdx)) 1 else c.getInt(partySizeIdx),
+            seatingArea = if (c.isNull(seatingAreaIdx)) "Main Dining Room" else (c.getString(seatingAreaIdx) ?: "Main Dining Room"),
+            specialRequests = if (c.isNull(specialRequestsIdx)) "" else (c.getString(specialRequestsIdx) ?: ""),
+            status = if (c.isNull(statusIdx)) TableBookingStatus.CONFIRMED else (c.getString(statusIdx) ?: TableBookingStatus.CONFIRMED),
+            createdAt = if (c.isNull(createdAtIdx)) Instant.now().toString() else (c.getString(createdAtIdx) ?: Instant.now().toString())
+        )
+    }
 }
