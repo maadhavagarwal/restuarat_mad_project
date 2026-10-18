@@ -227,6 +227,36 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                         "Reviews",
                                         "Review" -> ReviewsScreen(vm)
                                         "ForbiddenStaff" -> ForbiddenStaffScreen(vm, onOpenStaffPortal)
+                                        "BookTable" -> BookTableScreen(
+                                            vm = vm,
+                                            onProceedToReview = { validatedDraft ->
+                                                vm.tableBookingDraft = validatedDraft
+                                                vm.route = "BookTableReview"
+                                            }
+                                        )
+                                        "BookTableReview" -> TableBookingReviewScreen(
+                                            vm = vm,
+                                            onBack = { vm.back() },
+                                            onConfirm = {
+                                                vm.confirmTableBooking {
+                                                    vm.route = "BookTableSuccess"
+                                                }
+                                            }
+                                        )
+                                        "BookTableSuccess" -> TableBookingSuccessScreen(
+                                            vm = vm,
+                                            onDone = {
+                                                vm.confirmedBooking = null
+                                                vm.resetTableBookingDraft()
+                                                vm.route = "Home"
+                                            },
+                                            onBookAnother = {
+                                                val currentRest = vm.catalog.restaurants.find { it.id == vm.restaurantId }
+                                                vm.confirmedBooking = null
+                                                vm.resetTableBookingDraft(currentRest?.id ?: "", currentRest?.name ?: "")
+                                                vm.route = "BookTable"
+                                            }
+                                        )
                                         else -> ProfileScreen(vm, onOpenStaffPortal)
                                     }
                                 }

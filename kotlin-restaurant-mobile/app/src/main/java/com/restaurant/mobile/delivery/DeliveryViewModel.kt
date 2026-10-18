@@ -472,6 +472,80 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     // Android Native Notification Channel Manager
     val notificationHelper = DeliveryNotificationHelper(app)
 
+    // Customer Table-Booking UI Draft and Confirmation State
+    var tableBookingDraft by mutableStateOf(TableBookingDraft())
+    var isConfirmingBooking by mutableStateOf(false)
+    var bookingConfirmationError by mutableStateOf<String?>(null)
+    var confirmedBooking by mutableStateOf<TableBooking?>(null)
+
+    fun resetTableBookingDraft(restId: String = "", restName: String = "") {
+        tableBookingDraft = TableBookingDraft(
+            restaurantId = restId,
+            restaurantName = restName,
+            bookingDate = "",
+            timeSlot = "",
+            partySize = TableBookingDefaults.DEFAULT_PARTY_SIZE,
+            seatingArea = TableBookingDefaults.DEFAULT_SEATING_AREA,
+            specialRequests = ""
+        )
+        bookingConfirmationError = null
+    }
+
+    fun confirmTableBooking(onSuccess: ((TableBooking) -> Unit)? = null) {
+        if (isConfirmingBooking) return
+        val draft = tableBookingDraft
+        val validationErr = computeBookingValidationError(draft)
+        if (validationErr != null) {
+            bookingConfirmationError = validationErr
+            return
+        }
+
+        isConfirmingBooking = true
+        bookingConfirmationError = null
+
+        viewModelScope.launch {
+            try {
+                val user = profile
+                val currentRest = catalog.restaurants.find { it.id == draft.restaurantId || it.id == restaurantId }
+                val targetRestName = currentRest?.name ?: draft.restaurantName.ifBlank { "Restro Fine Dining" }
+                val targetRestId = currentRest?.id ?: draft.restaurantId.ifBlank { restaurantId }
+
+                val result = sqlDb.allocateAndConfirmTableBooking(
+                    restaurantId = targetRestId,
+                    restaurantName = targetRestName,
+                    userId = user?.id ?: "guest",
+                    userName = user?.name ?: "Valued Guest",
+                    userPhone = user?.phone ?: "",
+                    bookingDate = draft.bookingDate,
+                    timeSlot = draft.timeSlot,
+                    partySize = draft.partySize,
+                    seatingArea = draft.seatingArea,
+                    specialRequests = draft.specialRequests
+                )
+
+                when (result) {
+                    is TableAllocationResult.Success -> {
+                        confirmedBooking = result.booking
+                        bookingConfirmationError = null
+                        isConfirmingBooking = false
+                        if (onSuccess != null) {
+                            onSuccess(result.booking)
+                        } else {
+                            route = "BookTableSuccess"
+                        }
+                    }
+                    is TableAllocationResult.Failure -> {
+                        isConfirmingBooking = false
+                        bookingConfirmationError = result.reason
+                    }
+                }
+            } catch (e: Exception) {
+                isConfirmingBooking = false
+                bookingConfirmationError = e.message ?: "Failed to confirm reservation."
+            }
+        }
+    }
+
     fun revokeSession(reason: String = "Your session has expired. Please sign in again.") {
         session.save(null)
         session.saveProfile(null)
@@ -1225,7 +1299,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             when (route) {
                 "Map" -> "Home"
                 "Food",
-                "Reviews" -> "Restaurant"
+                "Reviews",
+                "BookTable" -> if (restaurantId.isNotBlank()) "Restaurant" else "Home"
+                "BookTableReview" -> "BookTable"
+                "BookTableSuccess" -> {
+                    confirmedBooking = null
+                    if (restaurantId.isNotBlank()) "Restaurant" else "Home"
+                }
                 "Payment" -> "Checkout"
                 "Checkout" -> "Cart"
                 "Tracking",

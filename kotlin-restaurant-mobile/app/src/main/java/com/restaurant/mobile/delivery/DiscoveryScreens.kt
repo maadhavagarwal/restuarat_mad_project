@@ -510,6 +510,28 @@ fun Discovery(vm: DeliveryViewModel) {
                         Text("View on Map", color = RestroTokens.text)
                     }
                 }
+                Button(
+                    onClick = {
+                        vm.resetTableBookingDraft(restaurant.id, restaurant.name)
+                        vm.route = "BookTable"
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(
+                        Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        tint = RestroTokens.canvas,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Book a Table",
+                        color = RestroTokens.canvas,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
         // 2. Frequently Ordered / Quick Reorder Carousel

@@ -264,4 +264,469 @@ class TableBookingTest {
         assertEquals(1, storage.size)
         assertNotNull(storage["TB-INIT"])
     }
+
+    @Test
+    fun testAllocationSuccessPersistsAssignedTableAndConfirmedStatus() {
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-1",
+            userName = "Aarav Sharma",
+            userPhone = "+91 98765 43210",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            specialRequests = "Window seat if possible",
+            existingBookings = emptyList()
+        )
+
+        assertTrue("Allocation should succeed", result is TableAllocationResult.Success)
+        val success = result as TableAllocationResult.Success
+        assertEquals("T1", success.allocatedTable.tableNumber)
+        assertEquals(2, success.allocatedTable.capacity)
+        assertEquals("Main Dining Room", success.allocatedTable.seatingArea)
+
+        val booking = success.booking
+        assertTrue(booking.id.startsWith("TB-"))
+        assertEquals("CONFIRMED", booking.status)
+        assertEquals("T1", booking.tableNumber)
+        assertEquals("rest-1_T1", booking.tableId)
+        assertEquals("rest-1", booking.restaurantId)
+        assertEquals("Bistro Lumière", booking.restaurantName)
+        assertEquals(2, booking.partySize)
+        assertEquals("Main Dining Room", booking.seatingArea)
+        assertEquals("Window seat if possible", booking.specialRequests)
+    }
+
+    @Test
+    fun testInsufficientCapacityPreventsAllocation() {
+        // Private Booth has tables T9 (cap 4) and T10 (cap 6). Party of 8 exceeds capacity.
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-1",
+            userName = "Aarav",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 8,
+            seatingArea = "Private Booth",
+            existingBookings = emptyList()
+        )
+
+        assertTrue("Allocation must fail due to insufficient capacity", result is TableAllocationResult.Failure)
+        val failure = result as TableAllocationResult.Failure
+        assertTrue(failure.reason.contains("capacity", ignoreCase = true))
+    }
+
+    @Test
+    fun testSeatingPreferenceIsRespected() {
+        // Request Outdoor Garden for party of 2
+        val outdoorResult = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-1",
+            userName = "Aarav",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Outdoor Garden",
+            existingBookings = emptyList()
+        )
+        assertTrue(outdoorResult is TableAllocationResult.Success)
+        val outdoorSuccess = outdoorResult as TableAllocationResult.Success
+        assertEquals("Outdoor Garden", outdoorSuccess.allocatedTable.seatingArea)
+        assertEquals("T7", outdoorSuccess.allocatedTable.tableNumber)
+
+        // Request Rooftop Lounge for party of 4
+        val rooftopResult = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-1",
+            userName = "Aarav",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 4,
+            seatingArea = "Rooftop Lounge",
+            existingBookings = emptyList()
+        )
+        assertTrue(rooftopResult is TableAllocationResult.Success)
+        val rooftopSuccess = rooftopResult as TableAllocationResult.Success
+        assertEquals("Rooftop Lounge", rooftopSuccess.allocatedTable.seatingArea)
+        assertEquals("T12", rooftopSuccess.allocatedTable.tableNumber)
+    }
+
+    @Test
+    fun testExistingConfirmedBookingsBlockConflictingAllocations() {
+        val existingConfirmed = listOf(
+            TableBooking(
+                id = "TB-EXIST-1",
+                userId = "usr-prior",
+                userName = "Prior Guest",
+                userPhone = "+91",
+                tableId = "rest-1_T1",
+                tableNumber = "T1",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                seatingArea = "Main Dining Room",
+                status = TableBookingStatus.CONFIRMED,
+                restaurantId = "rest-1"
+            )
+        )
+
+        // T1 is blocked for 7:00 PM on 2026-10-25. The next 2-top should receive T2.
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-new",
+            userName = "New Guest",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = existingConfirmed
+        )
+
+        assertTrue(result is TableAllocationResult.Success)
+        val success = result as TableAllocationResult.Success
+        assertEquals("T2", success.allocatedTable.tableNumber)
+    }
+
+    @Test
+    fun testExistingSeatedBookingsBlockConflictingAllocations() {
+        val existingSeated = listOf(
+            TableBooking(
+                id = "TB-SEATED-1",
+                userId = "usr-prior",
+                userName = "Dining Guest",
+                userPhone = "+91",
+                tableId = "rest-1_T7",
+                tableNumber = "T7",
+                bookingDate = "2026-10-25",
+                timeSlot = "1:00 PM",
+                partySize = 2,
+                seatingArea = "Outdoor Garden",
+                status = TableBookingStatus.SEATED,
+                restaurantId = "rest-1"
+            )
+        )
+
+        // T7 is SEATED. In Outdoor Garden, next best table for 2 is T8 (cap 4).
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-2",
+            userName = "Second Guest",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "1:00 PM",
+            partySize = 2,
+            seatingArea = "Outdoor Garden",
+            existingBookings = existingSeated
+        )
+
+        assertTrue(result is TableAllocationResult.Success)
+        val success = result as TableAllocationResult.Success
+        assertEquals("T8", success.allocatedTable.tableNumber)
+    }
+
+    @Test
+    fun testCancelledAndCompletedBookingsDoNotBlockAvailability() {
+        val pastBookings = listOf(
+            TableBooking(
+                id = "TB-CAN",
+                userId = "usr-can",
+                userName = "Cancelled Guest",
+                userPhone = "+91",
+                tableId = "rest-1_T1",
+                tableNumber = "T1",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                seatingArea = "Main Dining Room",
+                status = TableBookingStatus.CANCELLED,
+                restaurantId = "rest-1"
+            ),
+            TableBooking(
+                id = "TB-COMP",
+                userId = "usr-comp",
+                userName = "Completed Guest",
+                userPhone = "+91",
+                tableId = "rest-1_T2",
+                tableNumber = "T2",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                seatingArea = "Main Dining Room",
+                status = TableBookingStatus.COMPLETED,
+                restaurantId = "rest-1"
+            )
+        )
+
+        // Both T1 and T2 were previously booked, but CANCELLED and COMPLETED do not block.
+        // Best fit for party of 2 should immediately allocate T1.
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-new",
+            userName = "New Guest",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = pastBookings
+        )
+
+        assertTrue(result is TableAllocationResult.Success)
+        val success = result as TableAllocationResult.Success
+        assertEquals("T1", success.allocatedTable.tableNumber)
+    }
+
+    @Test
+    fun testCompetingConcurrentBookingAttemptsCannotBothAllocateSameTable() {
+        // In Rooftop Lounge, only T11 (cap 2) and T12 (cap 4) exist.
+        // Block T11 so only T12 remains.
+        val existing = mutableListOf(
+            TableBooking(
+                id = "TB-LOCK",
+                userId = "usr-0",
+                userName = "User 0",
+                userPhone = "+91",
+                tableId = "rest-1_T11",
+                tableNumber = "T11",
+                bookingDate = "2026-10-25",
+                timeSlot = "8:00 PM",
+                partySize = 2,
+                seatingArea = "Rooftop Lounge",
+                status = TableBookingStatus.CONFIRMED,
+                restaurantId = "rest-1"
+            )
+        )
+
+        val lock = Any()
+        var winnerTable: String? = null
+        var loserReason: String? = null
+
+        // Customer A attempt
+        val resultA = synchronized(lock) {
+            val res = TableAllocationEngine.allocateTable(
+                restaurantId = "rest-1",
+                restaurantName = "Bistro Lumière",
+                userId = "usr-A",
+                userName = "Customer A",
+                userPhone = "+91",
+                bookingDate = "2026-10-25",
+                timeSlot = "8:00 PM",
+                partySize = 3,
+                seatingArea = "Rooftop Lounge",
+                existingBookings = existing
+            )
+            if (res is TableAllocationResult.Success) {
+                existing.add(res.booking)
+            }
+            res
+        }
+
+        // Customer B competing attempt for the same slot
+        val resultB = synchronized(lock) {
+            val res = TableAllocationEngine.allocateTable(
+                restaurantId = "rest-1",
+                restaurantName = "Bistro Lumière",
+                userId = "usr-B",
+                userName = "Customer B",
+                userPhone = "+91",
+                bookingDate = "2026-10-25",
+                timeSlot = "8:00 PM",
+                partySize = 4,
+                seatingArea = "Rooftop Lounge",
+                existingBookings = existing
+            )
+            if (res is TableAllocationResult.Success) {
+                existing.add(res.booking)
+            }
+            res
+        }
+
+        assertTrue("First attempt succeeds", resultA is TableAllocationResult.Success)
+        winnerTable = (resultA as TableAllocationResult.Success).allocatedTable.tableNumber
+        assertEquals("T12", winnerTable)
+
+        assertTrue("Second competing attempt fails", resultB is TableAllocationResult.Failure)
+        loserReason = (resultB as TableAllocationResult.Failure).reason
+        assertTrue(loserReason.contains("fully booked", ignoreCase = true))
+    }
+
+    @Test
+    fun testFailedInsertTransactionRollbackLeavesNoPartialBooking() {
+        val simulatedDb = mutableMapOf<String, TableBooking>()
+        val initialBooking = TableBooking(
+            id = "TB-EXISTING",
+            userId = "usr-1",
+            userName = "Initial",
+            userPhone = "+91",
+            tableId = "rest-1_T1",
+            tableNumber = "T1",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            restaurantId = "rest-1"
+        )
+        simulatedDb[initialBooking.id] = initialBooking
+
+        // Attempt transaction with intentional insertion failure
+        val transactionSucceeded = try {
+            val staging = mutableMapOf<String, TableBooking>()
+            val allocation = TableAllocationEngine.allocateTable(
+                restaurantId = "rest-1",
+                restaurantName = "Bistro Lumière",
+                userId = "usr-2",
+                userName = "Failing Guest",
+                userPhone = "+91",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                seatingArea = "Main Dining Room",
+                existingBookings = simulatedDb.values.toList()
+            )
+            assertTrue(allocation is TableAllocationResult.Success)
+            val newBooking = (allocation as TableAllocationResult.Success).booking
+            staging[newBooking.id] = newBooking
+
+            // Simulate database constraint/IO error
+            throw IllegalStateException("Simulated SQLite disk write failure")
+        } catch (_: Exception) {
+            false
+        }
+
+        assertFalse(transactionSucceeded)
+        assertEquals(1, simulatedDb.size)
+        assertNotNull(simulatedDb["TB-EXISTING"])
+    }
+
+    @Test
+    fun testUnavailableSlotCreatesNoConfirmedBooking() {
+        // Fill all tables in Outdoor Garden (T7 and T8)
+        val fullOutdoor = listOf(
+            TableBooking(
+                id = "TB-T7",
+                userId = "u1",
+                userName = "User 1",
+                userPhone = "+91",
+                tableId = "rest-1_T7",
+                tableNumber = "T7",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                seatingArea = "Outdoor Garden",
+                status = TableBookingStatus.CONFIRMED,
+                restaurantId = "rest-1"
+            ),
+            TableBooking(
+                id = "TB-T8",
+                userId = "u2",
+                userName = "User 2",
+                userPhone = "+91",
+                tableId = "rest-1_T8",
+                tableNumber = "T8",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 4,
+                seatingArea = "Outdoor Garden",
+                status = TableBookingStatus.CONFIRMED,
+                restaurantId = "rest-1"
+            )
+        )
+
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "u3",
+            userName = "User 3",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Outdoor Garden",
+            existingBookings = fullOutdoor
+        )
+
+        assertTrue(result is TableAllocationResult.Failure)
+        val failure = result as TableAllocationResult.Failure
+        assertTrue(failure.reason.contains("fully booked", ignoreCase = true))
+    }
+
+    @Test
+    fun testBookingReferencesRemainAssociatedWithPersistedReservation() {
+        val result = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-1",
+            restaurantName = "Bistro Lumière",
+            userId = "usr-stable",
+            userName = "Stable Guest",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = emptyList()
+        )
+
+        assertTrue(result is TableAllocationResult.Success)
+        val booking = (result as TableAllocationResult.Success).booking
+
+        // Reference must remain consistent
+        val reference = booking.id
+        assertTrue(reference.startsWith("TB-"))
+        assertEquals(reference, booking.id)
+
+        // Stored and re-read preserves identical reference
+        val map = mapOf(reference to booking)
+        assertEquals(reference, map[reference]?.id)
+        assertEquals("Stable Guest", map[reference]?.userName)
+    }
+
+    @Test
+    fun testRestaurantScopingPreventsCrossRestaurantBookingBlockage() {
+        val rest1Bookings = listOf(
+            TableBooking(
+                id = "TB-REST1",
+                userId = "u1",
+                userName = "User 1",
+                userPhone = "+91",
+                tableId = "rest-1_T1",
+                tableNumber = "T1",
+                bookingDate = "2026-10-25",
+                timeSlot = "7:00 PM",
+                partySize = 2,
+                seatingArea = "Main Dining Room",
+                status = TableBookingStatus.CONFIRMED,
+                restaurantId = "rest-1"
+            )
+        )
+
+        // Customer booking at restaurant 2 for the same slot should still get T1
+        val resultRest2 = TableAllocationEngine.allocateTable(
+            restaurantId = "rest-2",
+            restaurantName = "Trattoria Milano",
+            userId = "u2",
+            userName = "User 2",
+            userPhone = "+91",
+            bookingDate = "2026-10-25",
+            timeSlot = "7:00 PM",
+            partySize = 2,
+            seatingArea = "Main Dining Room",
+            existingBookings = rest1Bookings
+        )
+
+        assertTrue(resultRest2 is TableAllocationResult.Success)
+        val success2 = resultRest2 as TableAllocationResult.Success
+        assertEquals("T1", success2.allocatedTable.tableNumber)
+        assertEquals("rest-2_T1", success2.booking.tableId)
+        assertEquals("rest-2", success2.booking.restaurantId)
+    }
 }

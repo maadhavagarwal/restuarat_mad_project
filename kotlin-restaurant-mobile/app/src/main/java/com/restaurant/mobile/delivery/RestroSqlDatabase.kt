@@ -19,7 +19,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "restro_delivery.db"
-        const val DATABASE_VERSION = 4
+        const val DATABASE_VERSION = 5
 
         // Table Names
         const val TABLE_USERS = "users"
@@ -168,6 +168,11 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         if (oldVersion < 4) {
             createTableBookingsTable(db)
         }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_id TEXT NOT NULL DEFAULT '';")
+            db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_name TEXT NOT NULL DEFAULT '';")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_restaurant ON $TABLE_BOOKINGS (restaurant_id, booking_date, time_slot);")
+        }
     }
 
     private fun createTableBookingsTable(db: SQLiteDatabase) {
@@ -186,13 +191,16 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 seating_area TEXT NOT NULL DEFAULT 'Main Dining Room',
                 special_requests TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'CONFIRMED',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                restaurant_id TEXT NOT NULL DEFAULT '',
+                restaurant_name TEXT NOT NULL DEFAULT ''
             );
             """.trimIndent()
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_date_slot ON $TABLE_BOOKINGS (booking_date, time_slot);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_table_id ON $TABLE_BOOKINGS (table_id);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_user_id ON $TABLE_BOOKINGS (user_id);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_restaurant ON $TABLE_BOOKINGS (restaurant_id, booking_date, time_slot);")
     }
 
     // -------------------------------------------------------------
@@ -595,6 +603,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("special_requests", booking.specialRequests)
             put("status", booking.status)
             put("created_at", booking.createdAt)
+            put("restaurant_id", booking.restaurantId)
+            put("restaurant_name", booking.restaurantName)
         }
         val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
         return rowId != -1L
@@ -619,6 +629,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("special_requests", booking.specialRequests)
             put("status", booking.status)
             put("created_at", booking.createdAt)
+            put("restaurant_id", booking.restaurantId)
+            put("restaurant_name", booking.restaurantName)
         }
         val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
         return rowId != -1L
@@ -647,6 +659,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     put("special_requests", booking.specialRequests)
                     put("status", booking.status)
                     put("created_at", booking.createdAt)
+                    put("restaurant_id", booking.restaurantId)
+                    put("restaurant_name", booking.restaurantName)
                 }
                 val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
                 if (rowId == -1L) {
@@ -806,6 +820,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("seating_area", booking.seatingArea)
             put("special_requests", booking.specialRequests)
             put("status", booking.status)
+            put("restaurant_id", booking.restaurantId)
+            put("restaurant_name", booking.restaurantName)
         }
         val affected = db.update(TABLE_BOOKINGS, cv, "id = ?", arrayOf(booking.id))
         return affected > 0
@@ -849,6 +865,123 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return affected > 0
     }
 
+    private val allocationLock = Any()
+
+    /**
+     * Atomically validates booking parameters, rechecks slot availability inside an exclusive
+     * SQLite transaction, allocates the best-fit table matching capacity and seating area,
+     * and inserts the confirmed booking.
+     *
+     * Concurrency & Invariants:
+     * - Uses synchronized(allocationLock) and SQLite transaction to protect against concurrent overlapping bookings.
+     * - Re-reads active reservations directly from SQLite inside the transaction.
+     * - On failure or conflict, the transaction is rolled back leaving no partial or orphaned records.
+     */
+    fun allocateAndConfirmTableBooking(
+        restaurantId: String,
+        restaurantName: String,
+        userId: String,
+        userName: String,
+        userPhone: String,
+        bookingDate: String,
+        timeSlot: String,
+        partySize: Int,
+        seatingArea: String,
+        specialRequests: String = "",
+        inventory: List<RestaurantTable> = RestaurantTableDefaults.DEFAULT_TABLES
+    ): TableAllocationResult {
+        val db = writableDatabase
+        synchronized(allocationLock) {
+            db.beginTransaction()
+            try {
+                // Fetch existing bookings for this date and time slot inside the transaction
+                val existingBookings = mutableListOf<TableBooking>()
+                val cursor = db.rawQuery(
+                    "SELECT * FROM $TABLE_BOOKINGS WHERE booking_date = ? AND time_slot = ?",
+                    arrayOf(bookingDate, timeSlot)
+                )
+                try {
+                    while (cursor.moveToNext()) {
+                        existingBookings.add(cursorToTableBooking(cursor))
+                    }
+                } finally {
+                    cursor.close()
+                }
+
+                // Run allocation rules
+                val allocation = TableAllocationEngine.allocateTable(
+                    restaurantId = restaurantId,
+                    restaurantName = restaurantName,
+                    userId = userId,
+                    userName = userName,
+                    userPhone = userPhone,
+                    bookingDate = bookingDate,
+                    timeSlot = timeSlot,
+                    partySize = partySize,
+                    seatingArea = seatingArea,
+                    specialRequests = specialRequests,
+                    existingBookings = existingBookings,
+                    inventory = inventory
+                )
+
+                if (allocation is TableAllocationResult.Failure) {
+                    return allocation
+                }
+
+                val confirmed = (allocation as TableAllocationResult.Success).booking
+
+                val cv = ContentValues().apply {
+                    put("id", confirmed.id)
+                    put("user_id", confirmed.userId)
+                    put("user_name", confirmed.userName)
+                    put("user_phone", confirmed.userPhone)
+                    put("table_id", confirmed.tableId)
+                    put("table_number", confirmed.tableNumber)
+                    put("booking_date", confirmed.bookingDate)
+                    put("time_slot", confirmed.timeSlot)
+                    put("party_size", confirmed.partySize)
+                    put("seating_area", confirmed.seatingArea)
+                    put("special_requests", confirmed.specialRequests)
+                    put("status", confirmed.status)
+                    put("created_at", confirmed.createdAt)
+                    put("restaurant_id", confirmed.restaurantId)
+                    put("restaurant_name", confirmed.restaurantName)
+                }
+
+                val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_ABORT)
+                if (rowId == -1L) {
+                    throw IllegalStateException("Database failed to persist confirmed booking.")
+                }
+
+                db.setTransactionSuccessful()
+                return allocation
+            } catch (e: Exception) {
+                return TableAllocationResult.Failure(e.message ?: "Database transaction failed during table allocation.")
+            } finally {
+                db.endTransaction()
+            }
+        }
+    }
+
+    fun getAvailableTablesForSlot(
+        restaurantId: String,
+        bookingDate: String,
+        timeSlot: String,
+        inventory: List<RestaurantTable> = RestaurantTableDefaults.DEFAULT_TABLES
+    ): List<RestaurantTable> {
+        val activeBookings = getTableBookingsForSlot(bookingDate, timeSlot)
+        val blockingStatuses = setOf(TableBookingStatus.CONFIRMED, TableBookingStatus.SEATED)
+        val bookedNumbers = activeBookings
+            .filter {
+                blockingStatuses.contains(it.status) &&
+                (it.restaurantId.isBlank() || restaurantId.isBlank() || it.restaurantId == restaurantId)
+            }
+            .map { it.tableNumber }
+            .toSet()
+
+        return inventory.filter { !bookedNumbers.contains(it.tableNumber) }
+    }
+
     private fun cursorToTableBooking(c: Cursor): TableBooking {
         val idIdx = c.getColumnIndexOrThrow("id")
         val userIdIdx = c.getColumnIndexOrThrow("user_id")
@@ -863,6 +996,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val specialRequestsIdx = c.getColumnIndexOrThrow("special_requests")
         val statusIdx = c.getColumnIndexOrThrow("status")
         val createdAtIdx = c.getColumnIndexOrThrow("created_at")
+        val restIdIdx = c.getColumnIndex("restaurant_id")
+        val restNameIdx = c.getColumnIndex("restaurant_name")
 
         return TableBooking(
             id = c.getString(idIdx) ?: "",
@@ -877,7 +1012,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             seatingArea = if (c.isNull(seatingAreaIdx)) "Main Dining Room" else (c.getString(seatingAreaIdx) ?: "Main Dining Room"),
             specialRequests = if (c.isNull(specialRequestsIdx)) "" else (c.getString(specialRequestsIdx) ?: ""),
             status = if (c.isNull(statusIdx)) TableBookingStatus.CONFIRMED else (c.getString(statusIdx) ?: TableBookingStatus.CONFIRMED),
-            createdAt = if (c.isNull(createdAtIdx)) Instant.now().toString() else (c.getString(createdAtIdx) ?: Instant.now().toString())
+            createdAt = if (c.isNull(createdAtIdx)) Instant.now().toString() else (c.getString(createdAtIdx) ?: Instant.now().toString()),
+            restaurantId = if (restIdIdx != -1 && !c.isNull(restIdIdx)) c.getString(restIdIdx) else "",
+            restaurantName = if (restNameIdx != -1 && !c.isNull(restNameIdx)) c.getString(restNameIdx) else ""
         )
     }
 }
