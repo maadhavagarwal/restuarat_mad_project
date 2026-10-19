@@ -100,7 +100,8 @@ class MainActivity : ComponentActivity() {
                     onShowToast = { msg ->
                         lastStaffInteractionMs = System.currentTimeMillis()
                         Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                    }
+                    },
+                    sqlDb = deliveryVm.sqlDb
                 )
             } else {
                 com.restaurant.mobile.delivery.DeliveryApp(
@@ -137,9 +138,13 @@ fun RestaurantMobileApp(
     onBackToCustomer: (() -> Unit)? = null,
     onSwitchStaffPin: (() -> Unit)? = null,
     onUserInteraction: (() -> Unit)? = null,
-    onShowToast: (String) -> Unit
+    onShowToast: (String) -> Unit,
+    sqlDb: com.restaurant.mobile.delivery.RestroSqlDatabase? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val database = remember(sqlDb) { sqlDb ?: com.restaurant.mobile.delivery.RestroSqlDatabase(context) }
+
     val allowedScreens = remember(userRole) {
         when (userRole) {
             com.restaurant.mobile.delivery.UserRole.WAITER -> listOf(NavigationScreen.POS, NavigationScreen.TABLES)
@@ -158,10 +163,26 @@ fun RestaurantMobileApp(
     var kots by remember { mutableStateOf<List<KOT>>(emptyList()) }
     var analytics by remember { mutableStateOf(AnalyticsData()) }
 
+    var selectedTable by remember { mutableStateOf<DiningTable?>(null) }
+    var activeBooking by remember { mutableStateOf<com.restaurant.mobile.delivery.TableBooking?>(null) }
+    var activeDiningTab by remember { mutableStateOf<com.restaurant.mobile.delivery.DiningTab?>(null) }
+    var showTableSelectDialog by remember { mutableStateOf(false) }
+
     var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var cart by remember { mutableStateOf<List<CartItem>>(emptyList()) }
     var isCartOpen by remember { mutableStateOf(false) }
+
+    fun refreshActiveTableState(table: DiningTable?) {
+        selectedTable = table
+        if (table != null) {
+            activeBooking = database.getActiveBookingForTable(table.tableNumber)
+            activeDiningTab = database.getActiveDiningTabForTable(table.tableNumber)
+        } else {
+            activeBooking = null
+            activeDiningTab = null
+        }
+    }
 
     fun refreshAll() {
         onUserInteraction?.invoke()
@@ -171,6 +192,10 @@ fun RestaurantMobileApp(
             tables = ApiClient.getTables()
             kots = ApiClient.getKOTs()
             analytics = ApiClient.getAnalytics()
+            selectedTable?.let { current ->
+                val updatedTable = tables.find { it.tableNumber == current.tableNumber } ?: current
+                refreshActiveTableState(updatedTable)
+            }
         }
     }
 
@@ -279,17 +304,26 @@ fun RestaurantMobileApp(
                         onSelectCategory = { selectedCategoryId = it },
                         searchQuery = searchQuery,
                         onSearchChange = { searchQuery = it },
+                        selectedTable = selectedTable,
+                        activeBooking = activeBooking,
+                        activeDiningTab = activeDiningTab,
+                        onOpenTableSelector = { showTableSelectDialog = true },
                         onAddToCart = { item ->
-                            val existing = cart.find { it.menuItem.id == item.id }
-                            cart = if (existing != null) {
-                                cart.map {
-                                    if (it.menuItem.id == item.id) it.copy(quantity = it.quantity + 1)
-                                    else it
-                                }
+                            if (selectedTable == null) {
+                                onShowToast("⚠️ Please select a table before adding items.")
+                                showTableSelectDialog = true
                             } else {
-                                cart + CartItem(item, 1)
+                                val existing = cart.find { it.menuItem.id == item.id }
+                                cart = if (existing != null) {
+                                    cart.map {
+                                        if (it.menuItem.id == item.id) it.copy(quantity = it.quantity + 1)
+                                        else it
+                                    }
+                                } else {
+                                    cart + CartItem(item, 1)
+                                }
+                                onShowToast("${item.name} added for Table ${selectedTable?.tableNumber}")
                             }
-                            onShowToast("${item.name} added to cart")
                         }
                     )
                     NavigationScreen.KDS -> KDSScreenView(
@@ -313,8 +347,16 @@ fun RestaurantMobileApp(
                             coroutineScope.launch {
                                 ApiClient.updateTableStatus(table.id, nextStatus)
                                 tables = ApiClient.getTables()
+                                if (selectedTable?.id == table.id) {
+                                    selectedTable = selectedTable?.copy(status = nextStatus)
+                                }
                                 onShowToast("Table ${table.tableNumber} is now $nextStatus")
                             }
+                        },
+                        onSelectTableForOrder = { table ->
+                            refreshActiveTableState(table)
+                            currentScreen = NavigationScreen.POS
+                            onShowToast("Taking order for Table ${table.tableNumber}")
                         }
                     )
                     NavigationScreen.ANALYTICS -> AnalyticsScreenView(analytics = analytics)
@@ -324,6 +366,8 @@ fun RestaurantMobileApp(
                 if (isCartOpen) {
                     CartBottomSheetView(
                         cart = cart,
+                        selectedTable = selectedTable,
+                        activeBooking = activeBooking,
                         onUpdateQty = { itemId, delta ->
                             cart = cart.mapNotNull { item ->
                                 if (item.menuItem.id == itemId) {
@@ -332,20 +376,79 @@ fun RestaurantMobileApp(
                                 } else item
                             }
                         },
-                        onCheckout = { paymentMethod ->
+                        onSubmitOrder = { paymentMethod ->
+                            if (selectedTable == null) {
+                                onShowToast("⚠️ Please select a table before submitting order.")
+                                showTableSelectDialog = true
+                                return@CartBottomSheetView
+                            }
+                            if (cart.isEmpty()) {
+                                onShowToast("Cart is empty.")
+                                return@CartBottomSheetView
+                            }
+
                             coroutineScope.launch {
-                                val success = ApiClient.checkoutOrder(paymentMethod, cart)
-                                if (success) {
-                                    onShowToast("✅ Order Paid via $paymentMethod! KOT sent to Kitchen.")
+                                try {
+                                    val tableNum = selectedTable!!.tableNumber
+                                    val tableId = "${selectedTable!!.id}"
+
+                                    val billItems = cart.map { c ->
+                                        com.restaurant.mobile.delivery.TableBillItem(
+                                            menuItemId = c.menuItem.id,
+                                            name = c.menuItem.name,
+                                            price = c.menuItem.price,
+                                            quantity = c.quantity,
+                                            taxRate = c.menuItem.taxRate
+                                        )
+                                    }
+
+                                    // 1. Transactionally persist / append to SQLite live dining tab
+                                    val savedTab = database.appendItemsToDiningTab(
+                                        tableNumber = tableNum,
+                                        tableId = tableId,
+                                        newItems = billItems,
+                                        associatedBooking = activeBooking
+                                    )
+                                    activeDiningTab = savedTab
+
+                                    // 2. Dispatch to kitchen workflow
+                                    ApiClient.checkoutOrder(
+                                        paymentMethod = paymentMethod,
+                                        items = cart,
+                                        customerId = activeBooking?.userId?.toLongOrNull(),
+                                        tableId = selectedTable!!.id
+                                    )
+
+                                    // 3. Reset cart & notify
+                                    val custNotice = if (!savedTab.customerName.isNullOrBlank()) " (${savedTab.customerName})" else ""
+                                    onShowToast("✅ Order for Table $tableNum$custNotice sent to Kitchen & live tab updated!")
                                     cart = emptyList()
                                     isCartOpen = false
                                     refreshAll()
-                                } else {
-                                    onShowToast("Checkout failed")
+                                } catch (e: Exception) {
+                                    onShowToast("Failed to submit order: ${e.message}")
                                 }
                             }
                         },
+                        onOpenTableSelector = {
+                            isCartOpen = false
+                            showTableSelectDialog = true
+                        },
                         onClose = { isCartOpen = false }
+                    )
+                }
+
+                if (showTableSelectDialog) {
+                    TableSelectionDialog(
+                        tables = tables,
+                        selectedTable = selectedTable,
+                        getActiveBooking = { tableNum -> database.getActiveBookingForTable(tableNum) },
+                        onSelectTable = { table ->
+                            refreshActiveTableState(table)
+                            showTableSelectDialog = false
+                            onShowToast("Selected Table ${table.tableNumber}")
+                        },
+                        onDismiss = { showTableSelectDialog = false }
                     )
                 }
             }
@@ -362,6 +465,10 @@ fun POSScreenView(
     onSelectCategory: (Long?) -> Unit,
     searchQuery: String,
     onSearchChange: (String) -> Unit,
+    selectedTable: DiningTable?,
+    activeBooking: com.restaurant.mobile.delivery.TableBooking?,
+    activeDiningTab: com.restaurant.mobile.delivery.DiningTab?,
+    onOpenTableSelector: () -> Unit,
     onAddToCart: (MenuItem) -> Unit
 ) {
     val filtered = menuItems.filter { item ->
@@ -370,6 +477,99 @@ fun POSScreenView(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Persistent Table & Seated Customer Header
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenTableSelector() },
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (selectedTable != null) Color(0xFFEFF6FF) else Color(0xFFFEF3C7)
+            ),
+            border = androidx.compose.foundation.BorderStroke(
+                width = 1.dp,
+                color = if (selectedTable != null) Color(0xFFBFDBFE) else Color(0xFFFDE68A)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.TableBar,
+                        contentDescription = null,
+                        tint = if (selectedTable != null) Color(0xFF1D4ED8) else Color(0xFFD97706),
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        if (selectedTable != null) {
+                            Text(
+                                text = com.restaurant.mobile.delivery.WaiterTablePairingRules.formatServingHeader(
+                                    selectedTable.tableNumber,
+                                    activeBooking
+                                ),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = Color(0xFF1E3A8A)
+                            )
+                            val subtext = buildString {
+                                append("${selectedTable.seatingCapacity} Seats")
+                                if (activeBooking?.partySize != null) {
+                                    append(" • Party of ${activeBooking.partySize}")
+                                }
+                                if (activeDiningTab != null && activeDiningTab.items.isNotEmpty()) {
+                                    append(" • Tab: ₹${activeDiningTab.total.toInt()} (${activeDiningTab.items.sumOf { it.quantity }} items)")
+                                }
+                            }
+                            Text(
+                                text = subtext,
+                                fontSize = 12.sp,
+                                color = Color(0xFF2563EB)
+                            )
+                        } else {
+                            Text(
+                                text = "No Table Selected",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = Color(0xFF92400E)
+                            )
+                            Text(
+                                text = "Select an active table to begin taking orders",
+                                fontSize = 12.sp,
+                                color = Color(0xFFB45309)
+                            )
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = onOpenTableSelector,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selectedTable != null) Color(0xFF2563EB) else Color(0xFFD97706)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (selectedTable != null) "Change" else "Select Table",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         // Search Input
         OutlinedTextField(
             value = searchQuery,
@@ -557,7 +757,8 @@ fun KDSScreenView(
 @Composable
 fun TablesScreenView(
     tables: List<DiningTable>,
-    onCycleTableStatus: (DiningTable) -> Unit
+    onCycleTableStatus: (DiningTable) -> Unit,
+    onSelectTableForOrder: ((DiningTable) -> Unit)? = null
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -575,7 +776,6 @@ fun TablesScreenView(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(130.dp)
                     .clickable { onCycleTableStatus(table) },
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -597,7 +797,7 @@ fun TablesScreenView(
                         fontSize = 12.sp,
                         color = Color.Gray
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = table.status,
                         fontSize = 11.sp,
@@ -607,13 +807,25 @@ fun TablesScreenView(
                             .background(color.copy(alpha = 0.15f), CircleShape)
                             .padding(horizontal = 10.dp, vertical = 2.dp)
                     )
+                    if (onSelectTableForOrder != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Button(
+                            onClick = { onSelectTableForOrder(table) },
+                            modifier = Modifier.height(28.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("Take Order", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-// 5. Analytics Screen Component
+// 4. Analytics Screen Component
 @Composable
 fun AnalyticsScreenView(analytics: AnalyticsData) {
     Column(
@@ -647,13 +859,17 @@ fun StatCard(label: String, value: String, color: Color) {
 @Composable
 fun CartBottomSheetView(
     cart: List<CartItem>,
+    selectedTable: DiningTable?,
+    activeBooking: com.restaurant.mobile.delivery.TableBooking?,
     onUpdateQty: (Long, Int) -> Unit,
-    onCheckout: (String) -> Unit,
+    onSubmitOrder: (String) -> Unit,
+    onOpenTableSelector: () -> Unit,
     onClose: () -> Unit
 ) {
     val subtotal = cart.sumOf { it.menuItem.price * it.quantity }
     val tax = subtotal * 0.05
     val grandTotal = subtotal + tax
+    var isSubmitting by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -665,7 +881,7 @@ fun CartBottomSheetView(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.7f)
+                .fillMaxHeight(0.75f)
                 .clickable(enabled = false) {},
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -676,13 +892,49 @@ fun CartBottomSheetView(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "Current Order Cart", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Column {
+                        Text(text = "Current Order Cart", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        if (selectedTable != null) {
+                            val custLabel = if (activeBooking != null) " (${activeBooking.userName})" else " (Walk-in)"
+                            Text(
+                                text = "Table ${selectedTable.tableNumber}$custLabel",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF2563EB)
+                            )
+                        }
+                    }
                     IconButton(onClick = onClose) {
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
+
+                if (selectedTable == null) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                            .clickable { onOpenTableSelector() },
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFD97706))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "No table selected. Tap here to select a table before submitting.",
+                                fontSize = 12.sp,
+                                color = Color(0xFF92400E),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
 
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(cart) { item ->
@@ -719,27 +971,72 @@ fun CartBottomSheetView(
                     Text("₹${grandTotal.toInt()}", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color(0xFF6366F1))
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
+                // Primary Order Dispatch to Kitchen & Tab
+                Button(
+                    onClick = {
+                        if (!isSubmitting) {
+                            isSubmitting = true
+                            onSubmitOrder("Dine-in Tab")
+                        }
+                    },
+                    enabled = selectedTable != null && cart.isNotEmpty() && !isSubmitting,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.SoupKitchen, contentDescription = null, tint = Color.White)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isSubmitting) "Submitting..." else "Send to Kitchen & Live Tab",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Settlement Options
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { onCheckout("Cash") },
+                        onClick = {
+                            if (!isSubmitting) {
+                                isSubmitting = true
+                                onSubmitOrder("Cash")
+                            }
+                        },
+                        enabled = selectedTable != null && cart.isNotEmpty() && !isSubmitting,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Cash")
                     }
                     Button(
-                        onClick = { onCheckout("Card") },
+                        onClick = {
+                            if (!isSubmitting) {
+                                isSubmitting = true
+                                onSubmitOrder("Card")
+                            }
+                        },
+                        enabled = selectedTable != null && cart.isNotEmpty() && !isSubmitting,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Card")
                     }
                     Button(
-                        onClick = { onCheckout("UPI") },
+                        onClick = {
+                            if (!isSubmitting) {
+                                isSubmitting = true
+                                onSubmitOrder("UPI")
+                            }
+                        },
+                        enabled = selectedTable != null && cart.isNotEmpty() && !isSubmitting,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("UPI")
                     }
@@ -747,4 +1044,114 @@ fun CartBottomSheetView(
             }
         }
     }
+}
+
+// Table Selection Dialog
+@Composable
+fun TableSelectionDialog(
+    tables: List<DiningTable>,
+    selectedTable: DiningTable?,
+    getActiveBooking: (String) -> com.restaurant.mobile.delivery.TableBooking?,
+    onSelectTable: (DiningTable) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.TableBar,
+                    contentDescription = null,
+                    tint = Color(0xFFC2410C)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Select Table for Order", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(tables) { table ->
+                    val isSelected = selectedTable?.id == table.id
+                    val booking = remember(table.tableNumber) { getActiveBooking(table.tableNumber) }
+                    val statusColor = when (table.status) {
+                        "Available" -> Color(0xFF10B981)
+                        "Occupied" -> Color(0xFFEF4444)
+                        else -> Color(0xFFF59E0B)
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectTable(table) },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) Color(0xFFFFEDD5) else Color.White
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) Color(0xFFC2410C) else Color(0xFFE2E8F0)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = table.tableNumber,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "(${table.seatingCapacity} Seats)",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                                if (booking != null) {
+                                    Text(
+                                        text = "Customer: ${booking.userName} (${booking.status})",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF2563EB)
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Status: ${table.status} (Walk-in)",
+                                        fontSize = 12.sp,
+                                        color = statusColor
+                                    )
+                                }
+                            }
+
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = "Selected",
+                                    tint = Color(0xFFC2410C),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color(0xFF78716C))
+            }
+        }
+    )
 }

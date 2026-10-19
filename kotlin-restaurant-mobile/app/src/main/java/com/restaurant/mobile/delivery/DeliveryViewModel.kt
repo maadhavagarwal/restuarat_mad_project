@@ -845,6 +845,15 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         bookingManagementError = null
     }
 
+    fun getActiveDiningTabForCurrentUser(): DiningTab? {
+        val currentUserId = profile?.id ?: return null
+        return sqlDb.getActiveDiningTabForUser(currentUserId)
+    }
+
+    fun getActiveDiningTabForTable(tableNumber: String): DiningTab? {
+        return sqlDb.getActiveDiningTabForTable(tableNumber)
+    }
+
     fun revokeSession(reason: String = "Your session has expired. Please sign in again.") {
         session.save(null)
         session.saveProfile(null)

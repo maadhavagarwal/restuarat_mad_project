@@ -187,6 +187,8 @@ class TableBookingUiTest {
 
     @Test
     fun testFormValidationStates() {
+        val testFutureDate = LocalDate.now().plusDays(1).toString()
+
         // 1. Initial / empty date -> invalid
         val noDate = TableBookingDraft(
             bookingDate = "",
@@ -196,21 +198,21 @@ class TableBookingUiTest {
 
         // 2. Empty slot -> invalid
         val noSlot = TableBookingDraft(
-            bookingDate = "2026-10-18",
+            bookingDate = testFutureDate,
             timeSlot = ""
         )
         assertFalse(noSlot.isValid)
 
         // 3. Zero or negative party size -> invalid
         val zeroParty = TableBookingDraft(
-            bookingDate = "2026-10-18",
+            bookingDate = testFutureDate,
             timeSlot = "7:00 PM",
             partySize = 0
         )
         assertFalse(zeroParty.isValid)
 
         val negativeParty = TableBookingDraft(
-            bookingDate = "2026-10-18",
+            bookingDate = testFutureDate,
             timeSlot = "7:00 PM",
             partySize = -1
         )
@@ -218,7 +220,7 @@ class TableBookingUiTest {
 
         // 4. Over party limit -> invalid
         val overParty = TableBookingDraft(
-            bookingDate = "2026-10-18",
+            bookingDate = testFutureDate,
             timeSlot = "7:00 PM",
             partySize = 25
         )
@@ -226,7 +228,7 @@ class TableBookingUiTest {
 
         // 5. Blank seating area -> invalid
         val noArea = TableBookingDraft(
-            bookingDate = "2026-10-18",
+            bookingDate = testFutureDate,
             timeSlot = "7:00 PM",
             seatingArea = ""
         )
@@ -236,7 +238,7 @@ class TableBookingUiTest {
         val validDraft = TableBookingDraft(
             restaurantId = "rest-1",
             restaurantName = "Bistro Lumière & Biryani",
-            bookingDate = "2026-10-18",
+            bookingDate = testFutureDate,
             timeSlot = "7:00 PM",
             partySize = 4,
             seatingArea = "Private Booth",

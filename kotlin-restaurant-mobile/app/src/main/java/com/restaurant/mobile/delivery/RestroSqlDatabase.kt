@@ -8,6 +8,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 
 /**
@@ -219,10 +220,14 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             """
             CREATE TABLE IF NOT EXISTS $TABLE_DINING_TABS (
                 id TEXT PRIMARY KEY,
+                table_id TEXT NOT NULL DEFAULT '',
                 table_number TEXT NOT NULL,
                 booking_id TEXT,
                 user_id TEXT,
                 user_name TEXT NOT NULL DEFAULT 'Guest Diner',
+                customer_id TEXT,
+                customer_name TEXT,
+                customer_phone TEXT,
                 items_json TEXT NOT NULL DEFAULT '[]',
                 subtotal INTEGER NOT NULL DEFAULT 0,
                 tax INTEGER NOT NULL DEFAULT 0,
@@ -231,7 +236,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 total INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'OPEN',
                 payment_method TEXT,
-                updated_at TEXT NOT NULL
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                restaurant_id TEXT NOT NULL DEFAULT ''
             );
             """.trimIndent()
         )
@@ -240,6 +247,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_status ON $TABLE_DINING_TABS (status);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_table_status ON $TABLE_DINING_TABS (table_number, status);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_user_status ON $TABLE_DINING_TABS (user_id, status);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_table ON $TABLE_DINING_TABS (table_number, status);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_booking ON $TABLE_DINING_TABS (booking_id);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_customer ON $TABLE_DINING_TABS (customer_id);")
     }
 
     // -------------------------------------------------------------
@@ -1120,14 +1130,48 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     // -------------------------------------------------------------
-    // DINING TABS
     // -------------------------------------------------------------
+    // DINING TABS & WAITER POS PAIRING
+    // -------------------------------------------------------------
+
+    fun getActiveBookingForTable(
+        tableNumber: String,
+        date: String = LocalDate.now().toString(),
+        currentTimeSlot: String? = null,
+        restaurantId: String = ""
+    ): TableBooking? {
+        val bookings = getTableBookingsForTableNumber(tableNumber)
+        return WaiterTablePairingRules.resolveActiveBookingForTable(
+            tableNumber = tableNumber,
+            bookings = bookings,
+            serviceDate = date,
+            currentTimeSlot = currentTimeSlot,
+            restaurantId = restaurantId
+        )
+    }
+
+    fun getTableBookingsForTableNumber(tableNumber: String): List<TableBooking> {
+        val list = mutableListOf<TableBooking>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_BOOKINGS WHERE table_number = ? OR table_id = ? OR table_id LIKE ? ORDER BY booking_date DESC, time_slot DESC",
+            arrayOf(tableNumber, tableNumber, "%_$tableNumber")
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToTableBooking(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
 
     fun getOpenTabForTable(tableNumber: String): DiningTab? {
         if (tableNumber.isBlank()) return null
         val db = readableDatabase
         val cursor = db.rawQuery(
-            "SELECT * FROM $TABLE_DINING_TABS WHERE table_number = ? COLLATE NOCASE AND status != 'SETTLED' ORDER BY updated_at DESC LIMIT 1",
+            "SELECT * FROM $TABLE_DINING_TABS WHERE table_number = ? COLLATE NOCASE AND status != 'SETTLED' AND status != 'PAID' AND status != 'CLOSED' ORDER BY updated_at DESC LIMIT 1",
             arrayOf(tableNumber.trim())
         )
         return try {
@@ -1139,12 +1183,26 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
     }
 
+    fun getActiveDiningTabForTable(tableNumber: String): DiningTab? {
+        if (tableNumber.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_DINING_TABS WHERE table_number = ? COLLATE NOCASE AND status != 'SETTLED' AND status != 'PAID' AND status != 'CLOSED' ORDER BY updated_at DESC LIMIT 1",
+            arrayOf(tableNumber.trim())
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
+        } finally {
+            cursor.close()
+        }
+    }
+
     fun getOpenTabForUser(userId: String): DiningTab? {
         if (userId.isBlank()) return null
         val db = readableDatabase
         val cursor = db.rawQuery(
-            "SELECT * FROM $TABLE_DINING_TABS WHERE user_id = ? AND status != 'SETTLED' ORDER BY updated_at DESC LIMIT 1",
-            arrayOf(userId.trim())
+            "SELECT * FROM $TABLE_DINING_TABS WHERE (user_id = ? OR customer_id = ?) AND status != 'SETTLED' AND status != 'PAID' AND status != 'CLOSED' ORDER BY updated_at DESC LIMIT 1",
+            arrayOf(userId.trim(), userId.trim())
         )
         return try {
             if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
@@ -1155,6 +1213,56 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
     }
 
+    fun getActiveDiningTabForUser(userId: String): DiningTab? {
+        return getOpenTabForUser(userId)
+    }
+
+    fun getActiveDiningTabForBooking(bookingId: String): DiningTab? {
+        if (bookingId.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_DINING_TABS WHERE booking_id = ? AND status != 'SETTLED' AND status != 'PAID' AND status != 'CLOSED' ORDER BY updated_at DESC LIMIT 1",
+            arrayOf(bookingId.trim())
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    fun getDiningTab(id: String): DiningTab? {
+        if (id.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1",
+            arrayOf(id.trim())
+        )
+        return try {
+            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            cursor.close()
+        }
+    }
+
+    fun getDiningTabById(id: String): DiningTab? = getDiningTab(id)
+
+    fun getAllDiningTabs(): List<DiningTab> {
+        val list = mutableListOf<DiningTab>()
+        val db = readableDatabase
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS ORDER BY updated_at DESC", null)
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToDiningTab(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
     fun saveOrUpdateTab(tab: DiningTab): Boolean {
         if (tab.tableNumber.isBlank()) return false
         val db = writableDatabase
@@ -1162,10 +1270,14 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val updatedAt = if (tab.updatedAt.isNotBlank()) tab.updatedAt else Instant.now().toString()
         val cv = ContentValues().apply {
             put("id", effectiveId)
+            put("table_id", tab.tableId.ifBlank { tab.tableNumber.trim() })
             put("table_number", tab.tableNumber.trim())
             put("booking_id", tab.bookingId)
-            put("user_id", tab.userId)
-            put("user_name", tab.userName)
+            put("user_id", tab.userId ?: tab.customerId)
+            put("user_name", tab.userName.ifBlank { tab.customerName ?: "Guest Diner" })
+            put("customer_id", tab.customerId ?: tab.userId)
+            put("customer_name", tab.customerName ?: tab.userName)
+            put("customer_phone", tab.customerPhone)
             put("items_json", gson.toJson(tab.items))
             put("subtotal", tab.subtotal)
             put("tax", tab.tax)
@@ -1174,7 +1286,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("total", tab.total)
             put("status", tab.status)
             put("payment_method", tab.paymentMethod)
+            put("created_at", tab.createdAt.ifBlank { updatedAt })
             put("updated_at", updatedAt)
+            put("restaurant_id", tab.restaurantId)
         }
         val rowId = try {
             db.insertWithOnConflict(TABLE_DINING_TABS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -1209,7 +1323,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val clean = tableNumber.trim()
         if (clean.isBlank()) return "Available"
         val openTab = getOpenTabForTable(clean)
-        if (openTab != null && openTab.status != "SETTLED") {
+        if (openTab != null && openTab.status != "SETTLED" && openTab.status != "PAID" && openTab.status != "CLOSED") {
             return "Occupied"
         }
         val activeBooking = getAllTableBookings().firstOrNull {
@@ -1235,7 +1349,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 updateTableBookingStatus(booking.id, TableBookingStatus.COMPLETED)
             }
             val openTab = getOpenTabForTable(clean)
-            if (openTab != null && openTab.status != "SETTLED") {
+            if (openTab != null && openTab.status != "SETTLED" && openTab.status != "PAID" && openTab.status != "CLOSED") {
                 markTabSettled(openTab.id, openTab.paymentMethod ?: "Cash")
             }
             return true
@@ -1243,28 +1357,78 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return false
     }
 
-    fun getDiningTab(id: String): DiningTab? {
-        if (id.isBlank()) return null
-        val db = readableDatabase
-        val cursor = db.rawQuery(
-            "SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1",
-            arrayOf(id.trim())
-        )
-        return try {
-            if (cursor.moveToFirst()) cursorToDiningTab(cursor) else null
-        } catch (_: Exception) {
-            null
+    fun appendItemsToDiningTab(
+        tableNumber: String,
+        tableId: String,
+        newItems: List<TableBillItem>,
+        associatedBooking: TableBooking? = null,
+        restaurantId: String = ""
+    ): DiningTab {
+        require(tableNumber.isNotBlank()) { "Table number must not be blank" }
+        require(newItems.isNotEmpty()) { "Cannot submit empty items to dining tab" }
+
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val existingCursor = db.rawQuery(
+                "SELECT * FROM $TABLE_DINING_TABS WHERE table_number = ? AND status != 'SETTLED' AND status != 'PAID' AND status != 'CLOSED' ORDER BY updated_at DESC LIMIT 1",
+                arrayOf(tableNumber)
+            )
+            val existingTab = if (existingCursor.moveToFirst()) {
+                cursorToDiningTab(existingCursor)
+            } else null
+            existingCursor.close()
+
+            val targetTab = WaiterTablePairingRules.appendOrOpenDiningTab(
+                existingTab = existingTab,
+                tableNumber = tableNumber,
+                tableId = tableId,
+                newItems = newItems,
+                associatedBooking = associatedBooking,
+                restaurantId = restaurantId
+            )
+
+            val cv = ContentValues().apply {
+                put("id", targetTab.id)
+                put("table_id", targetTab.tableId)
+                put("table_number", targetTab.tableNumber)
+                put("customer_id", targetTab.customerId)
+                put("customer_name", targetTab.customerName)
+                put("customer_phone", targetTab.customerPhone)
+                put("booking_id", targetTab.bookingId)
+                put("user_id", targetTab.userId)
+                put("user_name", targetTab.userName)
+                put("status", targetTab.status)
+                put("items_json", gson.toJson(targetTab.items))
+                put("subtotal", targetTab.subtotal)
+                put("tax", targetTab.tax)
+                put("gst", targetTab.tax)
+                put("service_charge", targetTab.serviceCharge)
+                put("total", targetTab.total)
+                put("payment_method", targetTab.paymentMethod)
+                put("created_at", targetTab.createdAt)
+                put("updated_at", targetTab.updatedAt)
+                put("restaurant_id", targetTab.restaurantId)
+            }
+
+            db.insertWithOnConflict(TABLE_DINING_TABS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+            return targetTab
         } finally {
-            cursor.close()
+            db.endTransaction()
         }
     }
 
     private fun cursorToDiningTab(c: Cursor): DiningTab {
-        val idIdx = c.getColumnIndexOrThrow("id")
-        val tableNumberIdx = c.getColumnIndexOrThrow("table_number")
+        val idIdx = c.getColumnIndex("id")
+        val tableIdIdx = c.getColumnIndex("table_id")
+        val tableNumberIdx = c.getColumnIndex("table_number")
         val bookingIdIdx = c.getColumnIndex("booking_id")
         val userIdIdx = c.getColumnIndex("user_id")
         val userNameIdx = c.getColumnIndex("user_name")
+        val customerIdIdx = c.getColumnIndex("customer_id")
+        val customerNameIdx = c.getColumnIndex("customer_name")
+        val customerPhoneIdx = c.getColumnIndex("customer_phone")
         val itemsJsonIdx = c.getColumnIndex("items_json")
         val subtotalIdx = c.getColumnIndex("subtotal")
         val taxIdx = c.getColumnIndex("tax")
@@ -1273,7 +1437,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val totalIdx = c.getColumnIndex("total")
         val statusIdx = c.getColumnIndex("status")
         val paymentMethodIdx = c.getColumnIndex("payment_method")
+        val createdAtIdx = c.getColumnIndex("created_at")
         val updatedAtIdx = c.getColumnIndex("updated_at")
+        val restaurantIdIdx = c.getColumnIndex("restaurant_id")
 
         val items: List<TableBillItem> = if (itemsJsonIdx != -1 && !c.isNull(itemsJsonIdx)) {
             val json = c.getString(itemsJsonIdx)
@@ -1293,20 +1459,45 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             else -> 0L
         }
 
+        val id = if (idIdx != -1 && !c.isNull(idIdx)) c.getString(idIdx) else ""
+        val tableNumber = if (tableNumberIdx != -1 && !c.isNull(tableNumberIdx)) c.getString(tableNumberIdx) else ""
+        val tableId = if (tableIdIdx != -1 && !c.isNull(tableIdIdx)) c.getString(tableIdIdx) else tableNumber
+        val bookingId = if (bookingIdIdx != -1 && !c.isNull(bookingIdIdx)) c.getString(bookingIdIdx) else null
+        val customerId = if (customerIdIdx != -1 && !c.isNull(customerIdIdx)) c.getString(customerIdIdx)
+            else if (userIdIdx != -1 && !c.isNull(userIdIdx)) c.getString(userIdIdx) else null
+        val customerName = if (customerNameIdx != -1 && !c.isNull(customerNameIdx)) c.getString(customerNameIdx)
+            else if (userNameIdx != -1 && !c.isNull(userNameIdx)) c.getString(userNameIdx) else null
+        val customerPhone = if (customerPhoneIdx != -1 && !c.isNull(customerPhoneIdx)) c.getString(customerPhoneIdx) else null
+        val status = if (statusIdx != -1 && !c.isNull(statusIdx)) c.getString(statusIdx) else DiningTabStatus.OPEN
+        val paymentMethod = if (paymentMethodIdx != -1 && !c.isNull(paymentMethodIdx)) c.getString(paymentMethodIdx) else null
+        val createdAt = if (createdAtIdx != -1 && !c.isNull(createdAtIdx)) c.getString(createdAtIdx) else Instant.now().toString()
+        val updatedAt = if (updatedAtIdx != -1 && !c.isNull(updatedAtIdx)) c.getString(updatedAtIdx) else Instant.now().toString()
+        val restaurantId = if (restaurantIdIdx != -1 && !c.isNull(restaurantIdIdx)) c.getString(restaurantIdIdx) else ""
+
+        val subtotal = if (subtotalIdx != -1 && !c.isNull(subtotalIdx)) c.getLong(subtotalIdx) else 0L
+        val serviceCharge = if (serviceChargeIdx != -1 && !c.isNull(serviceChargeIdx)) c.getLong(serviceChargeIdx) else 0L
+        val total = if (totalIdx != -1 && !c.isNull(totalIdx)) c.getLong(totalIdx) else 0L
+
         return DiningTab(
-            id = c.getString(idIdx) ?: "",
-            tableNumber = c.getString(tableNumberIdx) ?: "",
-            bookingId = if (bookingIdIdx != -1 && !c.isNull(bookingIdIdx)) c.getString(bookingIdIdx) else null,
-            userId = if (userIdIdx != -1 && !c.isNull(userIdIdx)) c.getString(userIdIdx) else null,
-            userName = if (userNameIdx != -1 && !c.isNull(userNameIdx)) c.getString(userNameIdx) else "Guest Diner",
+            id = id,
+            tableId = tableId,
+            tableNumber = tableNumber,
+            customerId = customerId,
+            customerName = customerName,
+            customerPhone = customerPhone,
+            bookingId = bookingId,
+            userId = customerId,
+            userName = customerName ?: "Guest Diner",
             items = items,
-            subtotal = if (subtotalIdx != -1 && !c.isNull(subtotalIdx)) c.getLong(subtotalIdx) else 0L,
+            subtotal = subtotal,
             tax = taxVal,
-            serviceCharge = if (serviceChargeIdx != -1 && !c.isNull(serviceChargeIdx)) c.getLong(serviceChargeIdx) else 0L,
-            total = if (totalIdx != -1 && !c.isNull(totalIdx)) c.getLong(totalIdx) else 0L,
-            status = if (statusIdx != -1 && !c.isNull(statusIdx)) c.getString(statusIdx) else "OPEN",
-            paymentMethod = if (paymentMethodIdx != -1 && !c.isNull(paymentMethodIdx)) c.getString(paymentMethodIdx) else null,
-            updatedAt = if (updatedAtIdx != -1 && !c.isNull(updatedAtIdx)) c.getString(updatedAtIdx) else Instant.now().toString()
+            serviceCharge = serviceCharge,
+            total = total,
+            status = status,
+            paymentMethod = paymentMethod,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            restaurantId = restaurantId
         )
     }
 }

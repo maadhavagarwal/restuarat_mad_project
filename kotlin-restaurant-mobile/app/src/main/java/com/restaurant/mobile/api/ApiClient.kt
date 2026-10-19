@@ -192,7 +192,8 @@ object ApiClient {
     suspend fun checkoutOrder(
         paymentMethod: String,
         items: List<CartItem>,
-        customerId: Long? = null
+        customerId: Long? = null,
+        tableId: Long? = null
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val jsonItems = JSONArray()
@@ -208,6 +209,9 @@ object ApiClient {
                 .put("paymentMethod", paymentMethod)
                 .put("items", jsonItems)
 
+            if (tableId != null) {
+                body.put("tableId", tableId)
+            }
             if (customerId != null) {
                 body.put("customerId", customerId)
             }
