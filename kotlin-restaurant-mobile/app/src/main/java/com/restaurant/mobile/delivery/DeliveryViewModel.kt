@@ -854,6 +854,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         return sqlDb.getActiveDiningTabForTable(tableNumber)
     }
 
+    fun getActiveDiningTabForBooking(bookingId: String): DiningTab? {
+        return sqlDb.getActiveDiningTabForBooking(bookingId)
+    }
+
     fun revokeSession(reason: String = "Your session has expired. Please sign in again.") {
         session.save(null)
         session.saveProfile(null)

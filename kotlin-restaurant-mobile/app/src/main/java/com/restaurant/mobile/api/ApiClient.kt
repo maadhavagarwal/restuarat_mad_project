@@ -167,9 +167,16 @@ object ApiClient {
                 list.add(
                     KOT(
                         id = obj.getLong("id"),
-                        orderId = obj.getLong("orderId"),
+                        orderId = obj.optLong("orderId", obj.optLong("order_id", 0L)),
                         status = obj.getString("status"),
-                        items = items
+                        items = items,
+                        tableNumber = obj.optString("tableNumber", obj.optString("table_number", "")),
+                        tableId = obj.optString("tableId", obj.optString("table_id", "")),
+                        round = obj.optInt("round", obj.optInt("round_number", 1)),
+                        roundName = obj.optString("roundName", obj.optString("round_name", "")),
+                        createdAt = obj.optString("createdAt", obj.optString("created_at", "")),
+                        customerName = if (obj.has("customerName") && !obj.isNull("customerName")) obj.getString("customerName")
+                                       else if (obj.has("customer_name") && !obj.isNull("customer_name")) obj.getString("customer_name") else null
                     )
                 )
             }

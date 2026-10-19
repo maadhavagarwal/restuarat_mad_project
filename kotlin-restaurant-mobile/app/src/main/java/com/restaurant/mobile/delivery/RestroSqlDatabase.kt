@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.restaurant.mobile.model.KOT
+import com.restaurant.mobile.model.KOTItem
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -21,7 +23,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "restro_delivery.db"
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 7
 
         // Table Names
         const val TABLE_USERS = "users"
@@ -36,6 +38,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         const val TABLE_TABLE_BOOKINGS = TABLE_BOOKINGS
         const val TABLE_DINING_TABS = "dining_tabs"
         const val TABLE_TABS = TABLE_DINING_TABS
+        const val TABLE_KOT_TICKETS = "kot_tickets"
 
         val ALLOCATION_LOCK = Any()
     }
@@ -171,6 +174,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
         // Dining Tabs Table
         createDiningTabsTable(db)
+
+        // KOT Tickets Table
+        createKotTicketsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -184,6 +190,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
         if (oldVersion < 6) {
             createDiningTabsTable(db)
+        }
+        if (oldVersion < 7) {
+            createKotTicketsTable(db)
         }
     }
 
@@ -250,6 +259,28 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_table ON $TABLE_DINING_TABS (table_number, status);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_booking ON $TABLE_DINING_TABS (booking_id);")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_dining_tabs_customer ON $TABLE_DINING_TABS (customer_id);")
+    }
+
+    private fun createKotTicketsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_KOT_TICKETS (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL DEFAULT 0,
+                table_number TEXT NOT NULL,
+                table_id TEXT NOT NULL,
+                round_number INTEGER NOT NULL DEFAULT 1,
+                round_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'New',
+                items_json TEXT NOT NULL DEFAULT '[]',
+                customer_name TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_kot_tickets_table ON $TABLE_KOT_TICKETS (table_number);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_kot_tickets_status ON $TABLE_KOT_TICKETS (status);")
     }
 
     // -------------------------------------------------------------
@@ -1498,6 +1529,135 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             createdAt = createdAt,
             updatedAt = updatedAt,
             restaurantId = restaurantId
+        )
+    }
+
+    // -------------------------------------------------------------
+    // KITCHEN ORDER TICKETS (KOT) & ROUND SYNCHRONIZATION
+    // -------------------------------------------------------------
+
+    fun createKotTicket(
+        tableNumber: String,
+        tableId: String,
+        items: List<KOTItem>,
+        round: Int = 1,
+        roundName: String = "",
+        customerName: String? = null,
+        orderId: Long = 0L,
+        createdAt: String = Instant.now().toString()
+    ): KOT {
+        require(tableNumber.isNotBlank()) { "Table number must not be blank" }
+        require(items.isNotEmpty()) { "KOT items cannot be empty" }
+
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("order_id", orderId)
+            put("table_number", tableNumber)
+            put("table_id", tableId.ifBlank { tableNumber })
+            put("round_number", round)
+            put("round_name", roundName)
+            put("status", "New")
+            put("items_json", gson.toJson(items))
+            put("customer_name", customerName)
+            put("created_at", createdAt)
+            put("updated_at", createdAt)
+        }
+        val insertedId = db.insert(TABLE_KOT_TICKETS, null, cv)
+        return KOT(
+            id = insertedId,
+            orderId = orderId,
+            status = "New",
+            items = items,
+            tableNumber = tableNumber,
+            tableId = tableId.ifBlank { tableNumber },
+            round = round,
+            roundName = roundName,
+            createdAt = createdAt,
+            customerName = customerName
+        )
+    }
+
+    fun getAllKotTickets(): List<KOT> {
+        val list = mutableListOf<KOT>()
+        val db = readableDatabase
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_KOT_TICKETS ORDER BY id ASC", null)
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToKot(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun getKotTicketsForTable(tableNumber: String): List<KOT> {
+        val list = mutableListOf<KOT>()
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_KOT_TICKETS WHERE table_number = ? ORDER BY round_number ASC, id ASC",
+            arrayOf(tableNumber)
+        )
+        try {
+            while (cursor.moveToNext()) {
+                list.add(cursorToKot(cursor))
+            }
+        } finally {
+            cursor.close()
+        }
+        return list
+    }
+
+    fun updateKotTicketStatus(kotId: Long, newStatus: String): Boolean {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("status", newStatus)
+            put("updated_at", Instant.now().toString())
+        }
+        val rows = db.update(TABLE_KOT_TICKETS, cv, "id = ?", arrayOf(kotId.toString()))
+        return rows > 0
+    }
+
+    fun getNextRoundNumberForTable(tableNumber: String): Int {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT MAX(round_number) FROM $TABLE_KOT_TICKETS WHERE table_number = ? AND status != 'Served'",
+            arrayOf(tableNumber)
+        )
+        return try {
+            if (cursor.moveToFirst() && !cursor.isNull(0)) {
+                cursor.getInt(0) + 1
+            } else {
+                1
+            }
+        } finally {
+            cursor.close()
+        }
+    }
+
+    private fun cursorToKot(cursor: Cursor): KOT {
+        val itemsType = object : TypeToken<List<KOTItem>>() {}.type
+        val itemsJson = cursor.getString(cursor.getColumnIndexOrThrow("items_json")) ?: "[]"
+        val items: List<KOTItem> = try {
+            gson.fromJson(itemsJson, itemsType) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val custNameIdx = cursor.getColumnIndexOrThrow("customer_name")
+        val customerName = if (!cursor.isNull(custNameIdx)) cursor.getString(custNameIdx) else null
+
+        return KOT(
+            id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+            orderId = cursor.getLong(cursor.getColumnIndexOrThrow("order_id")),
+            status = cursor.getString(cursor.getColumnIndexOrThrow("status")),
+            items = items,
+            tableNumber = cursor.getString(cursor.getColumnIndexOrThrow("table_number")),
+            tableId = cursor.getString(cursor.getColumnIndexOrThrow("table_id")),
+            round = cursor.getInt(cursor.getColumnIndexOrThrow("round_number")),
+            roundName = cursor.getString(cursor.getColumnIndexOrThrow("round_name")),
+            createdAt = cursor.getString(cursor.getColumnIndexOrThrow("created_at")),
+            customerName = customerName
         )
     }
 }

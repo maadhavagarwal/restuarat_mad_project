@@ -2120,6 +2120,7 @@ fun CustomerBookingCard(
 @Composable
 fun BookingDetailsDialog(
     booking: TableBooking,
+    activeDiningTab: DiningTab? = null,
     onDismiss: () -> Unit,
     onCancelRequest: () -> Unit,
     modifier: Modifier = Modifier
@@ -2184,6 +2185,107 @@ fun BookingDetailsDialog(
                         value = booking.specialRequests.ifBlank { "None specified" }
                     )
                     SummaryRow(label = "Booking Status", value = booking.status)
+                }
+
+                // Customer Live Bill & Dining Tab (Grouped by Round)
+                if (activeDiningTab != null && activeDiningTab.items.isNotEmpty()) {
+                    Surface(
+                        color = Color.White.copy(alpha = 0.05f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Receipt,
+                                        contentDescription = null,
+                                        tint = RestroTokens.coral,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Live Bill (Table ${activeDiningTab.tableNumber})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = RestroTokens.text
+                                    )
+                                }
+                                Text(
+                                    text = "${activeDiningTab.items.sumOf { it.quantity }} items",
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+                            val groupedRounds = activeDiningTab.itemsGroupedByRound().toSortedMap()
+                            groupedRounds.forEach { (round, roundItems) ->
+                                val courseName = roundItems.firstOrNull()?.roundName?.takeIf { it.isNotBlank() }
+                                val header = if (courseName != null) "Round $round ($courseName)" else "Round $round"
+                                Text(
+                                    text = header,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = RestroTokens.coral
+                                )
+                                roundItems.forEach { item ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 6.dp, top = 2.dp, bottom = 2.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${item.quantity}x ${item.name}",
+                                            fontSize = 12.sp,
+                                            color = RestroTokens.text
+                                        )
+                                        Text(
+                                            text = "₹${(item.price * item.quantity).toInt()}",
+                                            fontSize = 12.sp,
+                                            color = RestroTokens.muted
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                            }
+
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Subtotal", fontSize = 11.sp, color = RestroTokens.muted)
+                                Text("₹${activeDiningTab.subtotal.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Taxes (5% GST)", fontSize = 11.sp, color = RestroTokens.muted)
+                                Text("₹${activeDiningTab.tax.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Total", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RestroTokens.text)
+                                Text("₹${activeDiningTab.total.toInt()}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = RestroTokens.coral)
+                            }
+                        }
+                    }
                 }
 
                 if (booking.status == TableBookingStatus.CANCELLED) {
@@ -2332,8 +2434,12 @@ fun MyTableBookingsScreen(
     // Modal dialogs
     detailsBooking?.let { b ->
         val liveBooking = bookings.find { it.id == b.id } ?: b
+        val activeTab = remember(liveBooking.id, liveBooking.tableNumber) {
+            vm.getActiveDiningTabForBooking(liveBooking.id) ?: vm.getActiveDiningTabForTable(liveBooking.tableNumber)
+        }
         BookingDetailsDialog(
             booking = liveBooking,
+            activeDiningTab = activeTab,
             onDismiss = { detailsBooking = null },
             onCancelRequest = {
                 detailsBooking = null

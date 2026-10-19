@@ -1,5 +1,6 @@
 package com.restaurant.mobile.delivery
 
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -562,6 +563,10 @@ data class DiningTab(
     val serviceChargeRupees: Double get() = CurrencyConversionRules.paiseToRupees(serviceCharge)
     val totalRupees: Double get() = CurrencyConversionRules.paiseToRupees(total)
 
+    fun itemsGroupedByRound(): Map<Int, List<TableBillItem>> {
+        return items.groupBy { it.round }
+    }
+
     /**
      * Secondary constructor for POS and callers providing subtotal, tax, serviceCharge, and total in rupees (Double).
      */
@@ -782,6 +787,96 @@ object WaiterTablePairingRules {
                 updatedAt = Instant.now().toString(),
                 restaurantId = targetRestId
             )
+        }
+    }
+}
+
+object KotTimerRules {
+    /**
+     * Formats the elapsed time since an order was placed using real persisted timestamps.
+     * Examples:
+     * - "Ordered just now"
+     * - "Ordered 8m ago"
+     * - "Ordered 1h 15m ago"
+     * Gracefully handles missing, null, or malformed timestamps without crashing or fabricating elapsed times.
+     */
+    fun formatElapsedOrderTime(
+        createdAtString: String?,
+        now: Instant = Instant.now()
+    ): String {
+        if (createdAtString.isNullOrBlank()) return "Ordered just now"
+        return try {
+            val createdInstant = try {
+                Instant.parse(createdAtString)
+            } catch (_: Exception) {
+                val epochMs = createdAtString.toLongOrNull()
+                if (epochMs != null) Instant.ofEpochMilli(epochMs) else null
+            } ?: return "Ordered recently"
+
+            val duration = Duration.between(createdInstant, now)
+            val seconds = duration.seconds
+            val minutes = duration.toMinutes()
+
+            when {
+                seconds < 0 -> "Ordered just now"
+                seconds < 60 -> {
+                    if (seconds <= 10) "Ordered just now" else "Ordered ${seconds}s ago"
+                }
+                minutes < 60 -> "Ordered ${minutes}m ago"
+                minutes < 1440 -> {
+                    val hours = minutes / 60
+                    val remMins = minutes % 60
+                    if (remMins == 0L) "Ordered ${hours}h ago" else "Ordered ${hours}h ${remMins}m ago"
+                }
+                else -> {
+                    val days = minutes / 1440
+                    "Ordered ${days}d ago"
+                }
+            }
+        } catch (_: Exception) {
+            "Ordered recently"
+        }
+    }
+
+    /**
+     * Returns the standardized in-app notification message for ready KOT orders.
+     * Example: "Order #KOT-12 for Table T3 is Ready for Pickup!"
+     */
+    fun formatReadyNotificationMessage(ticketId: Any, tableNumber: String): String {
+        val raw = ticketId.toString()
+        val formattedId = if (raw.startsWith("KOT-", ignoreCase = true)) raw else "KOT-$raw"
+        val cleanTable = tableNumber.ifBlank { "Unassigned" }
+        return "Order #$formattedId for Table $cleanTable is Ready for Pickup!"
+    }
+}
+
+object KotRoundRules {
+    val STANDARD_COURSES = listOf("Starters", "Mains", "Desserts", "Beverages")
+
+    /**
+     * Determines the round name based on item categories or default fallback.
+     */
+    fun detectRoundName(
+        cartItems: List<com.restaurant.mobile.model.CartItem>,
+        categories: List<com.restaurant.mobile.model.Category>
+    ): String {
+        if (cartItems.isEmpty()) return "Starters"
+        val categoryMap = categories.associateBy { it.id }
+        val categoryCounts = mutableMapOf<String, Int>()
+        for (item in cartItems) {
+            val catName = categoryMap[item.menuItem.categoryId]?.name ?: ""
+            if (catName.isNotBlank()) {
+                categoryCounts[catName] = (categoryCounts[catName] ?: 0) + item.quantity
+            }
+        }
+        val topCategory = categoryCounts.maxByOrNull { it.value }?.key ?: ""
+        return when {
+            topCategory.contains("Starter", ignoreCase = true) -> "Starters"
+            topCategory.contains("Main", ignoreCase = true) -> "Mains"
+            topCategory.contains("Dessert", ignoreCase = true) -> "Desserts"
+            topCategory.contains("Beverage", ignoreCase = true) || topCategory.contains("Drink", ignoreCase = true) -> "Beverages"
+            topCategory.isNotBlank() -> topCategory
+            else -> "Mains"
         }
     }
 }

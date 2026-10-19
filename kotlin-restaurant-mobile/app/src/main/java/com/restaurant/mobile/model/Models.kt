@@ -27,18 +27,37 @@ data class DiningTable(
 )
 
 data class KOTItem(
-    val id: Long,
+    val id: Long = 0L,
     val menuItemName: String,
     val quantity: Int,
-    val priceAtTimeOfOrder: Double
+    val priceAtTimeOfOrder: Double = 0.0
 )
 
 data class KOT(
     val id: Long,
-    val orderId: Long,
-    var status: String, // "New", "Preparing", "Ready", "Served"
-    val items: List<KOTItem>
-)
+    val orderId: Long = 0L,
+    var status: String = "New", // "New", "Preparing", "Ready", "Served"
+    val items: List<KOTItem> = emptyList(),
+    val tableNumber: String = "",
+    val tableId: String = "",
+    val round: Int = 1,
+    val roundName: String = "",
+    val createdAt: String = "",
+    val customerName: String? = null
+) {
+    val ticketNumber: String
+        get() = "KOT-$id"
+
+    val displayTitle: String
+        get() = buildString {
+            append("Table ${tableNumber.ifBlank { "Unassigned" }}")
+            append(" — Round $round")
+            if (roundName.isNotBlank()) {
+                append(" ($roundName)")
+            }
+            append(" — ${status.uppercase()}")
+        }
+}
 
 data class Customer(
     val id: Long,
