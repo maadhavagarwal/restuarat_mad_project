@@ -31,7 +31,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.restaurant.mobile.api.ApiClient
+import com.restaurant.mobile.delivery.DerivedTableState
+import com.restaurant.mobile.delivery.DiningTabStatus
+import com.restaurant.mobile.delivery.TableLifecycleRules
+import com.restaurant.mobile.delivery.TableLifecycleState
 import com.restaurant.mobile.model.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -415,6 +420,53 @@ fun RestaurantMobileApp(
                         )
                         NavigationScreen.TABLES -> TablesScreenView(
                             tables = tables,
+                            getActiveTab = { tableNum -> database.getActiveDiningTabForTable(tableNum) },
+                            getBookingsForTable = { tableNum -> database.getTableBookingsForTableNumber(tableNum) },
+                            onSeatTable = { table, booking ->
+                                coroutineScope.launch {
+                                    val (seatedTab, _) = database.seatTableAndOpenTab(
+                                        tableNumber = table.tableNumber,
+                                        tableId = "${table.id}",
+                                        guestCount = booking?.partySize ?: 2,
+                                        bookingId = booking?.id,
+                                        customerName = booking?.userName,
+                                        customerPhone = booking?.userPhone
+                                    )
+                                    refreshActiveTableState(table)
+                                    onShowToast("Table ${table.tableNumber} is now Occupied (${seatedTab.guestCount} guests)")
+                                    refreshAll()
+                                }
+                            },
+                            onSelectTableForOrder = { table ->
+                                refreshActiveTableState(table)
+                                currentScreen = NavigationScreen.POS
+                                onShowToast("Taking order for Table ${table.tableNumber}")
+                            },
+                            onInitiatePayment = { tab ->
+                                coroutineScope.launch {
+                                    database.initiatePaymentForDiningTab(tab.id, "Card")
+                                    refreshAll()
+                                    onShowToast("Bill requested for Table ${tab.tableNumber}: Payment Pending")
+                                }
+                            },
+                            onVerifyPayment = { tab ->
+                                coroutineScope.launch {
+                                    val result = database.verifyAndCompletePaymentForDiningTab(tab.id)
+                                    if (result != null) {
+                                        refreshAll()
+                                        onShowToast("Payment verified for Table ${tab.tableNumber}! Table is now Available.")
+                                    } else {
+                                        onShowToast("Payment verification failed for Table ${tab.tableNumber}")
+                                    }
+                                }
+                            },
+                            onRevertPayment = { tab ->
+                                coroutineScope.launch {
+                                    database.failOrRevertPaymentForDiningTab(tab.id, "Payment cancelled or failed")
+                                    refreshAll()
+                                    onShowToast("Payment reverted for Table ${tab.tableNumber}. Table remains Occupied.")
+                                }
+                            },
                             onCycleTableStatus = { table ->
                                 val nextStatus = when (table.status) {
                                     "Available" -> "Occupied"
@@ -429,11 +481,6 @@ fun RestaurantMobileApp(
                                     }
                                     onShowToast("Table ${table.tableNumber} is now $nextStatus")
                                 }
-                            },
-                            onSelectTableForOrder = { table ->
-                                refreshActiveTableState(table)
-                                currentScreen = NavigationScreen.POS
-                                onShowToast("Taking order for Table ${table.tableNumber}")
                             }
                         )
                         NavigationScreen.ANALYTICS -> AnalyticsScreenView(analytics = analytics)
@@ -542,6 +589,8 @@ fun RestaurantMobileApp(
                         tables = tables,
                         selectedTable = selectedTable,
                         getActiveBooking = { tableNum -> database.getActiveBookingForTable(tableNum) },
+                        getActiveTab = { tableNum -> database.getActiveDiningTabForTable(tableNum) },
+                        getBookingsForTable = { tableNum -> database.getTableBookingsForTableNumber(tableNum) },
                         onSelectTable = { table ->
                             refreshActiveTableState(table)
                             showTableSelectDialog = false
@@ -1171,71 +1220,339 @@ fun KDSScreenView(
 @Composable
 fun TablesScreenView(
     tables: List<DiningTable>,
-    onCycleTableStatus: (DiningTable) -> Unit,
-    onSelectTableForOrder: ((DiningTable) -> Unit)? = null
+    onCycleTableStatus: (DiningTable) -> Unit = {},
+    onSelectTableForOrder: ((DiningTable) -> Unit)? = null,
+    getActiveTab: ((String) -> com.restaurant.mobile.delivery.DiningTab?)? = null,
+    getBookingsForTable: ((String) -> List<com.restaurant.mobile.delivery.TableBooking>)? = null,
+    onSeatTable: ((DiningTable, com.restaurant.mobile.delivery.TableBooking?) -> Unit)? = null,
+    onInitiatePayment: ((com.restaurant.mobile.delivery.DiningTab) -> Unit)? = null,
+    onVerifyPayment: ((com.restaurant.mobile.delivery.DiningTab) -> Unit)? = null,
+    onRevertPayment: ((com.restaurant.mobile.delivery.DiningTab) -> Unit)? = null
 ) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        items(tables) { table ->
-            val color = when (table.status) {
-                "Available" -> Color(0xFF10B981)
-                "Occupied" -> Color(0xFFEF4444)
-                else -> Color(0xFFF59E0B)
-            }
+    var currentTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(10000L) // 10s tick for elapsed dining timer
+            currentTick = System.currentTimeMillis()
+        }
+    }
 
-            Card(
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Lifecycle Legend Header
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(1.dp)
+        ) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onCycleTableStatus(table) },
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(2.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+                StatusLegendChip("Available", Color(0xFF10B981))
+                StatusLegendChip("Reserved", Color(0xFF8B5CF6))
+                StatusLegendChip("Occupied", Color(0xFFF59E0B))
+                StatusLegendChip("Billed", Color(0xFFEF4444))
+            }
+        }
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(tables) { table ->
+                val activeTab = getActiveTab?.invoke(table.tableNumber)
+                val bookings = getBookingsForTable?.invoke(table.tableNumber) ?: emptyList()
+                val derivedState = remember(table.tableNumber, activeTab, bookings, currentTick) {
+                    if (getActiveTab != null || getBookingsForTable != null) {
+                        TableLifecycleRules.deriveTableState(
+                            tableNumber = table.tableNumber,
+                            diningTab = activeTab,
+                            bookingsForTable = bookings
+                        )
+                    } else {
+                        when (table.status) {
+                            "Occupied" -> DerivedTableState(
+                                tableNumber = table.tableNumber,
+                                lifecycleState = TableLifecycleState.OCCUPIED,
+                                guestCount = 2,
+                                elapsedDiningTime = "Dining active"
+                            )
+                            "Reserved" -> DerivedTableState(
+                                tableNumber = table.tableNumber,
+                                lifecycleState = TableLifecycleState.RESERVED,
+                                reservationInfo = "Upcoming Reservation"
+                            )
+                            "Billed" -> DerivedTableState(
+                                tableNumber = table.tableNumber,
+                                lifecycleState = TableLifecycleState.BILLED,
+                                elapsedDiningTime = "Payment Pending"
+                            )
+                            else -> DerivedTableState(
+                                tableNumber = table.tableNumber,
+                                lifecycleState = TableLifecycleState.AVAILABLE
+                            )
+                        }
+                    }
+                }
+
+                val state = derivedState.lifecycleState
+                val stateColor = Color(state.colorHex)
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onCycleTableStatus(table) },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    border = androidx.compose.foundation.BorderStroke(
+                        width = 1.5.dp,
+                        color = stateColor.copy(alpha = 0.6f)
+                    ),
+                    elevation = CardDefaults.cardElevation(2.dp)
                 ) {
-                    Text(
-                        text = table.tableNumber,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Black,
-                        color = color
-                    )
-                    Text(
-                        text = "${table.seatingCapacity} Seats",
-                        fontSize = 12.sp,
-                        color = Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = table.status,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = color,
+                    Column(
                         modifier = Modifier
-                            .background(color.copy(alpha = 0.15f), CircleShape)
-                            .padding(horizontal = 10.dp, vertical = 2.dp)
-                    )
-                    if (onSelectTableForOrder != null) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Button(
-                            onClick = { onSelectTableForOrder(table) },
-                            modifier = Modifier.height(28.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
-                            shape = RoundedCornerShape(6.dp)
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Header: Table Number & Status Chip
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Take Order", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = table.tableNumber,
+                                fontSize = 22.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF0F172A)
+                            )
+                            Surface(
+                                color = stateColor.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    text = state.label,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = stateColor,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "${table.seatingCapacity} Seats",
+                            fontSize = 11.sp,
+                            color = Color(0xFF64748B)
+                        )
+
+                        // Body: contextual details per state
+                        when (state) {
+                            TableLifecycleState.RESERVED -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = derivedState.reservationInfo ?: "Reserved",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = stateColor
+                                    )
+                                    val booking = derivedState.associatedBooking
+                                    if (booking != null) {
+                                        Text(
+                                            text = "${booking.partySize} Guests · ${booking.userName}",
+                                            fontSize = 10.sp,
+                                            color = Color(0xFF475569)
+                                        )
+                                    }
+                                }
+                            }
+                            TableLifecycleState.OCCUPIED -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "${derivedState.guestCount ?: 2} Guests Seated",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = stateColor
+                                    )
+                                    Text(
+                                        text = derivedState.elapsedDiningTime ?: "Dining just now",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF475569)
+                                    )
+                                    if (activeTab != null && activeTab.items.isNotEmpty()) {
+                                        Text(
+                                            text = "Tab: ₹${activeTab.total.toInt()} (${activeTab.items.sumOf { it.quantity }} items)",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0F172A)
+                                        )
+                                    }
+                                }
+                            }
+                            TableLifecycleState.BILLED -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        text = "Payment Pending",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = stateColor
+                                    )
+                                    Text(
+                                        text = "Due: ₹${activeTab?.total?.toInt() ?: 0}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                    Text(
+                                        text = derivedState.elapsedDiningTime ?: "Awaiting verification",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF64748B)
+                                    )
+                                }
+                            }
+                            TableLifecycleState.AVAILABLE -> {
+                                Text(
+                                    text = "Ready for guests",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF059669)
+                                )
+                            }
+                        }
+
+                        // Contextual Action Buttons
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            when (state) {
+                                TableLifecycleState.AVAILABLE -> {
+                                    if (onSelectTableForOrder != null) {
+                                        Button(
+                                            onClick = { onSelectTableForOrder(table) },
+                                            modifier = Modifier.fillMaxWidth().height(28.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Take Order", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (onSeatTable != null) {
+                                        OutlinedButton(
+                                            onClick = { onSeatTable(table, null) },
+                                            modifier = Modifier.fillMaxWidth().height(26.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Seat Walk-in", fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                                TableLifecycleState.RESERVED -> {
+                                    if (onSeatTable != null) {
+                                        Button(
+                                            onClick = { onSeatTable(table, derivedState.associatedBooking) },
+                                            modifier = Modifier.fillMaxWidth().height(28.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Seat Guests", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (onSelectTableForOrder != null) {
+                                        OutlinedButton(
+                                            onClick = { onSelectTableForOrder(table) },
+                                            modifier = Modifier.fillMaxWidth().height(26.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Take Order", fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+                                    }
+                                }
+                                TableLifecycleState.OCCUPIED -> {
+                                    if (onSelectTableForOrder != null) {
+                                        Button(
+                                            onClick = { onSelectTableForOrder(table) },
+                                            modifier = Modifier.fillMaxWidth().height(28.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Take Order", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (onInitiatePayment != null && activeTab != null) {
+                                        Button(
+                                            onClick = { onInitiatePayment(activeTab) },
+                                            modifier = Modifier.fillMaxWidth().height(26.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Bill Table", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                        }
+                                    }
+                                }
+                                TableLifecycleState.BILLED -> {
+                                    if (onVerifyPayment != null && activeTab != null) {
+                                        Button(
+                                            onClick = { onVerifyPayment(activeTab) },
+                                            modifier = Modifier.fillMaxWidth().height(28.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Verify Payment", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    if (onRevertPayment != null && activeTab != null) {
+                                        OutlinedButton(
+                                            onClick = { onRevertPayment(activeTab) },
+                                            modifier = Modifier.fillMaxWidth().height(26.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text("Revert", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFEF4444))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun StatusLegendChip(label: String, color: Color) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .background(color, CircleShape)
+        )
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF334155)
+        )
     }
 }
 
@@ -1503,6 +1820,8 @@ fun TableSelectionDialog(
     tables: List<DiningTable>,
     selectedTable: DiningTable?,
     getActiveBooking: (String) -> com.restaurant.mobile.delivery.TableBooking?,
+    getActiveTab: ((String) -> com.restaurant.mobile.delivery.DiningTab?)? = null,
+    getBookingsForTable: ((String) -> List<com.restaurant.mobile.delivery.TableBooking>)? = null,
     onSelectTable: (DiningTable) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1529,11 +1848,19 @@ fun TableSelectionDialog(
                 items(tables) { table ->
                     val isSelected = selectedTable?.id == table.id
                     val booking = remember(table.tableNumber) { getActiveBooking(table.tableNumber) }
-                    val statusColor = when (table.status) {
-                        "Available" -> Color(0xFF10B981)
-                        "Occupied" -> Color(0xFFEF4444)
-                        else -> Color(0xFFF59E0B)
+                    val activeTab = remember(table.tableNumber) { getActiveTab?.invoke(table.tableNumber) }
+                    val bookings = remember(table.tableNumber) {
+                        getBookingsForTable?.invoke(table.tableNumber) ?: listOfNotNull(booking)
                     }
+                    val derivedState = remember(table.tableNumber, activeTab, bookings) {
+                        TableLifecycleRules.deriveTableState(
+                            tableNumber = table.tableNumber,
+                            diningTab = activeTab,
+                            bookingsForTable = bookings
+                        )
+                    }
+                    val statusColor = Color(derivedState.lifecycleState.colorHex)
+                    val statusLabel = derivedState.lifecycleState.label
 
                     Card(
                         modifier = Modifier
@@ -1569,6 +1896,19 @@ fun TableSelectionDialog(
                                         fontSize = 12.sp,
                                         color = Color(0xFF64748B)
                                     )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        color = statusColor.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = statusLabel,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = statusColor,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
                                 }
                                 if (booking != null) {
                                     Text(
@@ -1577,9 +1917,16 @@ fun TableSelectionDialog(
                                         fontWeight = FontWeight.SemiBold,
                                         color = Color(0xFF2563EB)
                                     )
+                                } else if (activeTab != null && activeTab.items.isNotEmpty()) {
+                                    Text(
+                                        text = "Tab: ₹${activeTab.total.toInt()} · ${derivedState.elapsedDiningTime ?: "Active"}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = Color(0xFF0F172A)
+                                    )
                                 } else {
                                     Text(
-                                        text = "Status: ${table.status} (Walk-in)",
+                                        text = "Status: $statusLabel (Walk-in)",
                                         fontSize = 12.sp,
                                         color = statusColor
                                     )

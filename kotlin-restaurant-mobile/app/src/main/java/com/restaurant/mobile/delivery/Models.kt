@@ -3,6 +3,10 @@ package com.restaurant.mobile.delivery
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.UUID
 
 data class AddOn(val id: String, val name: String, val price: Long)
@@ -182,21 +186,22 @@ object TableBookingStatus {
 }
 
 data class TableBooking(
-    val id: String = UUID.randomUUID().toString(),
-    val userId: String,
-    val userName: String,
-    val userPhone: String,
-    val tableId: String,
-    val tableNumber: String,
-    val bookingDate: String,
-    val timeSlot: String,
-    val partySize: Int,
+    val id: String = generateId(),
+    val userId: String = "user-1",
+    val userName: String = "Guest",
+    val userPhone: String = "9876543210",
+    val tableId: String = "",
+    val tableNumber: String = "",
+    val bookingDate: String = "",
+    val timeSlot: String = "",
+    val partySize: Int = 2,
     val seatingArea: String = "Main Dining Room",
     val specialRequests: String = "",
     val status: String = TableBookingStatus.CONFIRMED,
     val createdAt: String = Instant.now().toString(),
     val restaurantId: String = "",
     val restaurantName: String = "",
+    val updatedAt: String = ""
 ) {
     companion object {
         fun generateId(): String = "TB-${UUID.randomUUID().toString().take(8).uppercase()}"
@@ -525,6 +530,23 @@ object DiningTabStatus {
     val ALL = listOf(OPEN, ACTIVE, PAYMENT_PENDING, PAID, SETTLED, CLOSED)
 }
 
+enum class TableLifecycleState(val label: String, val colorHex: Long) {
+    AVAILABLE("Available", 0xFF10B981),                // Green
+    RESERVED("Reserved", 0xFF8B5CF6),                  // Purple
+    OCCUPIED("Occupied", 0xFFF59E0B),                  // Amber
+    BILLED("Billed / Payment Pending", 0xFFEF4444)     // Red
+}
+
+data class DerivedTableState(
+    val tableNumber: String,
+    val lifecycleState: TableLifecycleState,
+    val guestCount: Int? = null,
+    val elapsedDiningTime: String? = null,
+    val reservationInfo: String? = null,
+    val activeTab: DiningTab? = null,
+    val associatedBooking: TableBooking? = null
+)
+
 data class BillingSummary(
     val subtotal: Double,
     val tax: Double,
@@ -556,7 +578,11 @@ data class DiningTab(
     val paymentMethod: String? = null,
     val createdAt: String = Instant.now().toString(),
     val updatedAt: String = Instant.now().toString(),
-    val restaurantId: String = ""
+    val restaurantId: String = "",
+    val guestCount: Int = 0,
+    val seatedAt: String = "",
+    val billedAt: String = "",
+    val paymentTransactionId: String = ""
 ) {
     val subtotalRupees: Double get() = CurrencyConversionRules.paiseToRupees(subtotal)
     val taxRupees: Double get() = CurrencyConversionRules.paiseToRupees(tax)
@@ -586,7 +612,12 @@ data class DiningTab(
         total: Double = 0.0,
         createdAt: String = Instant.now().toString(),
         updatedAt: String = Instant.now().toString(),
-        restaurantId: String = ""
+        restaurantId: String = "",
+        guestCount: Int = 0,
+        seatedAt: String = "",
+        billedAt: String = "",
+        paymentMethod: String? = null,
+        paymentTransactionId: String = ""
     ) : this(
         id = id,
         tableId = tableId.ifBlank { tableNumber },
@@ -603,10 +634,14 @@ data class DiningTab(
         serviceCharge = CurrencyConversionRules.rupeesToPaise(serviceCharge),
         total = CurrencyConversionRules.rupeesToPaise(total),
         status = status,
-        paymentMethod = null,
+        paymentMethod = paymentMethod,
         createdAt = createdAt,
         updatedAt = updatedAt,
-        restaurantId = restaurantId
+        restaurantId = restaurantId,
+        guestCount = guestCount,
+        seatedAt = seatedAt,
+        billedAt = billedAt,
+        paymentTransactionId = paymentTransactionId
     )
 
     companion object {
@@ -767,6 +802,7 @@ object WaiterTablePairingRules {
                 restaurantId = targetRestId
             )
         } else {
+            val nowStr = Instant.now().toString()
             DiningTab(
                 id = DiningTab.generateId(),
                 tableId = tableId.ifBlank { tableNumber },
@@ -783,9 +819,11 @@ object WaiterTablePairingRules {
                 tax = billing.taxPaise,
                 serviceCharge = billing.serviceChargePaise,
                 total = billing.totalPaise,
-                createdAt = Instant.now().toString(),
-                updatedAt = Instant.now().toString(),
-                restaurantId = targetRestId
+                createdAt = nowStr,
+                updatedAt = nowStr,
+                restaurantId = targetRestId,
+                guestCount = associatedBooking?.partySize ?: 2,
+                seatedAt = nowStr
             )
         }
     }
@@ -878,5 +916,176 @@ object KotRoundRules {
             topCategory.isNotBlank() -> topCategory
             else -> "Mains"
         }
+    }
+}
+
+object TableLifecycleRules {
+    const val RESERVATION_LEAD_MINUTES = 30L
+
+    /**
+     * Parses booking date (e.g., "2026-10-19") and time slot (e.g., "7:00 PM" or "19:00")
+     * into a LocalDateTime. Handles missing or malformed dates/slots gracefully.
+     */
+    fun parseBookingDateTime(dateString: String?, timeSlotString: String?): LocalDateTime? {
+        if (dateString.isNullOrBlank() || timeSlotString.isNullOrBlank()) return null
+        val date = try {
+            LocalDate.parse(dateString.trim())
+        } catch (_: Exception) {
+            return null
+        }
+
+        val cleanSlot = timeSlotString.trim().uppercase()
+        val formatters = listOf(
+            DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("hh:mm a", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("h:mma", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("hh:mma", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("h a", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("ha", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("H:mm", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ENGLISH)
+        )
+        for (fmt in formatters) {
+            try {
+                val time = LocalTime.parse(cleanSlot, fmt)
+                return LocalDateTime.of(date, time)
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    /**
+     * Determines whether a confirmed booking is currently within the active reservation window
+     * (starting 30 minutes before the booking start time, until seated or booking window ends).
+     */
+    fun isWithinReservationWindow(
+        bookingDateString: String?,
+        timeSlotString: String?,
+        now: LocalDateTime = LocalDateTime.now()
+    ): Boolean {
+        val bookingStart = parseBookingDateTime(bookingDateString, timeSlotString) ?: return false
+        val windowStart = bookingStart.minusMinutes(RESERVATION_LEAD_MINUTES)
+        val windowEnd = bookingStart.plusMinutes(90) // Standard reservation dining window
+        return !now.isBefore(windowStart) && now.isBefore(windowEnd)
+    }
+
+    /**
+     * Formats elapsed dining time from an ISO timestamp or epoch millis.
+     * e.g., "Dining 12m", "Dining 1h 5m", "Dining just now"
+     */
+    fun formatElapsedDiningTime(startTimeString: String?, now: Instant = Instant.now()): String {
+        if (startTimeString.isNullOrBlank()) return "Dining just now"
+        return try {
+            val startInstant = try {
+                Instant.parse(startTimeString)
+            } catch (_: Exception) {
+                val epochMs = startTimeString.toLongOrNull()
+                if (epochMs != null) Instant.ofEpochMilli(epochMs) else null
+            } ?: return "Dining recently"
+
+            val duration = Duration.between(startInstant, now)
+            val seconds = duration.seconds
+            val minutes = duration.toMinutes()
+            when {
+                seconds < 60 -> "Dining just now"
+                minutes < 60 -> "Dining ${minutes}m"
+                else -> {
+                    val hours = minutes / 60
+                    val remMins = minutes % 60
+                    if (remMins == 0L) "Dining ${hours}h" else "Dining ${hours}h ${remMins}m"
+                }
+            }
+        } catch (_: Exception) {
+            "Dining recently"
+        }
+    }
+
+    /**
+     * Derives table lifecycle state deterministically from persisted bookings, dining tabs,
+     * and payment status according to Prompt 15 requirements:
+     * 1. Billed/Payment Pending (Red): Active tab with PAYMENT_PENDING status.
+     * 2. Occupied/Seated (Amber): Active tab with ACTIVE status OR a physically SEATED booking.
+     * 3. Reserved (Purple): Confirmed booking within 30 minutes of start time.
+     * 4. Available (Green): No active reservation, seated diner, or active dining session.
+     */
+    fun deriveTableState(
+        tableNumber: String,
+        diningTab: DiningTab?,
+        bookingsForTable: List<TableBooking>,
+        now: LocalDateTime = LocalDateTime.now()
+    ): DerivedTableState {
+        // 1. Check for payment pending dining tab (Red)
+        if (diningTab != null && diningTab.status == DiningTabStatus.PAYMENT_PENDING) {
+            val startTime = diningTab.seatedAt.ifBlank { diningTab.createdAt }
+            val elapsed = formatElapsedDiningTime(startTime)
+            val guests = diningTab.guestCount.takeIf { it > 0 }
+                ?: bookingsForTable.firstOrNull { it.id == diningTab.bookingId }?.partySize
+                ?: bookingsForTable.firstOrNull { it.tableNumber.equals(tableNumber, ignoreCase = true) && it.status == TableBookingStatus.SEATED }?.partySize
+                ?: 2
+            return DerivedTableState(
+                tableNumber = tableNumber,
+                lifecycleState = TableLifecycleState.BILLED,
+                guestCount = guests,
+                elapsedDiningTime = elapsed,
+                activeTab = diningTab
+            )
+        }
+
+        // 2. Check for active occupied dining tab (Amber)
+        if (diningTab != null && diningTab.status == DiningTabStatus.ACTIVE) {
+            val startTime = diningTab.seatedAt.ifBlank { diningTab.createdAt }
+            val elapsed = formatElapsedDiningTime(startTime)
+            val guests = diningTab.guestCount.takeIf { it > 0 }
+                ?: bookingsForTable.firstOrNull { it.id == diningTab.bookingId }?.partySize
+                ?: bookingsForTable.firstOrNull { it.tableNumber.equals(tableNumber, ignoreCase = true) && it.status == TableBookingStatus.SEATED }?.partySize
+                ?: 2
+            return DerivedTableState(
+                tableNumber = tableNumber,
+                lifecycleState = TableLifecycleState.OCCUPIED,
+                guestCount = guests,
+                elapsedDiningTime = elapsed,
+                activeTab = diningTab
+            )
+        }
+
+        // 3. Check for physically seated booking (guests seated before first order placed)
+        val seatedBooking = bookingsForTable.firstOrNull {
+            it.tableNumber.equals(tableNumber, ignoreCase = true) &&
+            it.status == TableBookingStatus.SEATED
+        }
+        if (seatedBooking != null) {
+            val seatedTime = seatedBooking.updatedAt.ifBlank { seatedBooking.createdAt }
+            val elapsed = formatElapsedDiningTime(seatedTime)
+            return DerivedTableState(
+                tableNumber = tableNumber,
+                lifecycleState = TableLifecycleState.OCCUPIED,
+                guestCount = seatedBooking.partySize,
+                elapsedDiningTime = elapsed,
+                associatedBooking = seatedBooking
+            )
+        }
+
+        // 4. Check for confirmed bookings within 30 minutes of start time (Purple)
+        val activeConfirmedBooking = bookingsForTable.firstOrNull {
+            it.tableNumber.equals(tableNumber, ignoreCase = true) &&
+            it.status == TableBookingStatus.CONFIRMED &&
+            isWithinReservationWindow(it.bookingDate, it.timeSlot, now)
+        }
+        if (activeConfirmedBooking != null) {
+            return DerivedTableState(
+                tableNumber = tableNumber,
+                lifecycleState = TableLifecycleState.RESERVED,
+                guestCount = activeConfirmedBooking.partySize,
+                reservationInfo = "${activeConfirmedBooking.timeSlot} · ${activeConfirmedBooking.userName}",
+                associatedBooking = activeConfirmedBooking
+            )
+        }
+
+        // 5. Available (Green)
+        return DerivedTableState(
+            tableNumber = tableNumber,
+            lifecycleState = TableLifecycleState.AVAILABLE
+        )
     }
 }

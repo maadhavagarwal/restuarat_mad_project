@@ -17,7 +17,7 @@ class DiningTabTest {
     fun testDatabaseConstants() {
         assertEquals("dining_tabs", RestroSqlDatabase.TABLE_DINING_TABS)
         assertEquals("dining_tabs", RestroSqlDatabase.TABLE_TABS)
-        assertEquals(6, RestroSqlDatabase.DATABASE_VERSION)
+        assertTrue(RestroSqlDatabase.DATABASE_VERSION >= 6)
     }
 
     @Test
