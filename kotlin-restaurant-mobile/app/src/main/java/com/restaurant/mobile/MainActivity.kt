@@ -35,7 +35,11 @@ import com.restaurant.mobile.delivery.DerivedTableState
 import com.restaurant.mobile.delivery.DiningTabStatus
 import com.restaurant.mobile.delivery.TableLifecycleRules
 import com.restaurant.mobile.delivery.TableLifecycleState
+import com.restaurant.mobile.delivery.TipAndServiceChargeRules
+import com.restaurant.mobile.delivery.TipAndServiceChargeRules.TipOption
 import com.restaurant.mobile.model.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -392,6 +396,18 @@ fun RestaurantMobileApp(
                                     }
                                     onShowToast("${item.name} added for Table ${selectedTable?.tableNumber}")
                                 }
+                            },
+                            onInitiatePayment = { tab, tip, isOptedOut ->
+                                coroutineScope.launch {
+                                    database.initiatePaymentForDiningTab(
+                                        tabId = tab.id,
+                                        paymentMethod = "Card",
+                                        tip = tip,
+                                        isServiceChargeOptedOut = isOptedOut
+                                    )
+                                    refreshAll()
+                                    onShowToast("Bill requested for Table ${tab.tableNumber}: Payment Pending")
+                                }
                             }
                         )
                         NavigationScreen.KDS -> KDSScreenView(
@@ -442,9 +458,14 @@ fun RestaurantMobileApp(
                                 currentScreen = NavigationScreen.POS
                                 onShowToast("Taking order for Table ${table.tableNumber}")
                             },
-                            onInitiatePayment = { tab ->
+                            onInitiatePayment = { tab, tip, isOptedOut ->
                                 coroutineScope.launch {
-                                    database.initiatePaymentForDiningTab(tab.id, "Card")
+                                    database.initiatePaymentForDiningTab(
+                                        tabId = tab.id,
+                                        paymentMethod = "Card",
+                                        tip = tip,
+                                        isServiceChargeOptedOut = isOptedOut
+                                    )
                                     refreshAll()
                                     onShowToast("Bill requested for Table ${tab.tableNumber}: Payment Pending")
                                 }
@@ -618,7 +639,8 @@ fun POSScreenView(
     activeBooking: com.restaurant.mobile.delivery.TableBooking?,
     activeDiningTab: com.restaurant.mobile.delivery.DiningTab?,
     onOpenTableSelector: () -> Unit,
-    onAddToCart: (MenuItem) -> Unit
+    onAddToCart: (MenuItem) -> Unit,
+    onInitiatePayment: ((com.restaurant.mobile.delivery.DiningTab, Double, Boolean) -> Unit)? = null
 ) {
     var showLiveTabDialog by remember { mutableStateOf(false) }
 
@@ -677,7 +699,7 @@ fun POSScreenView(
                                     append(" • Party of ${activeBooking.partySize}")
                                 }
                                 if (activeDiningTab != null && activeDiningTab.items.isNotEmpty()) {
-                                    append(" • Tab: ₹${activeDiningTab.total.toInt()} (${activeDiningTab.items.sumOf { it.quantity }} items)")
+                                    append(" • Tab: ₹${activeDiningTab.totalRupees.toInt()} (${activeDiningTab.items.sumOf { it.quantity }} items)")
                                 }
                             }
                             Text(
@@ -856,7 +878,8 @@ fun POSScreenView(
     if (showLiveTabDialog && activeDiningTab != null) {
         LiveDiningTabDialog(
             diningTab = activeDiningTab,
-            onDismiss = { showLiveTabDialog = false }
+            onDismiss = { showLiveTabDialog = false },
+            onInitiatePayment = onInitiatePayment
         )
     }
 }
@@ -864,8 +887,50 @@ fun POSScreenView(
 @Composable
 fun LiveDiningTabDialog(
     diningTab: com.restaurant.mobile.delivery.DiningTab,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onInitiatePayment: ((tab: com.restaurant.mobile.delivery.DiningTab, tip: Double, isServiceChargeOptedOut: Boolean) -> Unit)? = null
 ) {
+    var selectedTipOption by remember {
+        mutableStateOf(
+            when (diningTab.tipRupees) {
+                0.0 -> TipOption.NO_TIP
+                50.0 -> TipOption.TIP_50
+                100.0 -> TipOption.TIP_100
+                200.0 -> TipOption.TIP_200
+                else -> TipOption.CUSTOM
+            }
+        )
+    }
+    var customTipInput by remember {
+        mutableStateOf(
+            if (diningTab.tipRupees > 0.0 && diningTab.tipRupees !in TipAndServiceChargeRules.PRESET_TIPS) {
+                diningTab.tipRupees.toInt().toString()
+            } else ""
+        )
+    }
+    var isServiceChargeOptedOut by remember {
+        mutableStateOf(diningTab.isServiceChargeOptedOut)
+    }
+
+    val isCustomInvalid = remember(selectedTipOption, customTipInput) {
+        selectedTipOption == TipOption.CUSTOM &&
+                customTipInput.isNotBlank() &&
+                TipAndServiceChargeRules.validateCustomTip(customTipInput) == null
+    }
+
+    val effectiveTip = remember(selectedTipOption, customTipInput) {
+        TipAndServiceChargeRules.resolveTipAmount(selectedTipOption, customTipInput)
+    }
+
+    val liveBilling = remember(diningTab.subtotalRupees, diningTab.taxRupees, isServiceChargeOptedOut, effectiveTip) {
+        TipAndServiceChargeRules.computeFinalBill(
+            subtotal = diningTab.subtotalRupees,
+            tax = diningTab.taxRupees,
+            isServiceChargeOptedOut = isServiceChargeOptedOut,
+            tipAmount = effectiveTip
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -939,36 +1004,172 @@ fun LiveDiningTabDialog(
 
                 HorizontalDivider(color = Color(0xFFE2E8F0))
 
+                // Service Charge Opt-Out Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "5% Service Charge",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF0F172A)
+                            )
+                            Text(
+                                text = if (isServiceChargeOptedOut) "Opted out (discretionary)" else "Included (discretionary for staff)",
+                                fontSize = 11.sp,
+                                color = if (isServiceChargeOptedOut) Color(0xFFDC2626) else Color(0xFF64748B)
+                            )
+                        }
+                        Switch(
+                            checked = !isServiceChargeOptedOut,
+                            onCheckedChange = { isServiceChargeOptedOut = !it }
+                        )
+                    }
+                }
+
+                // Tip Selection Section
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Add Staff Tip",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF0F172A)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        TipOption.values().forEach { option ->
+                            val isSelected = selectedTipOption == option
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isSelected) Color(0xFFC2410C) else Color(0xFFF1F5F9),
+                                border = if (!isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)) else null,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        selectedTipOption = option
+                                    }
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = option.label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else Color(0xFF334155),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (selectedTipOption == TipOption.CUSTOM) {
+                        OutlinedTextField(
+                            value = customTipInput,
+                            onValueChange = { customTipInput = it },
+                            label = { Text("Custom Tip (₹)", fontSize = 12.sp) },
+                            placeholder = { Text("Enter amount", fontSize = 12.sp) },
+                            isError = isCustomInvalid,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (isCustomInvalid) {
+                            Text(
+                                text = "Please enter a valid positive amount (e.g. 150)",
+                                fontSize = 11.sp,
+                                color = Color(0xFFDC2626)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                // Breakdown
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("Subtotal", fontSize = 13.sp, color = Color(0xFF64748B))
-                    Text("₹${diningTab.subtotal.toInt()}", fontSize = 13.sp, color = Color(0xFF0F172A))
+                    Text("₹${liveBilling.subtotal.toInt()}", fontSize = 13.sp, color = Color(0xFF0F172A))
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("Taxes (5% GST)", fontSize = 13.sp, color = Color(0xFF64748B))
-                    Text("₹${diningTab.tax.toInt()}", fontSize = 13.sp, color = Color(0xFF0F172A))
+                    Text("₹${liveBilling.tax.toInt()}", fontSize = 13.sp, color = Color(0xFF0F172A))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (isServiceChargeOptedOut) "Service Charge (5% - Opted out)" else "Service Charge (5%)",
+                        fontSize = 13.sp,
+                        color = if (isServiceChargeOptedOut) Color(0xFF94A3B8) else Color(0xFF64748B)
+                    )
+                    Text(
+                        text = if (isServiceChargeOptedOut) "₹0" else "₹${liveBilling.serviceCharge.toInt()}",
+                        fontSize = 13.sp,
+                        color = if (isServiceChargeOptedOut) Color(0xFF94A3B8) else Color(0xFF0F172A)
+                    )
+                }
+                if (liveBilling.tip > 0.0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Staff Tip (${selectedTipOption.label})", fontSize = 13.sp, color = Color(0xFF059669))
+                        Text("₹${liveBilling.tip.toInt()}", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF059669))
+                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text("Grand Total", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF0F172A))
-                    Text("₹${diningTab.total.toInt()}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFFC2410C))
+                    Text("₹${liveBilling.total.toInt()}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFFC2410C))
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Close", fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onInitiatePayment != null) {
+                    Button(
+                        onClick = {
+                            onInitiatePayment(diningTab, effectiveTip, isServiceChargeOptedOut)
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Bill ₹${liveBilling.total.toInt()}", fontWeight = FontWeight.Bold)
+                    }
+                }
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Close", fontWeight = FontWeight.Bold)
+                }
             }
         }
     )
@@ -1225,11 +1426,12 @@ fun TablesScreenView(
     getActiveTab: ((String) -> com.restaurant.mobile.delivery.DiningTab?)? = null,
     getBookingsForTable: ((String) -> List<com.restaurant.mobile.delivery.TableBooking>)? = null,
     onSeatTable: ((DiningTable, com.restaurant.mobile.delivery.TableBooking?) -> Unit)? = null,
-    onInitiatePayment: ((com.restaurant.mobile.delivery.DiningTab) -> Unit)? = null,
+    onInitiatePayment: ((com.restaurant.mobile.delivery.DiningTab, Double, Boolean) -> Unit)? = null,
     onVerifyPayment: ((com.restaurant.mobile.delivery.DiningTab) -> Unit)? = null,
     onRevertPayment: ((com.restaurant.mobile.delivery.DiningTab) -> Unit)? = null
 ) {
     var currentTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    var billingTabTarget by remember { mutableStateOf<com.restaurant.mobile.delivery.DiningTab?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
             delay(10000L) // 10s tick for elapsed dining timer
@@ -1494,7 +1696,7 @@ fun TablesScreenView(
                                     }
                                     if (onInitiatePayment != null && activeTab != null) {
                                         Button(
-                                            onClick = { onInitiatePayment(activeTab) },
+                                            onClick = { billingTabTarget = activeTab },
                                             modifier = Modifier.fillMaxWidth().height(26.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
@@ -1532,6 +1734,17 @@ fun TablesScreenView(
                     }
                 }
             }
+        }
+
+        if (billingTabTarget != null) {
+            LiveDiningTabDialog(
+                diningTab = billingTabTarget!!,
+                onDismiss = { billingTabTarget = null },
+                onInitiatePayment = { tab, tip, isOptedOut ->
+                    billingTabTarget = null
+                    onInitiatePayment?.invoke(tab, tip, isOptedOut)
+                }
+            )
         }
     }
 }

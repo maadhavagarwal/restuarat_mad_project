@@ -23,7 +23,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "restro_delivery.db"
-        const val DATABASE_VERSION = 8
+        const val DATABASE_VERSION = 9
 
         // Table Names
         const val TABLE_USERS = "users"
@@ -191,8 +191,14 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         if (oldVersion < 6) {
             createDiningTabsTable(db)
         }
-        if (oldVersion < 7) {
+        if (oldVersion < 8) {
             createKotTicketsTable(db)
+        }
+        if (oldVersion < 9) {
+            try {
+                db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN tip INTEGER NOT NULL DEFAULT 0;")
+                db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN is_service_charge_opted_out INTEGER NOT NULL DEFAULT 0;")
+            } catch (_: Exception) {}
         }
         if (oldVersion < 8) {
             db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN guest_count INTEGER NOT NULL DEFAULT 0;")
@@ -200,6 +206,10 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN billed_at TEXT NOT NULL DEFAULT '';")
             db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN payment_method TEXT NOT NULL DEFAULT '';")
             db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN payment_transaction_id TEXT NOT NULL DEFAULT '';")
+        }
+        if (oldVersion < 9) {
+            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN tip REAL NOT NULL DEFAULT 0.0;")
+            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN is_service_charge_opted_out INTEGER NOT NULL DEFAULT 0;")
         }
     }
 
@@ -249,6 +259,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 tax INTEGER NOT NULL DEFAULT 0,
                 gst INTEGER NOT NULL DEFAULT 0,
                 service_charge INTEGER NOT NULL DEFAULT 0,
+                tip INTEGER NOT NULL DEFAULT 0,
+                is_service_charge_opted_out INTEGER NOT NULL DEFAULT 0,
                 total INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'OPEN',
                 payment_method TEXT,
@@ -1449,6 +1461,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 put("tax", targetTab.tax)
                 put("gst", targetTab.tax)
                 put("service_charge", targetTab.serviceCharge)
+                put("tip", targetTab.tip)
+                put("is_service_charge_opted_out", if (targetTab.isServiceChargeOptedOut) 1 else 0)
                 put("total", targetTab.total)
                 put("payment_method", targetTab.paymentMethod)
                 put("created_at", targetTab.createdAt)
@@ -1531,6 +1545,11 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val serviceCharge = if (serviceChargeIdx != -1 && !c.isNull(serviceChargeIdx)) c.getLong(serviceChargeIdx) else 0L
         val total = if (totalIdx != -1 && !c.isNull(totalIdx)) c.getLong(totalIdx) else 0L
 
+        val tipIdx = c.getColumnIndex("tip")
+        val tip = if (tipIdx != -1 && !c.isNull(tipIdx)) c.getLong(tipIdx) else 0L
+        val optOutIdx = c.getColumnIndex("is_service_charge_opted_out")
+        val isServiceChargeOptedOut = if (optOutIdx != -1 && !c.isNull(optOutIdx)) c.getInt(optOutIdx) == 1 else false
+
         val guestCount = c.getColumnIndex("guest_count").takeIf { it >= 0 }?.let { if (!c.isNull(it)) c.getInt(it) else 0 } ?: 0
         val seatedAt = c.getColumnIndex("seated_at").takeIf { it >= 0 }?.let { if (!c.isNull(it)) c.getString(it) else "" } ?: ""
         val billedAt = c.getColumnIndex("billed_at").takeIf { it >= 0 }?.let { if (!c.isNull(it)) c.getString(it) else "" } ?: ""
@@ -1550,6 +1569,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             subtotal = subtotal,
             tax = taxVal,
             serviceCharge = serviceCharge,
+            tip = tip,
+            isServiceChargeOptedOut = isServiceChargeOptedOut,
             total = total,
             status = status,
             paymentMethod = paymentMethod,
@@ -1659,6 +1680,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     put("subtotal", 0.0)
                     put("tax", 0.0)
                     put("service_charge", 0.0)
+                    put("tip", 0.0)
+                    put("is_service_charge_opted_out", 0)
                     put("total", 0.0)
                     put("created_at", newTab.createdAt)
                     put("updated_at", newTab.updatedAt)
@@ -1683,7 +1706,12 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     /**
      * Initiates payment for a dining tab (transitions to Billed/Payment Pending - Red).
      */
-    fun initiatePaymentForDiningTab(tabId: String, paymentMethod: String = "Card"): DiningTab? {
+    fun initiatePaymentForDiningTab(
+        tabId: String,
+        paymentMethod: String = "Card",
+        tip: Double = 0.0,
+        isServiceChargeOptedOut: Boolean = false
+    ): DiningTab? {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -1695,10 +1723,21 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             val tab = cursorToDiningTab(cursor)
             cursor.close()
 
+            val finalBill = TipAndServiceChargeRules.computeFinalBill(
+                subtotal = tab.subtotalRupees,
+                tax = tab.taxRupees,
+                isServiceChargeOptedOut = isServiceChargeOptedOut,
+                tipAmount = tip
+            )
+
             val nowStr = Instant.now().toString()
             val cv = ContentValues().apply {
                 put("status", DiningTabStatus.PAYMENT_PENDING)
                 put("payment_method", paymentMethod)
+                put("service_charge", finalBill.serviceChargePaise)
+                put("tip", finalBill.tipPaise)
+                put("is_service_charge_opted_out", if (isServiceChargeOptedOut) 1 else 0)
+                put("total", finalBill.totalPaise)
                 put("billed_at", nowStr)
                 put("updated_at", nowStr)
             }
@@ -1707,8 +1746,11 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             return tab.copy(
                 status = DiningTabStatus.PAYMENT_PENDING,
                 paymentMethod = paymentMethod,
+                serviceCharge = finalBill.serviceChargePaise,
+                tip = finalBill.tipPaise,
+                isServiceChargeOptedOut = isServiceChargeOptedOut,
+                total = finalBill.totalPaise,
                 billedAt = nowStr,
-                updatedAt = nowStr
             )
         } finally {
             db.endTransaction()

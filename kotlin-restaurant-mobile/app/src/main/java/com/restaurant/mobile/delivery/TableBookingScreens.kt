@@ -2268,21 +2268,47 @@ fun BookingDetailsDialog(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("Subtotal", fontSize = 11.sp, color = RestroTokens.muted)
-                                Text("₹${activeDiningTab.subtotal.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
+                                Text("₹${activeDiningTab.subtotalRupees.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("Taxes (5% GST)", fontSize = 11.sp, color = RestroTokens.muted)
-                                Text("₹${activeDiningTab.tax.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
+                                Text("₹${activeDiningTab.taxRupees.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
+                            }
+                            if (activeDiningTab.isServiceChargeOptedOut) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Service Charge (5% - Opted out)", fontSize = 11.sp, color = RestroTokens.muted)
+                                    Text("₹0", fontSize = 11.sp, color = RestroTokens.muted)
+                                }
+                            } else if (activeDiningTab.serviceChargeRupees > 0.0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Service Charge (5%)", fontSize = 11.sp, color = RestroTokens.muted)
+                                    Text("₹${activeDiningTab.serviceChargeRupees.toInt()}", fontSize = 11.sp, color = RestroTokens.text)
+                                }
+                            }
+                            if (activeDiningTab.tipRupees > 0.0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Staff Tip", fontSize = 11.sp, color = Color(0xFF10B981))
+                                    Text("₹${activeDiningTab.tipRupees.toInt()}", fontSize = 11.sp, color = Color(0xFF10B981))
+                                }
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text("Total", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RestroTokens.text)
-                                Text("₹${activeDiningTab.total.toInt()}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = RestroTokens.coral)
+                                Text("₹${activeDiningTab.totalRupees.toInt()}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = RestroTokens.coral)
                             }
                         }
                     }

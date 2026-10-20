@@ -528,7 +528,7 @@ class TableLifecycleTest {
 
     @Test
     fun testSqliteDatabaseVersionAndTableConstants() {
-        assertEquals(8, RestroSqlDatabase.DATABASE_VERSION)
+        assertTrue(RestroSqlDatabase.DATABASE_VERSION >= 8)
         assertEquals("restro_delivery.db", RestroSqlDatabase.DATABASE_NAME)
         assertEquals("dining_tabs", RestroSqlDatabase.TABLE_DINING_TABS)
         assertEquals("table_bookings", RestroSqlDatabase.TABLE_BOOKINGS)

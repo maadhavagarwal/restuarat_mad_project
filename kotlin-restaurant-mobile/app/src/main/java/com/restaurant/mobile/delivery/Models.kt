@@ -551,11 +551,14 @@ data class BillingSummary(
     val subtotal: Double,
     val tax: Double,
     val serviceCharge: Double,
-    val total: Double
+    val tip: Double = 0.0,
+    val total: Double,
+    val isServiceChargeOptedOut: Boolean = false
 ) {
     val subtotalPaise: Long get() = CurrencyConversionRules.rupeesToPaise(subtotal)
     val taxPaise: Long get() = CurrencyConversionRules.rupeesToPaise(tax)
     val serviceChargePaise: Long get() = CurrencyConversionRules.rupeesToPaise(serviceCharge)
+    val tipPaise: Long get() = CurrencyConversionRules.rupeesToPaise(tip)
     val totalPaise: Long get() = CurrencyConversionRules.rupeesToPaise(total)
 }
 
@@ -573,6 +576,8 @@ data class DiningTab(
     val subtotal: Long = 0L,
     val tax: Long = 0L,          // 5% GST in paise
     val serviceCharge: Long = 0L, // Optional 5% service charge in paise
+    val tip: Long = 0L,
+    val isServiceChargeOptedOut: Boolean = false,
     val total: Long = 0L,
     val status: String = if (tableId.isNotBlank()) DiningTabStatus.ACTIVE else DiningTabStatus.OPEN,
     val paymentMethod: String? = null,
@@ -587,6 +592,7 @@ data class DiningTab(
     val subtotalRupees: Double get() = CurrencyConversionRules.paiseToRupees(subtotal)
     val taxRupees: Double get() = CurrencyConversionRules.paiseToRupees(tax)
     val serviceChargeRupees: Double get() = CurrencyConversionRules.paiseToRupees(serviceCharge)
+    val tipRupees: Double get() = CurrencyConversionRules.paiseToRupees(tip)
     val totalRupees: Double get() = CurrencyConversionRules.paiseToRupees(total)
 
     fun itemsGroupedByRound(): Map<Int, List<TableBillItem>> {
@@ -604,11 +610,13 @@ data class DiningTab(
         customerName: String? = null,
         customerPhone: String? = null,
         bookingId: String? = null,
-        status: String = DiningTabStatus.ACTIVE,
+        status: String = if (tableId.isNotBlank()) DiningTabStatus.ACTIVE else DiningTabStatus.OPEN,
         items: List<TableBillItem> = emptyList(),
-        subtotal: Double,
+        subtotal: Double = 0.0,
         tax: Double = 0.0,
         serviceCharge: Double = 0.0,
+        tip: Double = 0.0,
+        isServiceChargeOptedOut: Boolean = false,
         total: Double = 0.0,
         createdAt: String = Instant.now().toString(),
         updatedAt: String = Instant.now().toString(),
@@ -620,7 +628,7 @@ data class DiningTab(
         paymentTransactionId: String = ""
     ) : this(
         id = id,
-        tableId = tableId.ifBlank { tableNumber },
+        tableId = tableId,
         tableNumber = tableNumber,
         customerId = customerId,
         customerName = customerName,
@@ -632,6 +640,8 @@ data class DiningTab(
         subtotal = CurrencyConversionRules.rupeesToPaise(subtotal),
         tax = CurrencyConversionRules.rupeesToPaise(tax),
         serviceCharge = CurrencyConversionRules.rupeesToPaise(serviceCharge),
+        tip = CurrencyConversionRules.rupeesToPaise(tip),
+        isServiceChargeOptedOut = isServiceChargeOptedOut,
         total = CurrencyConversionRules.rupeesToPaise(total),
         status = status,
         paymentMethod = paymentMethod,
@@ -649,17 +659,22 @@ data class DiningTab(
 
         fun calculateBilling(
             items: List<TableBillItem>,
-            existingServiceCharge: Double = 0.0
+            existingServiceCharge: Double = 0.0,
+            isServiceChargeOptedOut: Boolean = false,
+            tip: Double = 0.0
         ): BillingSummary {
             val subtotal = items.sumOf { it.itemTotal }
             val tax = items.sumOf { (it.itemTotal) * (it.taxRate / 100.0) }
-            val serviceCharge = existingServiceCharge
-            val total = subtotal + tax + serviceCharge
+            val serviceCharge = if (isServiceChargeOptedOut) 0.0 else existingServiceCharge
+            val validatedTip = if (tip > 0.0) tip else 0.0
+            val total = subtotal + tax + serviceCharge + validatedTip
             return BillingSummary(
                 subtotal = subtotal,
                 tax = tax,
                 serviceCharge = serviceCharge,
-                total = total
+                tip = validatedTip,
+                total = total,
+                isServiceChargeOptedOut = isServiceChargeOptedOut
             )
         }
     }
@@ -671,6 +686,75 @@ data class DineInPaymentResult(
     val transactionId: String,
     val timestamp: String = Instant.now().toString()
 )
+
+object TipAndServiceChargeRules {
+    const val SERVICE_CHARGE_PERCENT = 5.0
+    val PRESET_TIPS = listOf(0.0, 50.0, 100.0, 200.0)
+
+    enum class TipOption(val label: String, val amount: Double?) {
+        NO_TIP("No Tip", 0.0),
+        TIP_50("₹50", 50.0),
+        TIP_100("₹100", 100.0),
+        TIP_200("₹200", 200.0),
+        CUSTOM("Custom", null)
+    }
+
+    /**
+     * Validates user-entered custom tip amount.
+     * Must be a non-negative finite number.
+     * Returns null for empty, blank, non-numeric, NaN, infinite, or negative values.
+     */
+    fun validateCustomTip(input: String?): Double? {
+        if (input.isNullOrBlank()) return null
+        val cleaned = input.trim()
+        val parsed = cleaned.toDoubleOrNull() ?: return null
+        if (parsed.isNaN() || parsed.isInfinite() || parsed < 0.0) return null
+        return parsed
+    }
+
+    /**
+     * Resolves effective tip amount based on selected option and custom input.
+     */
+    fun resolveTipAmount(option: TipOption, customInput: String = ""): Double {
+        return when (option) {
+            TipOption.NO_TIP -> 0.0
+            TipOption.TIP_50 -> 50.0
+            TipOption.TIP_100 -> 100.0
+            TipOption.TIP_200 -> 200.0
+            TipOption.CUSTOM -> validateCustomTip(customInput) ?: 0.0
+        }
+    }
+
+    /**
+     * Computes the 5% service charge, or 0.0 if opted out.
+     */
+    fun computeServiceCharge(subtotal: Double, isOptedOut: Boolean): Double {
+        if (isOptedOut || subtotal <= 0.0) return 0.0
+        return subtotal * (SERVICE_CHARGE_PERCENT / 100.0)
+    }
+
+    /**
+     * Computes final billing summary immediately reflecting tip and service-charge customization.
+     */
+    fun computeFinalBill(
+        subtotal: Double,
+        tax: Double,
+        isServiceChargeOptedOut: Boolean,
+        tipAmount: Double
+    ): BillingSummary {
+        val sc = computeServiceCharge(subtotal, isServiceChargeOptedOut)
+        val validTip = if (tipAmount > 0.0) tipAmount else 0.0
+        val total = subtotal + tax + sc + validTip
+        return BillingSummary(
+            subtotal = subtotal,
+            tax = tax,
+            serviceCharge = sc,
+            tip = validTip,
+            total = total,
+            isServiceChargeOptedOut = isServiceChargeOptedOut
+        )
+    }
+}
 
 object WaiterTablePairingRules {
     /**
@@ -774,7 +858,9 @@ object WaiterTablePairingRules {
 
         val billing = DiningTab.calculateBilling(
             items = combinedItems,
-            existingServiceCharge = existingTab?.serviceChargeRupees ?: 0.0
+            existingServiceCharge = existingTab?.serviceChargeRupees ?: 0.0,
+            isServiceChargeOptedOut = existingTab?.isServiceChargeOptedOut ?: false,
+            tip = existingTab?.tipRupees ?: 0.0
         )
 
         val customerId = existingTab?.customerId ?: associatedBooking?.userId
@@ -797,6 +883,8 @@ object WaiterTablePairingRules {
                 subtotal = billing.subtotalPaise,
                 tax = billing.taxPaise,
                 serviceCharge = billing.serviceChargePaise,
+                tip = billing.tipPaise,
+                isServiceChargeOptedOut = billing.isServiceChargeOptedOut,
                 total = billing.totalPaise,
                 updatedAt = Instant.now().toString(),
                 restaurantId = targetRestId
@@ -818,6 +906,8 @@ object WaiterTablePairingRules {
                 subtotal = billing.subtotalPaise,
                 tax = billing.taxPaise,
                 serviceCharge = billing.serviceChargePaise,
+                tip = billing.tipPaise,
+                isServiceChargeOptedOut = billing.isServiceChargeOptedOut,
                 total = billing.totalPaise,
                 createdAt = nowStr,
                 updatedAt = nowStr,
