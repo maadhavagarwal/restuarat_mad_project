@@ -27,10 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.restaurant.mobile.api.ApiClient
+import com.restaurant.mobile.delivery.BillSplitResult
+import com.restaurant.mobile.delivery.BillSplittingRules
 import com.restaurant.mobile.delivery.DerivedTableState
 import com.restaurant.mobile.delivery.DiningTabStatus
 import com.restaurant.mobile.delivery.TableLifecycleRules
@@ -931,6 +934,17 @@ fun LiveDiningTabDialog(
         )
     }
 
+    var splitPartySize by remember {
+        mutableStateOf(diningTab.guestCount.takeIf { it > 0 } ?: 1)
+    }
+
+    val billSplitResult = remember(liveBilling.total, splitPartySize) {
+        BillSplittingRules.splitBill(
+            totalAmount = liveBilling.total,
+            partySize = splitPartySize
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1146,6 +1160,114 @@ fun LiveDiningTabDialog(
                 ) {
                     Text("Grand Total", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF0F172A))
                     Text("₹${liveBilling.total.toInt()}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFFC2410C))
+                }
+
+                HorizontalDivider(color = Color(0xFFE2E8F0))
+
+                // Bill Splitting Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE2E8F0))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Split Bill",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF0F172A)
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clickable(enabled = splitPartySize > 1) {
+                                            if (splitPartySize > 1) splitPartySize--
+                                        }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "−",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = if (splitPartySize > 1) Color(0xFF0F172A) else Color(0xFF94A3B8)
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "$splitPartySize ${if (splitPartySize == 1) "person" else "people"}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF1E293B)
+                                )
+
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color.White,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clickable(enabled = splitPartySize < BillSplittingRules.MAX_PARTY_SIZE) {
+                                            if (splitPartySize < BillSplittingRules.MAX_PARTY_SIZE) splitPartySize++
+                                        }
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "+",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            color = Color(0xFF0F172A)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Each person pays",
+                                fontSize = 12.sp,
+                                color = Color(0xFF64748B)
+                            )
+                            Text(
+                                text = "₹${String.format(java.util.Locale.ENGLISH, "%.2f", billSplitResult.perPersonBaseAmount)}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF2563EB)
+                            )
+                        }
+
+                        if (billSplitResult.remainderAmount > 0.0) {
+                            Text(
+                                text = "Note: ₹${String.format(java.util.Locale.ENGLISH, "%.2f", billSplitResult.remainderAmount)} remainder rounded to first diner for exact reconciliation.",
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B),
+                                fontStyle = FontStyle.Italic
+                            )
+                        }
+                    }
                 }
             }
         },

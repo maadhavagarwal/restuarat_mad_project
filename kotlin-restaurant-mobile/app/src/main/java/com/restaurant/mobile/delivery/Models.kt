@@ -756,6 +756,100 @@ object TipAndServiceChargeRules {
     }
 }
 
+data class BillSplitResult(
+    val partySize: Int,
+    val totalAmount: Double,
+    val perPersonBaseAmount: Double,
+    val remainderAmount: Double = 0.0,
+    val individualShares: List<Double> = emptyList(),
+    val isValid: Boolean = true
+) {
+    val totalReconciled: Double
+        get() = individualShares.sum()
+
+    fun isReconciled(): Boolean {
+        if (!isValid || individualShares.isEmpty()) return true
+        val sumPaise = individualShares.sumOf { CurrencyConversionRules.rupeesToPaise(it) }
+        val expectedPaise = CurrencyConversionRules.rupeesToPaise(totalAmount)
+        return sumPaise == expectedPaise
+    }
+}
+
+object BillSplittingRules {
+    const val MIN_PARTY_SIZE = 1
+    const val MAX_PARTY_SIZE = 50
+
+    /**
+     * Validates party size.
+     * Returns null for non-positive or null values. Clamps within valid bounds.
+     */
+    fun validatePartySize(partySize: Int?): Int? {
+        if (partySize == null || partySize <= 0) return null
+        return partySize.coerceIn(MIN_PARTY_SIZE, MAX_PARTY_SIZE)
+    }
+
+    /**
+     * Splits total bill among partySize people.
+     * Safely handles:
+     * - partySize <= 0: marks invalid, returns 0.0 per person, empty shares.
+     * - totalAmount <= 0.0: returns 0.0 per person.
+     * - Remainder amounts distributed 1 paisa (₹0.01) each to the first remainder diners,
+     *   ensuring the sum of individual shares exactly reconciles with the authoritative total down to the paisa.
+     */
+    fun splitBill(totalAmount: Double, partySize: Int): BillSplitResult {
+        if (partySize <= 0) {
+            val safeTotal = if (totalAmount.isNaN() || totalAmount.isInfinite() || totalAmount < 0.0) 0.0 else totalAmount
+            return BillSplitResult(
+                partySize = partySize,
+                totalAmount = safeTotal,
+                perPersonBaseAmount = 0.0,
+                remainderAmount = 0.0,
+                individualShares = emptyList(),
+                isValid = false
+            )
+        }
+
+        val clampedSize = partySize.coerceIn(MIN_PARTY_SIZE, MAX_PARTY_SIZE)
+        val validTotal = if (totalAmount.isNaN() || totalAmount.isInfinite() || totalAmount < 0.0) 0.0 else totalAmount
+
+        val totalPaise = CurrencyConversionRules.rupeesToPaise(validTotal)
+        val basePaise = totalPaise / clampedSize
+        val remainderPaise = totalPaise % clampedSize
+
+        val shares = List(clampedSize) { index ->
+            val sharePaise = if (index < remainderPaise) basePaise + 1L else basePaise
+            CurrencyConversionRules.paiseToRupees(sharePaise)
+        }
+
+        val baseAmountRupees = CurrencyConversionRules.paiseToRupees(basePaise)
+        val remainderRupees = CurrencyConversionRules.paiseToRupees(remainderPaise)
+
+        return BillSplitResult(
+            partySize = clampedSize,
+            totalAmount = validTotal,
+            perPersonBaseAmount = baseAmountRupees,
+            remainderAmount = remainderRupees,
+            individualShares = shares,
+            isValid = true
+        )
+    }
+
+    /**
+     * Computes equal split base share directly.
+     */
+    fun calculateEqualSplit(totalAmount: Double, partySize: Int): Double {
+        return splitBill(totalAmount, partySize).perPersonBaseAmount
+    }
+
+    /**
+     * Formats party size and per-person share string for display.
+     */
+    fun formatPerPersonShare(result: BillSplitResult): String {
+        if (!result.isValid || result.partySize <= 0) return "₹0.00 / person"
+        return String.format(java.util.Locale.ENGLISH, "₹%.2f / person", result.perPersonBaseAmount)
+    }
+}
+
 object WaiterTablePairingRules {
     /**
      * Resolves the applicable active booking for a given table.
