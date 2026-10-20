@@ -264,6 +264,16 @@ fun DineInReceiptContent(
                     }
                 }
 
+                if (tab.tip > 0L) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Tip", fontSize = 13.sp, color = RestroTokens.muted)
+                        Text(money(tab.tip), fontSize = 13.sp, color = RestroTokens.text)
+                    }
+                }
+
                 HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
 
                 Row(

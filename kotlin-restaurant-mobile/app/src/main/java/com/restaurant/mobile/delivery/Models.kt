@@ -850,6 +850,96 @@ object BillSplittingRules {
     }
 }
 
+object DineInPaymentRules {
+    /**
+     * Checks whether a dining tab status represents an already finalized/settled tab.
+     */
+    fun isSettledOrPaid(status: String?): Boolean {
+        if (status.isNullOrBlank()) return false
+        val s = status.trim().uppercase()
+        return s == DiningTabStatus.PAID || s == DiningTabStatus.SETTLED || s == DiningTabStatus.CLOSED
+    }
+
+    /**
+     * Validates payment initiation.
+     * Rejects:
+     * - Already finalized/settled tabs (duplicate settlement protection).
+     * - Tabs with zero or negative subtotal and zero tip.
+     * Returns the authoritative BillingSummary on success, or null on rejection.
+     */
+    fun validatePaymentInitiation(
+        tab: DiningTab,
+        tip: Double = 0.0,
+        isServiceChargeOptedOut: Boolean = false
+    ): BillingSummary? {
+        if (isSettledOrPaid(tab.status)) return null
+
+        val effectiveSubtotal = if (tab.subtotalRupees > 0.0) tab.subtotalRupees else tab.items.sumOf { it.itemTotal }
+        val effectiveTax = if (tab.taxRupees > 0.0) tab.taxRupees else tab.items.sumOf { it.itemTotal * (it.taxRate / 100.0) }
+
+        if (effectiveSubtotal <= 0.0 && tip <= 0.0) return null
+
+        return TipAndServiceChargeRules.computeFinalBill(
+            subtotal = effectiveSubtotal,
+            tax = effectiveTax,
+            isServiceChargeOptedOut = isServiceChargeOptedOut,
+            tipAmount = tip
+        )
+    }
+
+    /**
+     * Validates whether a payment can be verified and settled.
+     * Requires:
+     * 1. Tab must NOT be already finalized/settled (rejects duplicate settlement).
+     * 2. Tab status must be in PAYMENT_PENDING.
+     * 3. An authoritative, non-blank transaction ID must exist (passed in or previously recorded on tab).
+     * 4. Authoritative total must be positive (> 0).
+     *
+     * Returns the validated authoritative transaction ID on success, or null on failure.
+     */
+    fun validatePaymentVerification(
+        tab: DiningTab,
+        transactionId: String = ""
+    ): String? {
+        if (isSettledOrPaid(tab.status)) return null
+        if (tab.status != DiningTabStatus.PAYMENT_PENDING) return null
+        if (tab.total <= 0L && tab.subtotal <= 0L) return null
+
+        val resolvedTxn = transactionId.trim().ifBlank { tab.paymentTransactionId.trim() }
+        if (resolvedTxn.isBlank()) return null
+
+        return resolvedTxn
+    }
+
+    /**
+     * Validates whether a payment can be reverted or marked failed.
+     * Rejects already settled/paid tabs.
+     * If valid, returns the tab updated to ACTIVE with cleared billedAt and paymentTransactionId.
+     */
+    fun validatePaymentFailureOrCancellation(
+        tab: DiningTab,
+        reason: String = "Payment failed"
+    ): DiningTab? {
+        if (isSettledOrPaid(tab.status)) return null
+
+        return tab.copy(
+            status = DiningTabStatus.ACTIVE,
+            billedAt = "",
+            paymentTransactionId = ""
+        )
+    }
+
+    /**
+     * Validates that the payment amount equals the authoritative bill total down to the paisa.
+     */
+    fun isPaymentPayloadTotalConsistent(
+        authoritativeTotalPaise: Long,
+        payloadTotalPaise: Long
+    ): Boolean {
+        return authoritativeTotalPaise > 0L && authoritativeTotalPaise == payloadTotalPaise
+    }
+}
+
 object WaiterTablePairingRules {
     /**
      * Resolves the applicable active booking for a given table.
@@ -1217,7 +1307,7 @@ object TableLifecycleRules {
         }
 
         // 2. Check for active occupied dining tab (Amber)
-        if (diningTab != null && diningTab.status == DiningTabStatus.ACTIVE) {
+        if (diningTab != null && (diningTab.status == DiningTabStatus.ACTIVE || diningTab.status == DiningTabStatus.OPEN)) {
             val startTime = diningTab.seatedAt.ifBlank { diningTab.createdAt }
             val elapsed = formatElapsedDiningTime(startTime)
             val guests = diningTab.guestCount.takeIf { it > 0 }

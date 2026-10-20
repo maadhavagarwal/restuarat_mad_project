@@ -693,13 +693,27 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     ): Boolean {
         val targetTab = tab ?: activeTableTab ?: return false
 
-        // 1. Update corresponding dining_tabs record to SETTLED and store payment method
-        val settledInDb = sqlDb.markTabSettled(targetTab.id, paymentMethod)
+        // Duplicate settlement guard: reject already settled/paid tabs
+        if (DineInPaymentRules.isSettledOrPaid(targetTab.status)) {
+            return false
+        }
+        val existingInDb = sqlDb.getDiningTab(targetTab.id)
+        if (existingInDb != null && DineInPaymentRules.isSettledOrPaid(existingInDb.status)) {
+            return false
+        }
+
+        val resolvedTxnId = transactionId?.trim()?.ifBlank { null }
+            ?: lastDineInPaymentResult?.transactionId
+            ?: "TXN-${UUID.randomUUID().toString().take(8).uppercase()}"
+
+        // 1. Update corresponding dining_tabs record to SETTLED and store payment method and transactionId
+        val settledInDb = sqlDb.markTabSettled(targetTab.id, paymentMethod, resolvedTxnId)
         if (!settledInDb) {
             sqlDb.saveOrUpdateTab(
                 targetTab.copy(
                     status = "SETTLED",
                     paymentMethod = paymentMethod,
+                    paymentTransactionId = resolvedTxnId,
                     updatedAt = Instant.now().toString()
                 )
             )
@@ -736,10 +750,6 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         sqlDb.updateFloorTableStatus(targetTab.tableNumber, "Available")
 
         // 4. Update last payment result and show digital GST receipt
-        val resolvedTxnId = transactionId?.trim()?.ifBlank { null }
-            ?: lastDineInPaymentResult?.transactionId
-            ?: "TXN-${UUID.randomUUID().toString().take(8).uppercase()}"
-
         val result = DineInPaymentResult(
             tab = targetTab.copy(
                 status = "SETTLED",

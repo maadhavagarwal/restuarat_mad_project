@@ -475,12 +475,12 @@ fun RestaurantMobileApp(
                             },
                             onVerifyPayment = { tab ->
                                 coroutineScope.launch {
-                                    val result = database.verifyAndCompletePaymentForDiningTab(tab.id)
+                                    val result = database.verifyAndCompletePaymentForDiningTab(tab.id, tab.paymentTransactionId)
                                     if (result != null) {
                                         refreshAll()
                                         onShowToast("Payment verified for Table ${tab.tableNumber}! Table is now Available.")
                                     } else {
-                                        onShowToast("Payment verification failed for Table ${tab.tableNumber}")
+                                        onShowToast("Payment verification failed for Table ${tab.tableNumber}: Awaiting authorization")
                                     }
                                 }
                             },
@@ -1714,7 +1714,7 @@ fun TablesScreenView(
                                     )
                                     if (activeTab != null && activeTab.items.isNotEmpty()) {
                                         Text(
-                                            text = "Tab: ₹${activeTab.total.toInt()} (${activeTab.items.sumOf { it.quantity }} items)",
+                                            text = "Tab: ₹${activeTab.totalRupees.toInt()} (${activeTab.items.sumOf { it.quantity }} items)",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF0F172A)
@@ -1731,13 +1731,13 @@ fun TablesScreenView(
                                         color = stateColor
                                     )
                                     Text(
-                                        text = "Due: ₹${activeTab?.total?.toInt() ?: 0}",
+                                        text = "Due: ₹${activeTab?.totalRupees?.toInt() ?: 0}",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color(0xFF0F172A)
                                     )
                                     Text(
-                                        text = derivedState.elapsedDiningTime ?: "Awaiting verification",
+                                        text = if (!activeTab?.paymentTransactionId.isNullOrBlank()) "Auth: ${activeTab?.paymentTransactionId}" else (derivedState.elapsedDiningTime ?: "Awaiting verification"),
                                         fontSize = 10.sp,
                                         color = Color(0xFF64748B)
                                     )
@@ -1829,15 +1829,18 @@ fun TablesScreenView(
                                     }
                                 }
                                 TableLifecycleState.BILLED -> {
+                                    val hasAuth = !activeTab?.paymentTransactionId.isNullOrBlank()
                                     if (onVerifyPayment != null && activeTab != null) {
                                         Button(
                                             onClick = { onVerifyPayment(activeTab) },
                                             modifier = Modifier.fillMaxWidth().height(28.dp),
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (hasAuth) Color(0xFF10B981) else Color(0xFF64748B)
+                                            ),
                                             shape = RoundedCornerShape(6.dp)
                                         ) {
-                                            Text("Verify Payment", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            Text(if (hasAuth) "Verify Payment" else "Awaiting Auth", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                     if (onRevertPayment != null && activeTab != null) {
@@ -2254,7 +2257,7 @@ fun TableSelectionDialog(
                                     )
                                 } else if (activeTab != null && activeTab.items.isNotEmpty()) {
                                     Text(
-                                        text = "Tab: ₹${activeTab.total.toInt()} · ${derivedState.elapsedDiningTime ?: "Active"}",
+                                        text = "Tab: ₹${activeTab.totalRupees.toInt()} · ${derivedState.elapsedDiningTime ?: "Active"}",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = Color(0xFF0F172A)

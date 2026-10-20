@@ -1337,12 +1337,18 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("tax", tab.tax)
             put("gst", tab.tax)
             put("service_charge", tab.serviceCharge)
+            put("tip", tab.tip)
+            put("is_service_charge_opted_out", if (tab.isServiceChargeOptedOut) 1 else 0)
             put("total", tab.total)
             put("status", tab.status)
             put("payment_method", tab.paymentMethod)
             put("created_at", tab.createdAt.ifBlank { updatedAt })
             put("updated_at", updatedAt)
             put("restaurant_id", tab.restaurantId)
+            put("guest_count", tab.guestCount)
+            put("seated_at", tab.seatedAt)
+            put("billed_at", tab.billedAt)
+            put("payment_transaction_id", tab.paymentTransactionId)
         }
         val rowId = try {
             db.insertWithOnConflict(TABLE_DINING_TABS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -1352,12 +1358,19 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return rowId != -1L
     }
 
-    fun markTabSettled(tabId: String, paymentMethod: String): Boolean {
+    fun markTabSettled(tabId: String, paymentMethod: String, transactionId: String = ""): Boolean {
         if (tabId.isBlank()) return false
         val db = writableDatabase
+        val existing = getDiningTab(tabId)
+        if (existing != null && DineInPaymentRules.isSettledOrPaid(existing.status)) {
+            return false // Duplicate settlement protection
+        }
         val cv = ContentValues().apply {
             put("status", "SETTLED")
             put("payment_method", paymentMethod)
+            if (transactionId.isNotBlank()) {
+                put("payment_transaction_id", transactionId.trim())
+            }
             put("updated_at", Instant.now().toString())
         }
         val affected = try {
@@ -1367,6 +1380,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
         return affected > 0
     }
+
+    fun markTabSettled(tabId: String, paymentMethod: String): Boolean = markTabSettled(tabId, paymentMethod, "")
 
     /**
      * Resolves the real-time floor status of a table using table bookings and dining tabs.
@@ -1710,12 +1725,13 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         tabId: String,
         paymentMethod: String = "Card",
         tip: Double = 0.0,
-        isServiceChargeOptedOut: Boolean = false
+        isServiceChargeOptedOut: Boolean = false,
+        transactionId: String = ""
     ): DiningTab? {
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId))
+            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId.trim()))
             if (!cursor.moveToFirst()) {
                 cursor.close()
                 return null
@@ -1723,34 +1739,87 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             val tab = cursorToDiningTab(cursor)
             cursor.close()
 
-            val finalBill = TipAndServiceChargeRules.computeFinalBill(
-                subtotal = tab.subtotalRupees,
-                tax = tab.taxRupees,
-                isServiceChargeOptedOut = isServiceChargeOptedOut,
-                tipAmount = tip
-            )
+            val finalBill = DineInPaymentRules.validatePaymentInitiation(
+                tab = tab,
+                tip = tip,
+                isServiceChargeOptedOut = isServiceChargeOptedOut
+            ) ?: return null
 
             val nowStr = Instant.now().toString()
             val cv = ContentValues().apply {
                 put("status", DiningTabStatus.PAYMENT_PENDING)
                 put("payment_method", paymentMethod)
+                put("subtotal", finalBill.subtotalPaise)
+                put("tax", finalBill.taxPaise)
+                put("gst", finalBill.taxPaise)
                 put("service_charge", finalBill.serviceChargePaise)
                 put("tip", finalBill.tipPaise)
                 put("is_service_charge_opted_out", if (isServiceChargeOptedOut) 1 else 0)
                 put("total", finalBill.totalPaise)
+                if (transactionId.isNotBlank()) {
+                    put("payment_transaction_id", transactionId.trim())
+                }
                 put("billed_at", nowStr)
                 put("updated_at", nowStr)
             }
-            db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId))
+            db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId.trim()))
             db.setTransactionSuccessful()
             return tab.copy(
                 status = DiningTabStatus.PAYMENT_PENDING,
                 paymentMethod = paymentMethod,
+                subtotal = finalBill.subtotalPaise,
+                tax = finalBill.taxPaise,
                 serviceCharge = finalBill.serviceChargePaise,
                 tip = finalBill.tipPaise,
                 isServiceChargeOptedOut = isServiceChargeOptedOut,
                 total = finalBill.totalPaise,
+                paymentTransactionId = transactionId.trim().ifBlank { tab.paymentTransactionId },
                 billedAt = nowStr,
+                updatedAt = nowStr
+            )
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * Records payment authorization token/reference on a dining tab.
+     */
+    fun recordPaymentAuthorization(
+        tabId: String,
+        transactionId: String,
+        paymentMethod: String = ""
+    ): DiningTab? {
+        if (tabId.isBlank() || transactionId.isBlank()) return null
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId.trim()))
+            if (!cursor.moveToFirst()) {
+                cursor.close()
+                return null
+            }
+            val tab = cursorToDiningTab(cursor)
+            cursor.close()
+
+            if (DineInPaymentRules.isSettledOrPaid(tab.status)) {
+                return null
+            }
+
+            val nowStr = Instant.now().toString()
+            val cv = ContentValues().apply {
+                put("payment_transaction_id", transactionId.trim())
+                if (paymentMethod.isNotBlank()) {
+                    put("payment_method", paymentMethod.trim())
+                }
+                put("updated_at", nowStr)
+            }
+            db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId.trim()))
+            db.setTransactionSuccessful()
+            return tab.copy(
+                paymentTransactionId = transactionId.trim(),
+                paymentMethod = paymentMethod.trim().ifBlank { tab.paymentMethod },
+                updatedAt = nowStr
             )
         } finally {
             db.endTransaction()
@@ -1765,7 +1834,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId))
+            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId.trim()))
             if (!cursor.moveToFirst()) {
                 cursor.close()
                 return null
@@ -1773,19 +1842,19 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             val tab = cursorToDiningTab(cursor)
             cursor.close()
 
+            val revertedTab = DineInPaymentRules.validatePaymentFailureOrCancellation(tab, reason)
+                ?: return null
+
             val nowStr = Instant.now().toString()
             val cv = ContentValues().apply {
                 put("status", DiningTabStatus.ACTIVE)
                 put("billed_at", "")
+                put("payment_transaction_id", "")
                 put("updated_at", nowStr)
             }
-            db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId))
+            db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId.trim()))
             db.setTransactionSuccessful()
-            return tab.copy(
-                status = DiningTabStatus.ACTIVE,
-                billedAt = "",
-                updatedAt = nowStr
-            )
+            return revertedTab.copy(updatedAt = nowStr)
         } finally {
             db.endTransaction()
         }
@@ -1793,6 +1862,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     /**
      * Verifies and completes payment for a dining tab.
+     * Requires authoritative verification result (non-blank transaction ID).
      * Only after successful payment verification is the tab marked PAID/CLOSED,
      * the booking marked COMPLETED, and the table freed to Available (Green)!
      */
@@ -1803,7 +1873,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId))
+            val cursor = db.rawQuery("SELECT * FROM $TABLE_DINING_TABS WHERE id = ? LIMIT 1", arrayOf(tabId.trim()))
             if (!cursor.moveToFirst()) {
                 cursor.close()
                 return null
@@ -1811,21 +1881,37 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             val tab = cursorToDiningTab(cursor)
             cursor.close()
 
+            val verifiedTxn = DineInPaymentRules.validatePaymentVerification(
+                tab = tab,
+                transactionId = transactionId
+            ) ?: return null
+
             val nowStr = Instant.now().toString()
-            val finalTxn = transactionId.ifBlank { "TXN-${UUID.randomUUID().toString().take(8).uppercase()}" }
 
             // 1. Mark tab PAID
             val cvTab = ContentValues().apply {
                 put("status", DiningTabStatus.PAID)
-                put("payment_transaction_id", finalTxn)
+                put("payment_transaction_id", verifiedTxn)
                 put("updated_at", nowStr)
             }
-            db.update(TABLE_DINING_TABS, cvTab, "id = ?", arrayOf(tabId))
+            db.update(TABLE_DINING_TABS, cvTab, "id = ?", arrayOf(tabId.trim()))
 
             // 2. Complete associated booking
             var completedBooking: TableBooking? = null
-            if (!tab.bookingId.isNullOrBlank()) {
-                val bCursor = db.rawQuery("SELECT * FROM $TABLE_BOOKINGS WHERE id = ? LIMIT 1", arrayOf(tab.bookingId))
+            val targetBookingId = if (!tab.bookingId.isNullOrBlank()) {
+                tab.bookingId
+            } else {
+                val bCursor = db.rawQuery(
+                    "SELECT id FROM $TABLE_BOOKINGS WHERE table_number = ? AND (status = 'CONFIRMED' OR status = 'SEATED') LIMIT 1",
+                    arrayOf(tab.tableNumber)
+                )
+                val foundId = if (bCursor.moveToFirst()) bCursor.getString(0) else null
+                bCursor.close()
+                foundId
+            }
+
+            if (!targetBookingId.isNullOrBlank()) {
+                val bCursor = db.rawQuery("SELECT * FROM $TABLE_BOOKINGS WHERE id = ? LIMIT 1", arrayOf(targetBookingId))
                 if (bCursor.moveToFirst()) {
                     val b = cursorToTableBooking(bCursor)
                     bCursor.close()
@@ -1833,7 +1919,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         put("status", TableBookingStatus.COMPLETED)
                         put("updated_at", nowStr)
                     }
-                    db.update(TABLE_BOOKINGS, cvBooking, "id = ?", arrayOf(tab.bookingId))
+                    db.update(TABLE_BOOKINGS, cvBooking, "id = ?", arrayOf(targetBookingId))
                     completedBooking = b.copy(status = TableBookingStatus.COMPLETED, updatedAt = nowStr)
                 } else {
                     bCursor.close()
@@ -1850,7 +1936,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.setTransactionSuccessful()
             val completedTab = tab.copy(
                 status = DiningTabStatus.PAID,
-                paymentTransactionId = finalTxn,
+                paymentTransactionId = verifiedTxn,
                 updatedAt = nowStr
             )
             return Pair(completedTab, completedBooking)
