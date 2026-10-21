@@ -41,6 +41,7 @@ import com.restaurant.mobile.delivery.TableLifecycleState
 import com.restaurant.mobile.delivery.TipAndServiceChargeRules
 import com.restaurant.mobile.delivery.TipAndServiceChargeRules.TipOption
 import com.restaurant.mobile.model.*
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.text.KeyboardOptions

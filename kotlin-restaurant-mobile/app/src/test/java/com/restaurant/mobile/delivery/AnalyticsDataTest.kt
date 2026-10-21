@@ -3,6 +3,7 @@ package com.restaurant.mobile.delivery
 import com.restaurant.mobile.model.AnalyticsData
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -593,5 +594,126 @@ class AnalyticsDataTest {
         assertEquals(15000L, CurrencyConversionRules.rupeesToPaise(150.0))
         assertEquals(1L, CurrencyConversionRules.rupeesToPaise(0.01))
         assertEquals(9999999L, CurrencyConversionRules.rupeesToPaise(99999.99))
+    }
+
+    // -------------------------------------------------------------
+    // 11. UNIFIED DINE-IN AND DELIVERY DASHBOARD METRICS (COMMIT 3)
+    // -------------------------------------------------------------
+
+    @Test
+    fun testGrossRevenueDineInPlusDeliveryNoDoubleCounting() {
+        val settledTabs = listOf(
+            DiningTab(id = "TAB-1", tableNumber = "T1", status = "SETTLED", total = 45000L),
+            DiningTab(id = "TAB-2", tableNumber = "T2", status = "SETTLED", total = 35000L),
+            DiningTab(id = "TAB-3", tableNumber = "T3", status = "OPEN", total = 20000L) // Must NOT count
+        )
+
+        val orders = listOf(
+            createOrder("ORD-1", "Confirmed", 50000L),
+            createOrder("ORD-2", "Delivered", 70000L),
+            createOrder("ORD-3", "Cancelled", 60000L) // Must NOT count
+        )
+
+        val dineInPaise = AnalyticsEngine.calculateSettledDineInRevenue(settledTabs)
+        val deliveryPaise = AnalyticsEngine.calculateEligibleDeliveryRevenue(orders)
+        val grossRevenuePaise = dineInPaise + deliveryPaise
+
+        assertEquals(80000L, dineInPaise)
+        assertEquals(120000L, deliveryPaise)
+        assertEquals(200000L, grossRevenuePaise)
+
+        // Mapping to UI model (converted to rupees)
+        val summary = AnalyticsSummary(
+            settledDineInRevenue = dineInPaise,
+            eligibleDeliveryRevenue = deliveryPaise,
+            totalRevenue = grossRevenuePaise,
+            averageDineInBillValue = AnalyticsEngine.calculateAverageDineInBillValue(settledTabs),
+            totalDinersServed = 5,
+            tableOccupancy = TableOccupancyMetrics(occupiedTables = 2, totalTables = 12, occupancyRate = 2.0 / 12.0)
+        )
+
+        val uiData = AnalyticsData.fromSummary(summary)
+
+        assertEquals(800.0, uiData.dineInRevenue, 0.001)
+        assertEquals(1200.0, uiData.deliveryRevenue, 0.001)
+        assertEquals(2000.0, uiData.totalRevenue, 0.001)
+        // Gross revenue exactly equals dine-in + delivery (no double counting)
+        assertEquals(uiData.dineInRevenue + uiData.deliveryRevenue, uiData.totalRevenue, 0.001)
+        assertEquals(400.0, uiData.averageDineInBill, 0.001) // 80000L / 2 = 40000L = 400.0 rupees
+        assertEquals(5, uiData.totalDinersServed)
+    }
+
+    @Test
+    fun testUnifiedDashboardZeroRevenueAndEmptyDataMetrics() {
+        val emptySummary = AnalyticsSummary(
+            settledDineInRevenue = 0L,
+            eligibleDeliveryRevenue = 0L,
+            totalRevenue = 0L,
+            averageDineInBillValue = 0L,
+            averageDiningDurationMinutes = 0L,
+            tableTurnoverRate = 0.0,
+            totalDinersServed = 0,
+            tableOccupancy = TableOccupancyMetrics(0, 12, 0.0),
+            topDishes = emptyList()
+        )
+
+        val uiData = AnalyticsData.fromSummary(emptySummary)
+
+        // No NaN, Infinity or crashes on zero revenue / empty data
+        assertEquals(0.0, uiData.totalRevenue, 0.0001)
+        assertEquals(0.0, uiData.dineInRevenue, 0.0001)
+        assertEquals(0.0, uiData.deliveryRevenue, 0.0001)
+        assertEquals(0.0, uiData.averageDineInBill, 0.0001)
+        assertEquals(0.0, uiData.occupancyRate, 0.0001)
+        assertEquals(0, uiData.totalDinersServed)
+        assertEquals(0L, uiData.avgDiningDurationMinutes)
+        assertEquals(0.0, uiData.tableTurnoverRate, 0.0001)
+        assertTrue(uiData.topDishes.isEmpty())
+        assertFalse(uiData.totalRevenue.isNaN())
+        assertFalse(uiData.occupancyRate.isNaN())
+    }
+
+    @Test
+    fun testTopDishesCombinedChannelBreakdownAccuracy() {
+        val tab = DiningTab(
+            id = "TAB-DINE",
+            tableNumber = "T1",
+            status = "SETTLED",
+            items = listOf(
+                TableBillItem(dishId = "d-tikka", name = "Chicken Tikka", quantity = 4, price = 30000L, total = 120000L),
+                TableBillItem(dishId = "d-biryani", name = "Biryani", quantity = 2, price = 35000L, total = 70000L)
+            )
+        )
+
+        val order = createOrder(
+            id = "ORD-DELIV",
+            status = "Delivered",
+            totalPaise = 200000L,
+            lines = listOf(
+                QuoteLine(dishId = "d-tikka", name = "Chicken Tikka", quantity = 3, addons = emptyList(), unitPrice = 30000L, total = 90000L),
+                QuoteLine(dishId = "d-biryani", name = "Biryani", quantity = 5, addons = emptyList(), unitPrice = 35000L, total = 175000L),
+                QuoteLine(dishId = "d-naan", name = "Butter Naan", quantity = 1, addons = emptyList(), unitPrice = 5000L, total = 5000L)
+            )
+        )
+
+        val topDishes = AnalyticsEngine.aggregateTopDishes(listOf(tab), listOf(order), limit = 5)
+
+        assertEquals(3, topDishes.size)
+
+        // Both d-biryani and d-tikka have totalQuantity = 7
+        val biryani = topDishes.first { it.dishId == "d-biryani" }
+        assertEquals(7, biryani.totalQuantity)
+        assertEquals(2, biryani.dineInQuantity)
+        assertEquals(5, biryani.deliveryQuantity)
+
+        val tikka = topDishes.first { it.dishId == "d-tikka" }
+        assertEquals(7, tikka.totalQuantity)
+        assertEquals(4, tikka.dineInQuantity)
+        assertEquals(3, tikka.deliveryQuantity)
+
+        val naan = topDishes.first { it.dishId == "d-naan" }
+        assertEquals(1, naan.totalQuantity)
+        assertEquals(0, naan.dineInQuantity)
+        assertEquals(1, naan.deliveryQuantity)
     }
 }
