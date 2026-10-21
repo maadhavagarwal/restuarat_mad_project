@@ -133,7 +133,56 @@ const db = {
   reviews: [
     { orderId: "ord-1", restaurantId: "rest-1", author: "Priya N.", rating: 5, text: "Exquisite flavours and authentic spices! Arrived piping hot.", at: new Date().toISOString() },
     { orderId: "ord-2", restaurantId: "rest-1", author: "Karthik R.", rating: 5, text: "Generous portions, mouth-watering aroma.", at: new Date().toISOString() }
-  ]
+  ],
+
+  diningTabs: [
+    {
+      id: "tab-1",
+      tableNumber: "T1",
+      userId: "usr-1",
+      userName: "Aarav Sharma",
+      items: [
+        { dishId: "dish-1", name: "Hyderabadi Dum Gosht Biryani", quantity: 2 }, // 38000 * 2 = 76000
+        { dishId: "dish-105", name: "Butter Garlic Naan", quantity: 4 }           // 7000 * 4 = 28000
+      ], // Subtotal = 104000. Tax (5%) = 5200. Service Charge (5%) = 5200. Total = 114400 paise
+      tip: 0,
+      isServiceChargeOptedOut: false,
+      status: "OPEN",
+      paymentMethod: null,
+      paymentTransactionId: null
+    },
+    {
+      id: "tab-2",
+      tableNumber: "T2",
+      userId: "usr-1",
+      userName: "Guest Diner",
+      items: [
+        { dishId: "dish-4", name: "Ghee Roast Masala Dosa", quantity: 1 }, // 16000 * 1 = 16000
+        { dishId: "dish-306", name: "Mysore Pure Filter Coffee", quantity: 2 } // 6000 * 2 = 12000
+      ], // Subtotal = 28000. Tax (5%) = 1400. Service Charge (5%) = 1400. Total = 30800 paise
+      tip: 0,
+      isServiceChargeOptedOut: false,
+      status: "OPEN",
+      paymentMethod: null,
+      paymentTransactionId: null
+    },
+    {
+      id: "tab-settled-1",
+      tableNumber: "T3",
+      userId: "usr-1",
+      userName: "Settled Diner",
+      items: [
+        { dishId: "dish-2", name: "Subz Paneer Dum Biryani", quantity: 1 } // 29000
+      ],
+      tip: 0,
+      isServiceChargeOptedOut: false,
+      status: "SETTLED",
+      paymentMethod: "UPI",
+      paymentTransactionId: "TXN-DIN-PRESETTLED",
+      settledAt: new Date().toISOString()
+    }
+  ],
+  dineInIdempotencyKeys: new Map() // key -> { tabId, tableNumber, expectedTotal, result }
 };
 
 // Seed initial session token
@@ -777,6 +826,220 @@ router.get("/reviews/:restaurantId", (req, res) => {
   const reviews = db.reviews.filter(r => r.restaurantId === req.params.restaurantId);
   res.json(reviews);
 });
+
+// ------------------------------------------
+// 7. Protected Dine-In Payment Endpoint & Anti-Tampering Engine
+// ------------------------------------------
+
+function handleDineInPayment(req, res) {
+  const { tabId, tableNumber, paymentMethod, idempotencyKey, expectedTotal, tip, isServiceChargeOptedOut, splitPartySize } = req.body || {};
+
+  // 1. Basic Field Validation
+  if (!idempotencyKey || typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "idempotencyKey is required." });
+  }
+
+  const cleanKey = idempotencyKey.trim();
+  const targetId = (tabId || tableNumber || "").trim();
+  if (!targetId) {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "tabId or tableNumber is required." });
+  }
+
+  if (expectedTotal === undefined || expectedTotal === null || typeof expectedTotal !== "number" || expectedTotal < 0) {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "Valid numeric expectedTotal in paise is required." });
+  }
+
+  // 2. Anti-Hacking: Idempotency & Replay Defense
+  if (db.dineInIdempotencyKeys.has(cleanKey)) {
+    const existing = db.dineInIdempotencyKeys.get(cleanKey);
+    // Reject reuse of the same idempotency key for a different tab or different payment request
+    const isSameTab = (tabId && existing.tabId === tabId) || (tableNumber && existing.tableNumber === tableNumber);
+    const isSameAmount = existing.expectedTotal === expectedTotal;
+    if (!isSameTab || !isSameAmount) {
+      console.warn(`[Security Alert] Idempotency key '${cleanKey}' reused for a different payment request!`);
+      return res.status(409).json({
+        error: "IDEMPOTENCY_KEY_REUSED",
+        message: `Idempotency key '${cleanKey}' was already used for another payment request.`
+      });
+    }
+
+    console.log(`[Idempotency Replay] Key ${cleanKey} returned cached settlement result.`);
+    return res.status(200).json(existing.result);
+  }
+
+  // 3. Tab Lookup in Authoritative Server Data Store
+  const tab = db.diningTabs.find(t => t.id === targetId || t.tableNumber.toLowerCase() === targetId.toLowerCase());
+  if (!tab) {
+    return res.status(404).json({ error: "TAB_NOT_FOUND", message: `Dining tab '${targetId}' not found.` });
+  }
+
+  // 4. Duplicate Settlement Defense
+  if (tab.status === "SETTLED" || tab.status === "PAID" || tab.status === "CLOSED") {
+    console.warn(`[Security Alert] Duplicate settlement attempt on already settled tab ${tab.id}.`);
+    return res.status(409).json({
+      error: "TAB_ALREADY_PAID",
+      message: `Dining tab '${tab.id}' has already been settled and paid.`
+    });
+  }
+
+  // 5. Line Item Validation (reject negative or zero quantities/prices)
+  if (!tab.items || !Array.isArray(tab.items) || tab.items.length === 0) {
+    return res.status(400).json({ error: "EMPTY_TAB", message: "Cannot settle a dining tab with no items." });
+  }
+
+  for (const item of tab.items) {
+    if (!item.quantity || typeof item.quantity !== "number" || item.quantity <= 0) {
+      return res.status(422).json({
+        error: "NEGATIVE_QUANTITY_ATTACK",
+        message: `Dish quantity must be a positive integer greater than 0 (${item.name || item.dishId}).`
+      });
+    }
+    const dish = db.dishes.find(d => d.id === item.dishId);
+    if (!dish) {
+      return res.status(400).json({ error: "UNKNOWN_DISH", message: `Dish ID ${item.dishId} does not exist in menu catalog.` });
+    }
+    if (typeof dish.price !== "number" || dish.price <= 0) {
+      return res.status(422).json({ error: "INVALID_PRICE", message: `Dish price must be positive for ${dish.name}.` });
+    }
+  }
+
+  // 6. Strict Server-Side Total Recalculation (Price Tampering Defense)
+  let serverSubtotal = 0;
+  for (const item of tab.items) {
+    const dish = db.dishes.find(d => d.id === item.dishId);
+    let addonsPrice = 0;
+    if (Array.isArray(item.addons) && dish.addons) {
+      for (const addonId of item.addons) {
+        const addon = dish.addons.find(a => a.id === addonId);
+        if (addon) addonsPrice += addon.price;
+      }
+    }
+    serverSubtotal += (dish.price + addonsPrice) * item.quantity;
+  }
+
+  const tax = Math.round(serverSubtotal * 0.05); // 5% GST
+
+  // Service charge: 5% unless opted out
+  const optedOut = isServiceChargeOptedOut !== undefined ? !!isServiceChargeOptedOut : !!tab.isServiceChargeOptedOut;
+  const serviceCharge = optedOut ? 0 : Math.round(serverSubtotal * 0.05);
+
+  // Tip validation
+  const rawTip = tip !== undefined ? tip : (tab.tip || 0);
+  if (typeof rawTip !== "number" || rawTip < 0 || isNaN(rawTip) || !isFinite(rawTip)) {
+    return res.status(422).json({ error: "INVALID_TIP", message: "Tip must be a non-negative number." });
+  }
+  const tipAmount = Math.round(rawTip);
+
+  // Split payment validation
+  const party = splitPartySize !== undefined ? splitPartySize : 1;
+  if (typeof party !== "number" || party < 1 || !Number.isInteger(party)) {
+    return res.status(422).json({ error: "INVALID_PARTY_SIZE", message: "Party size must be a positive integer of at least 1." });
+  }
+
+  const authoritativeTotal = serverSubtotal + tax + serviceCharge + tipAmount;
+
+  // 7. Price Tampering Verification Check
+  if (expectedTotal !== authoritativeTotal) {
+    console.error(`[DINE-IN PRICE TAMPERING DETECTED] Tab: ${tab.id} | Client expectedTotal: ${expectedTotal} paise | Server Authoritative: ${authoritativeTotal} paise`);
+    return res.status(400).json({
+      error: "DINE_IN_PRICE_TAMPERING_DETECTED",
+      message: `Price integrity violation! Server authoritative total is ₹${authoritativeTotal / 100} (${authoritativeTotal} paise), but client submitted ₹${expectedTotal / 100} (${expectedTotal} paise). Transaction blocked.`,
+      authoritativeTotal
+    });
+  }
+
+  // 8. Atomic Settlement & Invoice Generation
+  const transactionId = "TXN-DIN-" + crypto.randomUUID().slice(0, 8).toUpperCase();
+  const invoiceNumber = "INV-" + Date.now().toString().slice(-6);
+  const nowIso = new Date().toISOString();
+
+  tab.status = "SETTLED";
+  tab.paymentMethod = paymentMethod || "Card";
+  tab.paymentTransactionId = transactionId;
+  tab.settledAt = nowIso;
+  tab.subtotal = serverSubtotal;
+  tab.tax = tax;
+  tab.serviceCharge = serviceCharge;
+  tab.tip = tipAmount;
+  tab.isServiceChargeOptedOut = optedOut;
+  tab.total = authoritativeTotal;
+
+  const result = {
+    success: true,
+    status: "SETTLED",
+    tabId: tab.id,
+    tableNumber: tab.tableNumber,
+    transactionId,
+    invoiceNumber,
+    paymentMethod: tab.paymentMethod,
+    billing: {
+      subtotal: serverSubtotal,
+      tax,
+      serviceCharge,
+      tip: tipAmount,
+      total: authoritativeTotal,
+      isServiceChargeOptedOut: optedOut
+    },
+    settledAt: nowIso
+  };
+
+  db.dineInIdempotencyKeys.set(cleanKey, {
+    tabId: tab.id,
+    tableNumber: tab.tableNumber,
+    expectedTotal: authoritativeTotal,
+    result
+  });
+
+  console.log(`[Dine-In Settled] Tab ${tab.id} for Table ${tab.tableNumber} | Total: ₹${authoritativeTotal / 100} | Txn: ${transactionId}`);
+  return res.status(200).json(result);
+}
+
+function handleCreateDineInTab(req, res) {
+  const { id, tableNumber, items, userId, userName, tip, isServiceChargeOptedOut } = req.body || {};
+  if (!tableNumber) {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "tableNumber is required." });
+  }
+
+  const tabId = id || "tab-" + (db.diningTabs.length + 1);
+  const existing = db.diningTabs.find(t => t.id === tabId);
+  if (existing) {
+    return res.status(409).json({ error: "TAB_EXISTS", message: `Tab ${tabId} already exists.` });
+  }
+
+  const newTab = {
+    id: tabId,
+    tableNumber,
+    userId: userId || "usr-1",
+    userName: userName || "Guest Diner",
+    items: Array.isArray(items) ? items : [],
+    tip: typeof tip === "number" ? tip : 0,
+    isServiceChargeOptedOut: !!isServiceChargeOptedOut,
+    status: "OPEN",
+    paymentMethod: null,
+    paymentTransactionId: null
+  };
+
+  db.diningTabs.push(newTab);
+  res.status(201).json(newTab);
+}
+
+function handleGetDineInTab(req, res) {
+  const tab = db.diningTabs.find(t => t.id === req.params.id || t.tableNumber.toLowerCase() === req.params.id.toLowerCase());
+  if (!tab) return res.status(404).json({ error: "TAB_NOT_FOUND" });
+  res.json(tab);
+}
+
+// Mount Dine-In routes on router (accessible under /api/delivery/dine-in/...)
+router.post("/dine-in/pay", handleDineInPayment);
+router.post("/dine-in/tabs", handleCreateDineInTab);
+router.get("/dine-in/tabs/:id", handleGetDineInTab);
+router.get("/dine-in/tabs", (req, res) => res.json(db.diningTabs));
+
+// Mount Dine-In routes directly on app (accessible under /api/dine-in/...)
+app.post("/api/dine-in/pay", handleDineInPayment);
+app.post("/api/dine-in/tabs", handleCreateDineInTab);
+app.get("/api/dine-in/tabs/:id", handleGetDineInTab);
+app.get("/api/dine-in/tabs", (req, res) => res.json(db.diningTabs));
 
 // Mount Router under /api/delivery
 app.use("/api/delivery", router);

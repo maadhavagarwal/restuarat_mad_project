@@ -687,6 +687,56 @@ data class DineInPaymentResult(
     val timestamp: String = Instant.now().toString()
 )
 
+data class DineInPaymentBilling(
+    val subtotal: Long = 0L,
+    val tax: Long = 0L,
+    val serviceCharge: Long = 0L,
+    val tip: Long = 0L,
+    val total: Long = 0L,
+    val isServiceChargeOptedOut: Boolean = false
+) {
+    val totalRupees: Double get() = CurrencyConversionRules.paiseToRupees(total)
+}
+
+data class DineInPaymentRequest(
+    val tabId: String? = null,
+    val tableNumber: String? = null,
+    val paymentMethod: String = "Card",
+    val idempotencyKey: String = "",
+    val expectedTotal: Long = 0L,
+    val tip: Long = 0L,
+    val isServiceChargeOptedOut: Boolean = false,
+    val splitPartySize: Int = 1
+)
+
+data class DineInPaymentResponse(
+    val success: Boolean = true,
+    val status: String = "SETTLED",
+    val tabId: String = "",
+    val tableNumber: String = "",
+    val transactionId: String = "",
+    val invoiceNumber: String = "",
+    val paymentMethod: String = "Card",
+    val billing: DineInPaymentBilling = DineInPaymentBilling(),
+    val settledAt: String = Instant.now().toString()
+)
+
+sealed class DineInSecurityValidationResult {
+    data class Success(
+        val subtotal: Long,
+        val tax: Long,
+        val serviceCharge: Long,
+        val tip: Long,
+        val total: Long
+    ) : DineInSecurityValidationResult()
+
+    data class Error(
+        val code: String,
+        val message: String,
+        val authoritativeTotal: Long? = null
+    ) : DineInSecurityValidationResult()
+}
+
 object TipAndServiceChargeRules {
     const val SERVICE_CHARGE_PERCENT = 5.0
     val PRESET_TIPS = listOf(0.0, 50.0, 100.0, 200.0)
@@ -937,6 +987,70 @@ object DineInPaymentRules {
         payloadTotalPaise: Long
     ): Boolean {
         return authoritativeTotalPaise > 0L && authoritativeTotalPaise == payloadTotalPaise
+    }
+
+    /**
+     * Validates payment security against tampering, duplicate settlement, and invalid quantities.
+     */
+    fun validateDineInPaymentSecurity(
+        tab: DiningTab,
+        expectedTotalPaise: Long,
+        tipPaise: Long = 0L,
+        isServiceChargeOptedOut: Boolean = false,
+        partySize: Int = 1
+    ): DineInSecurityValidationResult {
+        if (isSettledOrPaid(tab.status)) {
+            return DineInSecurityValidationResult.Error(
+                "TAB_ALREADY_PAID",
+                "Dining tab has already been settled and paid."
+            )
+        }
+        if (tab.items.isEmpty()) {
+            return DineInSecurityValidationResult.Error(
+                "EMPTY_TAB",
+                "Cannot settle a dining tab with no items."
+            )
+        }
+        if (tab.items.any { it.quantity <= 0 }) {
+            return DineInSecurityValidationResult.Error(
+                "NEGATIVE_QUANTITY_ATTACK",
+                "Dish quantity must be a positive integer greater than 0."
+            )
+        }
+        if (tipPaise < 0L) {
+            return DineInSecurityValidationResult.Error(
+                "INVALID_TIP",
+                "Tip must be a non-negative number."
+            )
+        }
+        if (partySize < 1) {
+            return DineInSecurityValidationResult.Error(
+                "INVALID_PARTY_SIZE",
+                "Party size must be a positive integer of at least 1."
+            )
+        }
+
+        val subtotal = tab.items.sumOf { it.price * it.quantity }
+        val tax = Math.round(subtotal * 0.05)
+        val sc = if (isServiceChargeOptedOut || tab.isServiceChargeOptedOut) 0L else Math.round(subtotal * 0.05)
+        val tip = if (tipPaise > 0L) tipPaise else tab.tip
+        val authoritativeTotal = subtotal + tax + sc + tip
+
+        if (expectedTotalPaise != authoritativeTotal) {
+            return DineInSecurityValidationResult.Error(
+                "DINE_IN_PRICE_TAMPERING_DETECTED",
+                "Price integrity violation: authoritative total is $authoritativeTotal paise, but received $expectedTotalPaise paise.",
+                authoritativeTotal = authoritativeTotal
+            )
+        }
+
+        return DineInSecurityValidationResult.Success(
+            subtotal = subtotal,
+            tax = tax,
+            serviceCharge = sc,
+            tip = tip,
+            total = authoritativeTotal
+        )
     }
 }
 

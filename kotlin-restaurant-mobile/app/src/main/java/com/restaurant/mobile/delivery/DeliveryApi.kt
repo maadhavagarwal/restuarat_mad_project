@@ -183,6 +183,15 @@ class DeliveryApi {
             cleanPath == "/cart" -> Cart()
             cleanPath == "/favorites" -> emptyList<String>()
             cleanPath == "/analytics" -> eng.getAnalyticsData()
+            (cleanPath == "/dine-in/pay" || cleanPath == "/api/dine-in/pay" || cleanPath == "/api/delivery/dine-in/pay") && method == "POST" -> {
+                val req = if (body is DineInPaymentRequest) body else gson.fromJson(gson.toJson(body), DineInPaymentRequest::class.java)
+                eng.settleDineInTabSecurely(req)
+            }
+            (cleanPath == "/dine-in/tabs" || cleanPath == "/api/dine-in/tabs" || cleanPath == "/api/delivery/dine-in/tabs") && method == "GET" -> eng.sqlDb.getAllDiningTabs()
+            (cleanPath.startsWith("/dine-in/tabs/") || cleanPath.startsWith("/api/dine-in/tabs/") || cleanPath.startsWith("/api/delivery/dine-in/tabs/")) && method == "GET" -> {
+                val id = cleanPath.substringAfterLast("/")
+                eng.sqlDb.getDiningTab(id) ?: eng.sqlDb.getOpenTabForTable(id)
+            }
             else -> null
         }
     }

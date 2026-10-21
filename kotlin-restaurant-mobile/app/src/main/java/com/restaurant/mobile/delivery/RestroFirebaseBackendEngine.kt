@@ -20,6 +20,7 @@ class RestroFirebaseBackendEngine(
     val sqlDb: RestroSqlDatabase = RestroSqlDatabase(context)
 ) {
     private val processedIdempotencyKeys = ConcurrentHashMap<String, DeliveryOrder>()
+    private val processedDineInIdempotencyKeys = ConcurrentHashMap<String, Pair<DineInPaymentRequest, DineInPaymentResponse>>()
 
     init {
         // Seed initial restaurant, menu, staff RBAC accounts, and staff PIN vault into SQLite
@@ -335,6 +336,144 @@ class RestroFirebaseBackendEngine(
     fun saveOrUpdateTab(tab: DiningTab): Boolean = sqlDb.saveOrUpdateTab(tab)
 
     fun markTabSettled(tabId: String, paymentMethod: String): Boolean = sqlDb.markTabSettled(tabId, paymentMethod)
+
+    fun clearDineInIdempotencyKeysForTest() {
+        processedDineInIdempotencyKeys.clear()
+    }
+
+    /**
+     * Authoritative, protected dine-in settlement engine.
+     * Defends against:
+     * - Field validation failures (400)
+     * - Idempotency replay (returns cached response)
+     * - Idempotency key reuse for different tab or amount (409)
+     * - Duplicate settlement on already paid/settled tabs (409)
+     * - Negative or zero item quantities (422)
+     * - Invalid/negative tip or party size (422)
+     * - Price tampering: authoritative SQLite recalculation of subtotal, tax, service charge, tip (400)
+     */
+    fun settleDineInTabSecurely(request: DineInPaymentRequest): DineInPaymentResponse {
+        val cleanKey = request.idempotencyKey.trim()
+        if (cleanKey.isBlank()) {
+            throw ApiFailure(400, "FIELD_VALIDATION_FAILED: idempotencyKey is required.")
+        }
+
+        val targetId = (request.tabId ?: request.tableNumber ?: "").trim()
+        if (targetId.isBlank()) {
+            throw ApiFailure(400, "FIELD_VALIDATION_FAILED: tabId or tableNumber is required.")
+        }
+
+        if (request.expectedTotal < 0) {
+            throw ApiFailure(400, "FIELD_VALIDATION_FAILED: Valid numeric expectedTotal in paise is required.")
+        }
+
+        if (request.tip < 0) {
+            throw ApiFailure(422, "INVALID_TIP: Tip must be a non-negative number.")
+        }
+
+        if (request.splitPartySize < 1) {
+            throw ApiFailure(422, "INVALID_PARTY_SIZE: Party size must be a positive integer of at least 1.")
+        }
+
+        // Anti-Hacking: Idempotency & Replay Defense
+        processedDineInIdempotencyKeys[cleanKey]?.let { (prevReq, cachedRes) ->
+            val isSameTab = (!request.tabId.isNullOrBlank() && prevReq.tabId == request.tabId) ||
+                (!request.tableNumber.isNullOrBlank() && prevReq.tableNumber == request.tableNumber)
+            val isSameAmount = prevReq.expectedTotal == request.expectedTotal
+            if (!isSameTab || !isSameAmount) {
+                throw ApiFailure(409, "IDEMPOTENCY_KEY_REUSED: Idempotency key '$cleanKey' was already used for another payment request.")
+            }
+            return cachedRes
+        }
+
+        // Tab Lookup in SQLite
+        val tab = sqlDb.getDiningTab(targetId)
+            ?: sqlDb.getOpenTabForTable(targetId)
+            ?: sqlDb.getAllDiningTabs().firstOrNull { it.tableNumber.equals(targetId, ignoreCase = true) }
+            ?: throw ApiFailure(404, "TAB_NOT_FOUND: Dining tab '$targetId' not found.")
+
+        // Duplicate Settlement Defense
+        if (DineInPaymentRules.isSettledOrPaid(tab.status)) {
+            throw ApiFailure(409, "TAB_ALREADY_PAID: Dining tab '${tab.id}' has already been settled and paid.")
+        }
+
+        // Line Item Validation
+        if (tab.items.isEmpty()) {
+            throw ApiFailure(400, "EMPTY_TAB: Cannot settle a dining tab with no items.")
+        }
+
+        for (item in tab.items) {
+            if (item.quantity <= 0) {
+                throw ApiFailure(422, "NEGATIVE_QUANTITY_ATTACK: Dish quantity must be a positive integer greater than 0 (${item.name}).")
+            }
+        }
+
+        // Authoritative Subtotal Recalculation (Price Tampering Defense)
+        var serverSubtotal = 0L
+        for (item in tab.items) {
+            val dish = if (item.dishId.isNotBlank()) sqlDb.getDishById(item.dishId) else null
+            val unitPrice = dish?.price ?: item.price
+            serverSubtotal += unitPrice * item.quantity
+        }
+
+        val tax = Math.round(serverSubtotal * 0.05) // 5% GST
+        val optedOut = request.isServiceChargeOptedOut || tab.isServiceChargeOptedOut
+        val serviceCharge = if (optedOut) 0L else Math.round(serverSubtotal * 0.05)
+        val tipAmount = if (request.tip > 0L) request.tip else tab.tip
+        val authoritativeTotal = serverSubtotal + tax + serviceCharge + tipAmount
+
+        // Price Tampering Verification Check
+        if (request.expectedTotal != authoritativeTotal) {
+            throw ApiFailure(
+                400,
+                "DINE_IN_PRICE_TAMPERING_DETECTED: Price integrity violation! Server authoritative total is $authoritativeTotal paise, but client submitted ${request.expectedTotal} paise. Transaction blocked."
+            )
+        }
+
+        // Atomic Settlement
+        val transactionId = "TXN-DIN-" + UUID.randomUUID().toString().take(8).uppercase()
+        val invoiceNumber = "INV-" + (System.currentTimeMillis() % 1000000)
+        val nowIso = Instant.now().toString()
+
+        val updatedTab = tab.copy(
+            status = "SETTLED",
+            paymentMethod = request.paymentMethod,
+            paymentTransactionId = transactionId,
+            subtotal = serverSubtotal,
+            tax = tax,
+            serviceCharge = serviceCharge,
+            tip = tipAmount,
+            isServiceChargeOptedOut = optedOut,
+            total = authoritativeTotal,
+            updatedAt = nowIso
+        )
+        sqlDb.saveOrUpdateTab(updatedTab)
+        sqlDb.markTabSettled(tab.id, request.paymentMethod, transactionId)
+
+        val billing = DineInPaymentBilling(
+            subtotal = serverSubtotal,
+            tax = tax,
+            serviceCharge = serviceCharge,
+            tip = tipAmount,
+            total = authoritativeTotal,
+            isServiceChargeOptedOut = optedOut
+        )
+
+        val response = DineInPaymentResponse(
+            success = true,
+            status = "SETTLED",
+            tabId = tab.id,
+            tableNumber = tab.tableNumber,
+            transactionId = transactionId,
+            invoiceNumber = invoiceNumber,
+            paymentMethod = request.paymentMethod,
+            billing = billing,
+            settledAt = nowIso
+        )
+
+        processedDineInIdempotencyKeys[cleanKey] = Pair(request, response)
+        return response
+    }
 
     fun getFloorTableStatus(tableNumber: String): String = sqlDb.getFloorTableStatus(tableNumber)
 
