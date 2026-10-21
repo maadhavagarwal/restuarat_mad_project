@@ -472,7 +472,58 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var pendingQuantityToAdd by mutableIntStateOf(1)
 
     // Android Native Notification Channel Manager
-    val notificationHelper = DeliveryNotificationHelper(app)
+    var notificationHelper: DeliveryNotificationHelper = DeliveryNotificationHelper(app)
+    private val notifiedReminderBookingKeys = mutableSetOf<String>()
+    private val notifiedBillReadyKeys = mutableSetOf<String>()
+
+    fun triggerReservationReminder(tableNumber: String, minutesRemaining: Int, bookingId: String = "") {
+        if (minutesRemaining < 0) return
+        val key = if (bookingId.isNotBlank()) "${bookingId}_$minutesRemaining" else "${tableNumber}_$minutesRemaining"
+        if (notifiedReminderBookingKeys.add(key)) {
+            try {
+                notificationHelper.showReservationReminder(
+                    tableNumber = tableNumber,
+                    minutesRemaining = minutesRemaining
+                )
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun notifyTableBillReadyIfEligible(tab: DiningTab) {
+        if (tab.total <= 0L || tab.items.isEmpty()) return
+        val key = "${tab.id}_${tab.total}"
+        if (notifiedBillReadyKeys.add(key)) {
+            try {
+                notificationHelper.showTableBillReady(
+                    tableNumber = tab.tableNumber,
+                    amount = tab.total
+                )
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun handleNotificationNavigation(destination: String, tableNumber: String? = null) {
+        when (destination) {
+            "MyBookings" -> {
+                loadUserTableBookings()
+                route = "MyBookings"
+            }
+            "Home" -> {
+                route = "Home"
+                if (!tableNumber.isNullOrBlank()) {
+                    observeActiveTableTab(tableNumber)
+                }
+            }
+            "Orders" -> {
+                route = "Orders"
+            }
+            else -> {
+                route = destination
+            }
+        }
+    }
 
     // Customer Table-Booking UI Draft and Confirmation State
     var tableBookingDraft by mutableStateOf(TableBookingDraft())
@@ -532,6 +583,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                         isConfirmingBooking = false
                         userTableBookings = listOf(result.booking) + userTableBookings.filterNot { it.id == result.booking.id }
                         observeActiveTableTab(result.booking.tableNumber)
+                        try {
+                            notificationHelper.showReservationConfirmed(
+                                tableNumber = result.booking.tableNumber,
+                                slot = result.booking.timeSlot
+                            )
+                        } catch (_: Exception) {
+                        }
                         if (onSuccess != null) {
                             onSuccess(result.booking)
                         } else {
@@ -615,6 +673,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                         observedTableNumber = null
                     } else {
                         activeTableTab = updatedTab
+                        if (updatedTab.total > 0L && updatedTab.items.isNotEmpty()) {
+                            notifyTableBillReadyIfEligible(updatedTab)
+                        }
                     }
                 }
             } catch (e: CancellationException) {
@@ -647,6 +708,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             walkInTableError = null
             error = null
             observeActiveTableTab(cleanTable)
+            if (tab.total > 0L) {
+                notifyTableBillReadyIfEligible(tab)
+            }
             tab
         } else {
             val msg = "No active unpaid bill found for Table $cleanTable. Please check with your server."
@@ -764,9 +828,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
         // 5. Trigger native notification: "Bill Settled! Payment of {total} for Table {tableNumber} verified. Thank you for dining with us!"
         try {
-            notificationHelper.notifyDineInBillSettled(
-                total = money(targetTab.total),
-                tableNumber = targetTab.tableNumber
+            notificationHelper.showBillSettledReceipt(
+                tableNumber = targetTab.tableNumber,
+                amount = targetTab.total,
+                invoiceId = resolvedTxnId
             )
         } catch (_: Exception) {
             // Graceful fallback in environments without notification service

@@ -1,4 +1,5 @@
 package com.restaurant.mobile
+import android.content.Intent
 
 import android.os.Bundle
 import android.widget.Toast
@@ -51,6 +52,14 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    private var onNewIntentCallback: ((Intent) -> Unit)? = null
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        onNewIntentCallback?.invoke(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -61,6 +70,26 @@ class MainActivity : ComponentActivity() {
         setContent {
             val deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel =
                 androidx.lifecycle.viewmodel.compose.viewModel()
+
+            // Handle notification tap navigation
+            DisposableEffect(Unit) {
+                val dest = intent?.getStringExtra("EXTRA_DESTINATION")
+                val tableNum = intent?.getStringExtra("EXTRA_TABLE_NUMBER")
+                if (!dest.isNullOrBlank()) {
+                    deliveryVm.handleNotificationNavigation(dest, tableNum)
+                }
+                onNewIntentCallback = { newIntent ->
+                    val newDest = newIntent.getStringExtra("EXTRA_DESTINATION")
+                    val newTableNum = newIntent.getStringExtra("EXTRA_TABLE_NUMBER")
+                    if (!newDest.isNullOrBlank()) {
+                        deliveryVm.handleNotificationNavigation(newDest, newTableNum)
+                    }
+                }
+                onDispose {
+                    onNewIntentCallback = null
+                }
+            }
+
             var isStaffMode by rememberSaveable { mutableStateOf(false) }
             var showStaffPinPad by rememberSaveable { mutableStateOf(false) }
             var lastStaffInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
