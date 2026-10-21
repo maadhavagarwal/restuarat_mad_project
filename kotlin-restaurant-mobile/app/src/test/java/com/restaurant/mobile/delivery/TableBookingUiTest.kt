@@ -322,20 +322,20 @@ class TableBookingUiTest {
         val pastDateDraft = TableBookingDraft(bookingDate = "2026-10-10")
         assertEquals("The selected booking date cannot be in the past", computeBookingValidationError(pastDateDraft))
 
-        val noSlotDraft = TableBookingDraft(bookingDate = "2026-10-20")
+        val futureDate = java.time.LocalDate.now().plusDays(5).toString(); val noSlotDraft = TableBookingDraft(bookingDate = futureDate)
         assertEquals("Please select a dining time slot to proceed", computeBookingValidationError(noSlotDraft))
 
-        val zeroGuestDraft = TableBookingDraft(bookingDate = "2026-10-20", timeSlot = "7:00 PM", partySize = 0)
+        val zeroGuestDraft = TableBookingDraft(bookingDate = futureDate, timeSlot = "7:00 PM", partySize = 0)
         assertEquals("Party size must be at least 1 guest", computeBookingValidationError(zeroGuestDraft))
 
-        val overGuestDraft = TableBookingDraft(bookingDate = "2026-10-20", timeSlot = "7:00 PM", partySize = 25)
+        val overGuestDraft = TableBookingDraft(bookingDate = futureDate, timeSlot = "7:00 PM", partySize = 25)
         assertEquals("Party size cannot exceed 20 guests", computeBookingValidationError(overGuestDraft))
 
-        val noAreaDraft = TableBookingDraft(bookingDate = "2026-10-20", timeSlot = "7:00 PM", partySize = 2, seatingArea = "")
+        val noAreaDraft = TableBookingDraft(bookingDate = futureDate, timeSlot = "7:00 PM", partySize = 2, seatingArea = "")
         assertEquals("Please select a seating area preference", computeBookingValidationError(noAreaDraft))
 
         val validDraft = TableBookingDraft(
-            bookingDate = "2026-10-20",
+            bookingDate = futureDate,
             timeSlot = "7:00 PM",
             partySize = 4,
             seatingArea = "Private Booth"

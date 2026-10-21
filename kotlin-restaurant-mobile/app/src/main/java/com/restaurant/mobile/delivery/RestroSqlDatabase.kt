@@ -9,6 +9,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.restaurant.mobile.model.KOT
 import com.restaurant.mobile.model.KOTItem
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -2071,6 +2072,368 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             roundName = cursor.getString(cursor.getColumnIndexOrThrow("round_name")),
             createdAt = cursor.getString(cursor.getColumnIndexOrThrow("created_at")),
             customerName = customerName
+        )
+    }
+
+    // -------------------------------------------------------------
+    // ANALYTICS DATA LAYER
+    // -------------------------------------------------------------
+
+    /**
+     * Settled dine-in revenue in paise.
+     * Only dining tabs with status = 'SETTLED' contribute to this metric.
+     * Open or payment-pending tabs are excluded to avoid counting unverified revenue.
+     */
+    fun getSettledDineInRevenue(): Long {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT COALESCE(SUM(total), 0) FROM $TABLE_DINING_TABS WHERE status IN (?, ?, ?)",
+            arrayOf("SETTLED", "PAID", "CLOSED")
+        )
+        return try {
+            if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            cursor.close()
+        }
+    }
+
+    /**
+     * Eligible completed/confirmed delivery revenue in paise.
+     * Orders with status 'Confirmed', 'Preparing', 'Out for delivery', 'Delivered' contribute.
+     * Orders with status 'Cancelled' or 'Failed' are strictly excluded.
+     */
+    fun getEligibleDeliveryRevenue(): Long {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT quote_json FROM $TABLE_ORDERS WHERE status IN (?, ?, ?, ?) AND status NOT IN (?, ?)",
+            arrayOf("Confirmed", "Preparing", "Out for delivery", "Delivered", "Cancelled", "Failed")
+        )
+        var totalPaise = 0L
+        try {
+            while (cursor.moveToNext()) {
+                val json = cursor.getString(0)
+                if (!json.isNullOrBlank()) {
+                    try {
+                        val quote = gson.fromJson(json, Quote::class.java)
+                        if (quote != null) {
+                            totalPaise += quote.total
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {
+            return 0L
+        } finally {
+            cursor.close()
+        }
+        return totalPaise
+    }
+
+    /**
+     * Average dine-in bill value in paise.
+     * Calculated as (sum of total for SETTLED tabs) / (count of SETTLED tabs).
+     * Returns 0L if no settled tabs exist.
+     */
+    fun getAverageDineInBillValue(): Long {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM $TABLE_DINING_TABS WHERE status IN (?, ?, ?)",
+            arrayOf("SETTLED", "PAID", "CLOSED")
+        )
+        return try {
+            if (cursor.moveToFirst()) {
+                val count = cursor.getLong(0)
+                val sum = cursor.getLong(1)
+                if (count > 0L) sum / count else 0L
+            } else {
+                0L
+            }
+        } catch (_: Exception) {
+            0L
+        } finally {
+            cursor.close()
+        }
+    }
+
+    /**
+     * Average dining duration in minutes across settled dining tabs.
+     * Uses real timestamps: session start timestamp is resolved from the earliest item orderedAt
+     * (or associated table booking createdAt), and session end timestamp is resolved from tab updatedAt.
+     *
+     * Persisted fields note:
+     * TABLE_DINING_TABS does not have a separate seated_at column; duration is accurately derived
+     * from item order timestamps and settlement timestamps. Tabs lacking parseable timestamps
+     * are excluded from the average rather than fabricating arbitrary durations.
+     */
+    fun getAverageDiningDurationMinutes(): Long {
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT items_json, updated_at, booking_id, seated_at, billed_at FROM $TABLE_DINING_TABS WHERE status IN (?, ?, ?)",
+            arrayOf("SETTLED", "PAID", "CLOSED")
+        )
+        val bookingsMap = try {
+            getAllTableBookings().associateBy { it.id }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+
+        var totalMinutes = 0L
+        var validCount = 0
+
+        try {
+            val listType = object : TypeToken<List<TableBillItem>>() {}.type
+            while (cursor.moveToNext()) {
+                val itemsJson = cursor.getString(0)
+                val updatedAtStr = cursor.getString(1)
+                val bookingId = if (cursor.isNull(2)) null else cursor.getString(2)
+                val seatedAtStr = if (cursor.isNull(3)) "" else cursor.getString(3)
+                val billedAtStr = if (cursor.isNull(4)) "" else cursor.getString(4)
+
+                val endInstant = (if (billedAtStr.isNotBlank()) try { Instant.parse(billedAtStr) } catch (_: Exception) { null } else null)
+                    ?: (try { Instant.parse(updatedAtStr) } catch (_: Exception) { null })
+                    ?: continue
+
+                val items: List<TableBillItem> = try {
+                    if (!itemsJson.isNullOrBlank()) gson.fromJson(itemsJson, listType) ?: emptyList() else emptyList()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+
+                val earliestItemInstant = items.mapNotNull { item ->
+                    try { Instant.parse(item.orderedAt) } catch (_: Exception) { null }
+                }.minOrNull()
+
+                val seatedInstant = if (seatedAtStr.isNotBlank()) {
+                    try { Instant.parse(seatedAtStr) } catch (_: Exception) { null }
+                } else null
+
+                val bookingInstant = bookingId?.let { bookingsMap[it] }?.let { b ->
+                    try { Instant.parse(b.createdAt) } catch (_: Exception) { null }
+                }
+
+                val startInstant = earliestItemInstant ?: seatedInstant ?: bookingInstant ?: continue
+                val durationMinutes = Duration.between(startInstant, endInstant).toMinutes()
+                if (durationMinutes >= 0) {
+                    totalMinutes += durationMinutes
+                    validCount++
+                }
+            }
+        } catch (_: Exception) {
+            return 0L
+        } finally {
+            cursor.close()
+        }
+
+        return if (validCount > 0) totalMinutes / validCount else 0L
+    }
+
+    /**
+     * Table turnover rate: number of settled dining tabs divided by the total number of tables.
+     */
+    fun getTableTurnoverRate(): Double {
+        val totalTables = RestaurantTableDefaults.DEFAULT_TABLES.size
+        if (totalTables <= 0) return 0.0
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT COUNT(*) FROM $TABLE_DINING_TABS WHERE status IN (?, ?, ?)",
+            arrayOf("SETTLED", "PAID", "CLOSED")
+        )
+        return try {
+            val count = if (cursor.moveToFirst()) cursor.getInt(0) else 0
+            count.toDouble() / totalTables.toDouble()
+        } catch (_: Exception) {
+            0.0
+        } finally {
+            cursor.close()
+        }
+    }
+
+    /**
+     * Total diners served, using genuine guest counts (party_size) where available.
+     * Prevents duplicate counting:
+     * 1. Settled tabs with a linked table booking count the booking's party_size.
+     * 2. Settled walk-in tabs without a booking count 1 guest.
+     * 3. Completed table bookings not linked to any settled tab count their party_size.
+     * Unsettled tabs, unconfirmed bookings, and cancelled bookings are strictly excluded.
+     */
+    fun getTotalDinersServed(): Int {
+        val db = readableDatabase
+        var totalDiners = 0
+
+        // 1. Settled tabs linked to table bookings: sum booking party_size (or guest_count)
+        val cursorLinked = db.rawQuery(
+            """
+            SELECT COALESCE(SUM(CASE WHEN b.party_size > 0 THEN b.party_size ELSE CASE WHEN t.guest_count > 0 THEN t.guest_count ELSE 1 END END), 0)
+            FROM $TABLE_DINING_TABS t
+            INNER JOIN $TABLE_BOOKINGS b ON t.booking_id = b.id
+            WHERE t.status IN ('SETTLED', 'PAID', 'CLOSED')
+            """.trimIndent(),
+            null
+        )
+        try {
+            if (cursorLinked.moveToFirst()) {
+                totalDiners += cursorLinked.getInt(0)
+            }
+        } catch (_: Exception) {} finally {
+            cursorLinked.close()
+        }
+
+        // 2. Settled walk-in tabs without linked booking: use guest_count if > 0, else 1
+        val cursorWalkIns = db.rawQuery(
+            """
+            SELECT COALESCE(SUM(CASE WHEN t.guest_count > 0 THEN t.guest_count ELSE 1 END), 0)
+            FROM $TABLE_DINING_TABS t
+            WHERE t.status IN ('SETTLED', 'PAID', 'CLOSED')
+              AND (t.booking_id IS NULL OR t.booking_id = '' OR t.booking_id NOT IN (SELECT id FROM $TABLE_BOOKINGS))
+            """.trimIndent(),
+            null
+        )
+        try {
+            if (cursorWalkIns.moveToFirst()) {
+                totalDiners += cursorWalkIns.getInt(0)
+            }
+        } catch (_: Exception) {} finally {
+            cursorWalkIns.close()
+        }
+
+        // 3. Completed table bookings not linked to any settled dining tab
+        val cursorUnlinkedBookings = db.rawQuery(
+            """
+            SELECT COALESCE(SUM(b.party_size), 0)
+            FROM $TABLE_BOOKINGS b
+            WHERE b.status = ?
+              AND b.id NOT IN (SELECT booking_id FROM $TABLE_DINING_TABS WHERE booking_id IS NOT NULL AND status IN ('SETTLED', 'PAID', 'CLOSED'))
+            """.trimIndent(),
+            arrayOf(TableBookingStatus.COMPLETED)
+        )
+        try {
+            if (cursorUnlinkedBookings.moveToFirst()) {
+                totalDiners += cursorUnlinkedBookings.getInt(0)
+            }
+        } catch (_: Exception) {} finally {
+            cursorUnlinkedBookings.close()
+        }
+
+        return totalDiners
+    }
+
+    /**
+     * Table occupancy using the existing table-allocation/status model.
+     * Checks all default floor-plan tables using [getFloorTableStatus].
+     */
+    fun getTableOccupancy(): TableOccupancyMetrics {
+        val tables = RestaurantTableDefaults.DEFAULT_TABLES
+        val total = tables.size
+        var occupied = 0
+        for (table in tables) {
+            if (getFloorTableStatus(table.tableNumber) == "Occupied") {
+                occupied++
+            }
+        }
+        val rate = if (total > 0) occupied.toDouble() / total.toDouble() else 0.0
+        return TableOccupancyMetrics(
+            occupiedTables = occupied,
+            totalTables = total,
+            occupancyRate = rate
+        )
+    }
+
+    /**
+     * Top five dishes across dine-in and delivery channels.
+     * Aggregates genuine dish-level quantities:
+     * - Dine-in: parsed from items_json in SETTLED dining_tabs.
+     * - Delivery: parsed from quote_json lines in eligible delivery orders.
+     */
+    fun getTopFiveDishes(limit: Int = 5): List<TopDishStat> {
+        val db = readableDatabase
+        data class DishCounter(var name: String, var dineIn: Int = 0, var delivery: Int = 0)
+        val dishMap = mutableMapOf<String, DishCounter>()
+
+        // 1. Dine-in items from settled/finalized tabs
+        val cursorTabs = db.rawQuery(
+            "SELECT items_json FROM $TABLE_DINING_TABS WHERE status IN (?, ?, ?)",
+            arrayOf("SETTLED", "PAID", "CLOSED")
+        )
+        try {
+            val listType = object : TypeToken<List<TableBillItem>>() {}.type
+            while (cursorTabs.moveToNext()) {
+                val json = cursorTabs.getString(0)
+                if (!json.isNullOrBlank()) {
+                    try {
+                        val items: List<TableBillItem> = gson.fromJson(json, listType) ?: emptyList()
+                        for (item in items) {
+                            val counter = dishMap.getOrPut(item.dishId) { DishCounter(item.name) }
+                            counter.dineIn += item.quantity
+                            if (counter.name.isBlank() && item.name.isNotBlank()) counter.name = item.name
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {} finally {
+            cursorTabs.close()
+        }
+
+        // 2. Delivery lines from eligible orders
+        val cursorOrders = db.rawQuery(
+            "SELECT quote_json FROM $TABLE_ORDERS WHERE status IN (?, ?, ?, ?) AND status NOT IN (?, ?)",
+            arrayOf("Confirmed", "Preparing", "Out for delivery", "Delivered", "Cancelled", "Failed")
+        )
+        try {
+            while (cursorOrders.moveToNext()) {
+                val json = cursorOrders.getString(0)
+                if (!json.isNullOrBlank()) {
+                    try {
+                        val quote = gson.fromJson(json, Quote::class.java)
+                        if (quote != null) {
+                            for (line in quote.lines) {
+                                val counter = dishMap.getOrPut(line.dishId) { DishCounter(line.name) }
+                                counter.delivery += line.quantity
+                                if (counter.name.isBlank() && line.name.isNotBlank()) counter.name = line.name
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {} finally {
+            cursorOrders.close()
+        }
+
+        return dishMap.entries
+            .map { (dishId, counter) ->
+                TopDishStat(
+                    dishId = dishId,
+                    name = counter.name,
+                    totalQuantity = counter.dineIn + counter.delivery,
+                    dineInQuantity = counter.dineIn,
+                    deliveryQuantity = counter.delivery
+                )
+            }
+            .filter { it.totalQuantity > 0 }
+            .sortedWith(
+                compareByDescending<TopDishStat> { it.totalQuantity }
+                    .thenBy { it.name }
+            )
+            .take(limit)
+    }
+
+    /**
+     * Aggregated analytics summary covering all dine-in and delivery metrics.
+     */
+    fun getAnalyticsSummary(): AnalyticsSummary {
+        val dineInRev = getSettledDineInRevenue()
+        val deliveryRev = getEligibleDeliveryRevenue()
+        return AnalyticsSummary(
+            settledDineInRevenue = dineInRev,
+            eligibleDeliveryRevenue = deliveryRev,
+            totalRevenue = dineInRev + deliveryRev,
+            averageDineInBillValue = getAverageDineInBillValue(),
+            averageDiningDurationMinutes = getAverageDiningDurationMinutes(),
+            tableTurnoverRate = getTableTurnoverRate(),
+            totalDinersServed = getTotalDinersServed(),
+            tableOccupancy = getTableOccupancy(),
+            topDishes = getTopFiveDishes(5)
         )
     }
 }

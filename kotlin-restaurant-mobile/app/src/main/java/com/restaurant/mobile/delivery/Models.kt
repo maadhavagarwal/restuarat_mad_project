@@ -1363,3 +1363,225 @@ object TableLifecycleRules {
         )
     }
 }
+
+data class TableOccupancyMetrics(
+    val occupiedTables: Int = 0,
+    val totalTables: Int = 0,
+    val occupancyRate: Double = 0.0
+)
+
+data class TopDishStat(
+    val dishId: String,
+    val name: String,
+    val totalQuantity: Int,
+    val dineInQuantity: Int = 0,
+    val deliveryQuantity: Int = 0
+)
+
+data class AnalyticsSummary(
+    val settledDineInRevenue: Long = 0L,
+    val eligibleDeliveryRevenue: Long = 0L,
+    val totalRevenue: Long = 0L,
+    val averageDineInBillValue: Long = 0L,
+    val averageDiningDurationMinutes: Long = 0L,
+    val tableTurnoverRate: Double = 0.0,
+    val totalDinersServed: Int = 0,
+    val tableOccupancy: TableOccupancyMetrics = TableOccupancyMetrics(),
+    val topDishes: List<TopDishStat> = emptyList()
+)
+
+object AnalyticsEngine {
+    val ELIGIBLE_DELIVERY_STATUSES = setOf("Confirmed", "Preparing", "Out for delivery", "Delivered")
+    val EXCLUDED_DELIVERY_STATUSES = setOf("Cancelled", "Failed")
+
+    /**
+     * Calculates total settled dine-in revenue in paise.
+     * Only tabs with status = 'SETTLED' contribute. Unsettled tabs are excluded.
+     */
+    fun calculateSettledDineInRevenue(tabs: List<DiningTab>): Long {
+        return tabs.filter { it.status == "SETTLED" }.sumOf { it.total }
+    }
+
+    /**
+     * Calculates total delivery revenue in paise for eligible orders.
+     * Only orders with status in ELIGIBLE_DELIVERY_STATUSES and not in EXCLUDED_DELIVERY_STATUSES contribute.
+     */
+    fun calculateEligibleDeliveryRevenue(orders: List<DeliveryOrder>): Long {
+        return orders
+            .filter { it.status in ELIGIBLE_DELIVERY_STATUSES && it.status !in EXCLUDED_DELIVERY_STATUSES }
+            .sumOf { it.quote.total }
+    }
+
+    /**
+     * Calculates average settled dine-in bill value in paise.
+     * Returns 0L if no settled tabs exist.
+     */
+    fun calculateAverageDineInBillValue(tabs: List<DiningTab>): Long {
+        val settledTabs = tabs.filter { it.status == "SETTLED" }
+        if (settledTabs.isEmpty()) return 0L
+        return settledTabs.sumOf { it.total } / settledTabs.size
+    }
+
+    /**
+     * Calculates average dining duration in minutes across settled tabs.
+     * Uses real timestamps: session start is derived from the earliest item orderedAt
+     * (or associated booking createdAt), and session end is derived from tab updatedAt.
+     * Persisted fields note: TABLE_DINING_TABS has no separate seated_at column; tabs without
+     * parseable timestamps are excluded rather than fabricating arbitrary durations.
+     */
+    fun calculateAverageDiningDurationMinutes(
+        tabs: List<DiningTab>,
+        bookingsById: Map<String, TableBooking> = emptyMap()
+    ): Long {
+        val settledTabs = tabs.filter { it.status == "SETTLED" }
+        var totalMinutes = 0L
+        var validCount = 0
+
+        for (tab in settledTabs) {
+            val endInstant = try {
+                Instant.parse(tab.updatedAt)
+            } catch (_: Exception) {
+                null
+            } ?: continue
+
+            val earliestItemInstant = tab.items.mapNotNull { item ->
+                try { Instant.parse(item.orderedAt) } catch (_: Exception) { null }
+            }.minOrNull()
+
+            val bookingInstant = tab.bookingId?.let { bookingsById[it] }?.let { b ->
+                try { Instant.parse(b.createdAt) } catch (_: Exception) { null }
+            }
+
+            val startInstant = earliestItemInstant ?: bookingInstant ?: continue
+
+            val durationMinutes = Duration.between(startInstant, endInstant).toMinutes()
+            if (durationMinutes >= 0) {
+                totalMinutes += durationMinutes
+                validCount++
+            }
+        }
+
+        return if (validCount > 0) totalMinutes / validCount else 0L
+    }
+
+    /**
+     * Calculates table turnover rate: settled tabs count divided by total floor inventory.
+     */
+    fun calculateTableTurnoverRate(
+        settledTabsCount: Int,
+        totalTablesCount: Int = RestaurantTableDefaults.DEFAULT_TABLES.size
+    ): Double {
+        if (totalTablesCount <= 0) return 0.0
+        return settledTabsCount.toDouble() / totalTablesCount.toDouble()
+    }
+
+    /**
+     * Calculates total diners served using guest counts where available.
+     * Prevents duplicate counting:
+     * - Settled tabs linked to table bookings count the booking partySize.
+     * - Settled walk-in tabs count 1 guest.
+     * - Completed bookings not linked to any settled tab count their partySize.
+     */
+    fun calculateTotalDinersServed(
+        tabs: List<DiningTab>,
+        bookings: List<TableBooking>
+    ): Int {
+        val bookingsById = bookings.associateBy { it.id }
+        val settledTabs = tabs.filter { it.status == "SETTLED" }
+        var count = 0
+        val accountedBookingIds = mutableSetOf<String>()
+
+        for (tab in settledTabs) {
+            val booking = tab.bookingId?.let { bookingsById[it] }
+            if (booking != null) {
+                accountedBookingIds.add(booking.id)
+                count += booking.partySize.coerceAtLeast(1)
+            } else {
+                count += 1
+            }
+        }
+
+        for (booking in bookings) {
+            if (booking.status == TableBookingStatus.COMPLETED && booking.id !in accountedBookingIds) {
+                count += booking.partySize.coerceAtLeast(1)
+            }
+        }
+
+        return count
+    }
+
+    /**
+     * Calculates table occupancy using the table inventory and occupancy check.
+     */
+    fun calculateTableOccupancy(
+        tables: List<RestaurantTable> = RestaurantTableDefaults.DEFAULT_TABLES,
+        isTableOccupied: (tableNumber: String) -> Boolean
+    ): TableOccupancyMetrics {
+        val total = tables.size
+        if (total == 0) return TableOccupancyMetrics(0, 0, 0.0)
+        val occupied = tables.count { isTableOccupied(it.tableNumber) }
+        val rate = occupied.toDouble() / total.toDouble()
+        return TableOccupancyMetrics(
+            occupiedTables = occupied,
+            totalTables = total,
+            occupancyRate = rate
+        )
+    }
+
+    /**
+     * Aggregates top dishes across settled dine-in tabs and eligible delivery orders.
+     * Genuinely aggregates dish-level quantities from both channels.
+     */
+    fun aggregateTopDishes(
+        settledTabs: List<DiningTab>,
+        eligibleOrders: List<DeliveryOrder>,
+        limit: Int = 5
+    ): List<TopDishStat> {
+        data class DishAccumulator(
+            var name: String,
+            var dineInQty: Int = 0,
+            var deliveryQty: Int = 0
+        )
+
+        val map = mutableMapOf<String, DishAccumulator>()
+
+        for (tab in settledTabs) {
+            if (tab.status != "SETTLED") continue
+            for (item in tab.items) {
+                val acc = map.getOrPut(item.dishId) { DishAccumulator(name = item.name) }
+                acc.dineInQty += item.quantity
+                if (acc.name.isBlank() && item.name.isNotBlank()) {
+                    acc.name = item.name
+                }
+            }
+        }
+
+        for (order in eligibleOrders) {
+            if (order.status !in ELIGIBLE_DELIVERY_STATUSES || order.status in EXCLUDED_DELIVERY_STATUSES) continue
+            for (line in order.quote.lines) {
+                val acc = map.getOrPut(line.dishId) { DishAccumulator(name = line.name) }
+                acc.deliveryQty += line.quantity
+                if (acc.name.isBlank() && line.name.isNotBlank()) {
+                    acc.name = line.name
+                }
+            }
+        }
+
+        return map.entries
+            .map { (dishId, acc) ->
+                TopDishStat(
+                    dishId = dishId,
+                    name = acc.name,
+                    totalQuantity = acc.dineInQty + acc.deliveryQty,
+                    dineInQuantity = acc.dineInQty,
+                    deliveryQuantity = acc.deliveryQty
+                )
+            }
+            .filter { it.totalQuantity > 0 }
+            .sortedWith(
+                compareByDescending<TopDishStat> { it.totalQuantity }
+                    .thenBy { it.name }
+            )
+            .take(limit)
+    }
+}

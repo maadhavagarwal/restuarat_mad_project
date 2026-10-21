@@ -389,6 +389,16 @@ class RestroFirebaseBackendEngine(private val context: Context) {
     // UTILS
     // -------------------------------------------------------------
 
+    fun getSettledDineInRevenue(): Long = sqlDb.getSettledDineInRevenue()
+    fun getEligibleDeliveryRevenue(): Long = sqlDb.getEligibleDeliveryRevenue()
+    fun getAverageDineInBillValue(): Long = sqlDb.getAverageDineInBillValue()
+    fun getAverageDiningDurationMinutes(): Long = sqlDb.getAverageDiningDurationMinutes()
+    fun getTableTurnoverRate(): Double = sqlDb.getTableTurnoverRate()
+    fun getTotalDinersServed(): Int = sqlDb.getTotalDinersServed()
+    fun getTableOccupancy(): TableOccupancyMetrics = sqlDb.getTableOccupancy()
+    fun getTopFiveDishes(limit: Int = 5): List<TopDishStat> = sqlDb.getTopFiveDishes(limit)
+    fun getAnalyticsSummary(): AnalyticsSummary = sqlDb.getAnalyticsSummary()
+
     fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadiusKm = 6371.0
         val dLat = Math.toRadians(lat2 - lat1)
