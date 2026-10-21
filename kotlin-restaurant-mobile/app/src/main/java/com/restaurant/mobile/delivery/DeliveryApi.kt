@@ -182,6 +182,7 @@ class DeliveryApi {
             }
             cleanPath == "/cart" -> Cart()
             cleanPath == "/favorites" -> emptyList<String>()
+            cleanPath == "/analytics" -> eng.getAnalyticsData()
             else -> null
         }
     }

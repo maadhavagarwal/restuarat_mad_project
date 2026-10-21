@@ -41,6 +41,8 @@ import com.restaurant.mobile.delivery.TableLifecycleState
 import com.restaurant.mobile.delivery.TipAndServiceChargeRules
 import com.restaurant.mobile.delivery.TipAndServiceChargeRules.TipOption
 import com.restaurant.mobile.model.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.delay
@@ -115,7 +117,8 @@ class MainActivity : ComponentActivity() {
                         lastStaffInteractionMs = System.currentTimeMillis()
                         Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                     },
-                    sqlDb = deliveryVm.sqlDb
+                    sqlDb = deliveryVm.sqlDb,
+                    backendEngine = deliveryVm.backend
                 )
             } else {
                 com.restaurant.mobile.delivery.DeliveryApp(
@@ -153,11 +156,15 @@ fun RestaurantMobileApp(
     onSwitchStaffPin: (() -> Unit)? = null,
     onUserInteraction: (() -> Unit)? = null,
     onShowToast: (String) -> Unit,
-    sqlDb: com.restaurant.mobile.delivery.RestroSqlDatabase? = null
+    sqlDb: com.restaurant.mobile.delivery.RestroSqlDatabase? = null,
+    backendEngine: com.restaurant.mobile.delivery.RestroFirebaseBackendEngine? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     val database = remember(sqlDb) { sqlDb ?: com.restaurant.mobile.delivery.RestroSqlDatabase(context) }
+    val backend = remember(backendEngine, database) {
+        backendEngine ?: com.restaurant.mobile.delivery.RestroFirebaseBackendEngine(context, database)
+    }
 
     val allowedScreens = remember(userRole) {
         when (userRole) {
@@ -207,7 +214,18 @@ fun RestaurantMobileApp(
             categories = ApiClient.getCategories()
             menuItems = ApiClient.getMenuItems()
             tables = ApiClient.getTables()
-            analytics = ApiClient.getAnalytics()
+            val remoteAnalytics = try {
+                ApiClient.getAnalytics()
+            } catch (_: Exception) {
+                null
+            }
+            analytics = withContext(Dispatchers.IO) {
+                try {
+                    backend.getAnalyticsData(fallback = remoteAnalytics)
+                } catch (_: Exception) {
+                    remoteAnalytics ?: AnalyticsData()
+                }
+            }
             val localKots = database.getAllKotTickets()
             val remoteKots = ApiClient.getKOTs()
             kots = if (localKots.isNotEmpty()) {

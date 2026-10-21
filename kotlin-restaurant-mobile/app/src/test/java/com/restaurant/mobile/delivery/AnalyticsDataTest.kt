@@ -1,6 +1,8 @@
 package com.restaurant.mobile.delivery
 
+import com.restaurant.mobile.model.AnalyticsData
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -472,5 +474,124 @@ class AnalyticsDataTest {
 
         val avgBill = AnalyticsEngine.calculateAverageDineInBillValue(listOf(largeTab1, largeTab2))
         assertEquals(2000000L, avgBill) // ₹20,000.00
+    }
+
+    // -------------------------------------------------------------
+    // 10. ANALYTICS SUMMARY TO UI MODEL MAPPING
+    // -------------------------------------------------------------
+
+    @Test
+    fun testFromSummaryConvertsPaiseToRupeesExactlyOnce() {
+        val summary = AnalyticsSummary(
+            settledDineInRevenue = 1500000L,   // $15,000.00
+            eligibleDeliveryRevenue = 2500000L, // $25,000.00
+            totalRevenue = 4000000L,            // $40,000.00
+            averageDineInBillValue = 750000L,   // $7,500.00
+            averageDiningDurationMinutes = 45L,
+            tableTurnoverRate = 1.5,
+            totalDinersServed = 28,
+            tableOccupancy = TableOccupancyMetrics(occupiedTables = 4, totalTables = 12, occupancyRate = 0.3333),
+            topDishes = listOf(
+                TopDishStat(dishId = "d1", name = "Paneer Tikka", totalQuantity = 10, dineInQuantity = 6, deliveryQuantity = 4)
+            )
+        )
+
+        val result = AnalyticsData.fromSummary(summary)
+
+        // Monetary fields converted from paise to rupees
+        assertEquals(15000.0, result.dineInRevenue, 0.001)
+        assertEquals(25000.0, result.deliveryRevenue, 0.001)
+        assertEquals(40000.0, result.totalRevenue, 0.001)
+        assertEquals(7500.0, result.averageDineInBill, 0.001)
+
+        // Non-monetary fields mapped directly
+        assertEquals(45L, result.avgDiningDurationMinutes)
+        assertEquals(1.5, result.tableTurnoverRate, 0.0001)
+        assertEquals(28, result.totalDinersServed)
+        assertEquals(0.3333, result.occupancyRate, 0.0001)
+        assertEquals(4, result.occupiedTables)
+        assertEquals(8, result.availableTables) // 12 - 4
+        assertEquals(1, result.topDishes.size)
+        assertEquals("Paneer Tikka", result.topDishes[0].name)
+
+        // Remote-only metrics default to 0 with no fallback
+        assertEquals(0, result.totalOrders)
+        assertEquals(0, result.activeKOTs)
+        assertEquals(0, result.totalCustomers)
+
+        // Summary attached
+        assertEquals(summary, result.summary)
+        assertEquals(false, result.isLoading)
+        assertNull(result.errorMessage)
+    }
+
+    @Test
+    fun testFromSummaryEmptyDefaultsReturnSafeZeros() {
+        val emptySummary = AnalyticsSummary()
+        val result = AnalyticsData.fromSummary(emptySummary)
+
+        assertEquals(0.0, result.totalRevenue, 0.001)
+        assertEquals(0.0, result.dineInRevenue, 0.001)
+        assertEquals(0.0, result.deliveryRevenue, 0.001)
+        assertEquals(0.0, result.averageDineInBill, 0.001)
+        assertEquals(0L, result.avgDiningDurationMinutes)
+        assertEquals(0.0, result.tableTurnoverRate, 0.0001)
+        assertEquals(0, result.totalDinersServed)
+        assertEquals(0.0, result.occupancyRate, 0.0001)
+        assertEquals(0, result.occupiedTables)
+        assertEquals(0, result.availableTables)
+        assertTrue(result.topDishes.isEmpty())
+    }
+
+    @Test
+    fun testFromSummaryPreservesRemoteOnlyFallbackMetrics() {
+        val summary = AnalyticsSummary(
+            settledDineInRevenue = 100000L, // 1000 rupees
+            eligibleDeliveryRevenue = 200000L,
+            totalRevenue = 300000L
+        )
+
+        val remoteFallback = AnalyticsData(
+            totalOrders = 42,
+            activeKOTs = 5,
+            totalCustomers = 150
+        )
+
+        val result = AnalyticsData.fromSummary(summary, fallback = remoteFallback)
+
+        // Local metrics from summary
+        assertEquals(1000.0, result.dineInRevenue, 0.001)
+        assertEquals(2000.0, result.deliveryRevenue, 0.001)
+        assertEquals(3000.0, result.totalRevenue, 0.001)
+
+        // Remote-only metrics preserved from fallback
+        assertEquals(42, result.totalOrders)
+        assertEquals(5, result.activeKOTs)
+        assertEquals(150, result.totalCustomers)
+    }
+
+    @Test
+    fun testFromSummaryNullFallbackDefaultsRemoteMetricsToZero() {
+        val summary = AnalyticsSummary(settledDineInRevenue = 50000L)
+        val result = AnalyticsData.fromSummary(summary, fallback = null)
+
+        assertEquals(0, result.totalOrders)
+        assertEquals(0, result.activeKOTs)
+        assertEquals(0, result.totalCustomers)
+    }
+
+    @Test
+    fun testCurrencyConversionRulesRoundTrip() {
+        // paiseToRupees
+        assertEquals(0.0, CurrencyConversionRules.paiseToRupees(0L), 0.0001)
+        assertEquals(150.0, CurrencyConversionRules.paiseToRupees(15000L), 0.0001)
+        assertEquals(0.01, CurrencyConversionRules.paiseToRupees(1L), 0.0001)
+        assertEquals(99999.99, CurrencyConversionRules.paiseToRupees(9999999L), 0.0001)
+
+        // rupeesToPaise
+        assertEquals(0L, CurrencyConversionRules.rupeesToPaise(0.0))
+        assertEquals(15000L, CurrencyConversionRules.rupeesToPaise(150.0))
+        assertEquals(1L, CurrencyConversionRules.rupeesToPaise(0.01))
+        assertEquals(9999999L, CurrencyConversionRules.rupeesToPaise(99999.99))
     }
 }

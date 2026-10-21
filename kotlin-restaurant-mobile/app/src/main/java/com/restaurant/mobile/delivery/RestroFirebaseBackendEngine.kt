@@ -15,9 +15,10 @@ import kotlinx.coroutines.isActive
  * 100% Pure Kotlin Serverless Firebase & SQL Engine.
  * Combines Firebase Auth + Firestore/Cloud SQL Protocol + Authoritative Security Defense Engine.
  */
-class RestroFirebaseBackendEngine(private val context: Context) {
-
-    val sqlDb = RestroSqlDatabase(context)
+class RestroFirebaseBackendEngine(
+    private val context: Context,
+    val sqlDb: RestroSqlDatabase = RestroSqlDatabase(context)
+) {
     private val processedIdempotencyKeys = ConcurrentHashMap<String, DeliveryOrder>()
 
     init {
@@ -398,6 +399,20 @@ class RestroFirebaseBackendEngine(private val context: Context) {
     fun getTableOccupancy(): TableOccupancyMetrics = sqlDb.getTableOccupancy()
     fun getTopFiveDishes(limit: Int = 5): List<TopDishStat> = sqlDb.getTopFiveDishes(limit)
     fun getAnalyticsSummary(): AnalyticsSummary = sqlDb.getAnalyticsSummary()
+
+    /**
+     * Returns the mapped analytics data (UI-layer model) from the persisted SQL analytics summary.
+     * Converts monetary values from paise to rupees exactly once.
+     *
+     * @param fallback Optional existing [com.restaurant.mobile.model.AnalyticsData] whose remote-only metrics
+     *   (totalOrders, activeKOTs, totalCustomers) are preserved.
+     */
+    fun getAnalyticsData(
+        fallback: com.restaurant.mobile.model.AnalyticsData? = null
+    ): com.restaurant.mobile.model.AnalyticsData {
+        val summary = getAnalyticsSummary()
+        return com.restaurant.mobile.model.AnalyticsData.fromSummary(summary, fallback)
+    }
 
     fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadiusKm = 6371.0
