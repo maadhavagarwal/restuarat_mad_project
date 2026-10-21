@@ -1,4 +1,4 @@
-package com.restaurant.mobile
+﻿package com.restaurant.mobile
 import android.content.Intent
 
 import android.os.Bundle
@@ -49,6 +49,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import com.restaurant.mobile.delivery.TopDishStat
 
 class MainActivity : ComponentActivity() {
 
@@ -1942,17 +1947,326 @@ fun StatusLegendChip(label: String, color: Color) {
     }
 }
 
-// 4. Analytics Screen Component
+// 4. Analytics Screen Component — Unified Dine-In & Delivery Dashboard
 @Composable
 fun AnalyticsScreenView(analytics: AnalyticsData) {
+    val scrollState = rememberScrollState()
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        StatCard("Total Sales Revenue", "₹${analytics.totalRevenue.toInt()}", Color(0xFF10B981))
-        StatCard("Total Completed Orders", "${analytics.totalOrders}", Color(0xFF6366F1))
-        StatCard("Active KOT Queue", "${analytics.activeKOTs}", Color(0xFFF59E0B))
-        StatCard("Table Occupancy", "${analytics.occupiedTables} Occupied / ${analytics.availableTables} Available", Color(0xFF0F172A))
+        // ── Section header ───────────────────────────────────────────────────
+        Text(
+            text = "Admin Analytics Dashboard",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color(0xFF0F172A)
+        )
+
+        // ── 1. Revenue Split Bar Chart ────────────────────────────────────────
+        AnalyticsRevenueSplitCard(analytics)
+
+        // ── 2. Key Metrics Grid (2-column) ───────────────────────────────────
+        AnalyticsKeyMetricsGrid(analytics)
+
+        // ── 3. Popular Dishes ─────────────────────────────────────────────────
+        AnalyticsPopularDishesCard(analytics.topDishes)
+
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+// ── Revenue Split Card with custom Compose bar chart ───────────────────────
+@Composable
+private fun AnalyticsRevenueSplitCard(analytics: AnalyticsData) {
+    val dineIn = analytics.dineInRevenue
+    val delivery = analytics.deliveryRevenue
+    val maxVal = maxOf(dineIn, delivery, 1.0)
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = "Revenue Split",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF374151)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Dine-In vs Delivery (in \u20B9)",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Bar chart drawn with Canvas
+            val dineInColor = Color(0xFF10B981)
+            val deliveryColor = Color(0xFF6366F1)
+            val barHeight = 36f
+            val labelGap = 12f
+
+            // Dine-In bar
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Dine-In",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF374151),
+                    modifier = Modifier.width(70.dp)
+                )
+                BoxWithConstraints(modifier = Modifier.weight(1f).height(36.dp)) {
+                    val availableWidthPx = constraints.maxWidth.toFloat()
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val barWidth = (dineIn / maxVal * availableWidthPx).toFloat()
+                            .coerceAtLeast(4f)
+                        drawRoundRect(
+                            color = dineInColor,
+                            topLeft = Offset(0f, (size.height - barHeight) / 2f),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = CornerRadius(8f, 8f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "\u20B9${dineIn.toLong()}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = dineInColor,
+                    modifier = Modifier.width(80.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Delivery bar
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Delivery",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF374151),
+                    modifier = Modifier.width(70.dp)
+                )
+                BoxWithConstraints(modifier = Modifier.weight(1f).height(36.dp)) {
+                    val availableWidthPx = constraints.maxWidth.toFloat()
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val barWidth = (delivery / maxVal * availableWidthPx).toFloat()
+                            .coerceAtLeast(4f)
+                        drawRoundRect(
+                            color = deliveryColor,
+                            topLeft = Offset(0f, (size.height - barHeight) / 2f),
+                            size = Size(barWidth, barHeight),
+                            cornerRadius = CornerRadius(8f, 8f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "\u20B9${delivery.toLong()}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = deliveryColor,
+                    modifier = Modifier.width(80.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = Color(0xFFE5E7EB))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Gross Revenue total
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Gross Revenue", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+                Text(
+                    text = "\u20B9${analytics.totalRevenue.toLong()}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF0F172A)
+                )
+            }
+        }
+    }
+}
+
+// ── Key Metrics 2-column grid ───────────────────────────────────────────────
+@Composable
+private fun AnalyticsKeyMetricsGrid(analytics: AnalyticsData) {
+    val occupancyPct = if (analytics.occupancyRate > 0.0)
+        "${(analytics.occupancyRate * 100).toInt()}%"
+    else if (analytics.occupiedTables + analytics.availableTables > 0)
+        "${(analytics.occupiedTables.toDouble() / (analytics.occupiedTables + analytics.availableTables) * 100).toInt()}%"
+    else "0%"
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Key Metrics",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF374151)
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            MetricCard(
+                label = "Gross Revenue",
+                value = "\u20B9${analytics.totalRevenue.toLong()}",
+                color = Color(0xFF10B981),
+                modifier = Modifier.weight(1f)
+            )
+            MetricCard(
+                label = "Avg Dine-In Check",
+                value = "\u20B9${analytics.averageDineInBill.toLong()}",
+                color = Color(0xFF6366F1),
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            MetricCard(
+                label = "Table Occupancy",
+                value = occupancyPct,
+                color = Color(0xFFF59E0B),
+                modifier = Modifier.weight(1f)
+            )
+            MetricCard(
+                label = "Diners Served",
+                value = "${analytics.totalDinersServed}",
+                color = Color(0xFF0EA5E9),
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MetricCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(text = label, fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(text = value, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = color)
+        }
+    }
+}
+
+// ── Popular Dishes Card ─────────────────────────────────────────────────────
+@Composable
+private fun AnalyticsPopularDishesCard(dishes: List<TopDishStat>) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = "Top 5 Popular Dishes",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF374151)
+            )
+            Text(
+                text = "Dine-in + Delivery combined",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (dishes.isEmpty()) {
+                Text(
+                    text = "No sales data yet",
+                    fontSize = 13.sp,
+                    color = Color.Gray,
+                    fontStyle = FontStyle.Italic
+                )
+            } else {
+                dishes.take(5).forEachIndexed { index, dish ->
+                    if (index > 0) {
+                        HorizontalDivider(
+                            color = Color(0xFFF3F4F6),
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Rank badge
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when (index) {
+                                        0 -> Color(0xFFFFD700)
+                                        1 -> Color(0xFFC0C0C0)
+                                        2 -> Color(0xFFCD7F32)
+                                        else -> Color(0xFFE5E7EB)
+                                    }
+                                )
+                        ) {
+                            Text(
+                                text = "${index + 1}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (index < 3) Color.White else Color(0xFF374151)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = dish.name.ifBlank { "Unknown dish" },
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF0F172A),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Dine-in: ${dish.dineInQuantity}  \u2022  Delivery: ${dish.deliveryQuantity}",
+                                fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${dish.totalQuantity} sold",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
