@@ -113,6 +113,7 @@ fun FoodScreen(vm: DeliveryViewModel) {
             enabled = dish.available && !vm.busy
         ) {
             vm.add(dish, selectedAddons.toList(), quantity)
+            vm.back()
         }
     }
 }
@@ -241,13 +242,13 @@ fun CartScreen(vm: DeliveryViewModel) {
         }
         val deliveryFee = 4000L // Rs 40.00
         val tax = (subtotal * 0.05).toLong()
-        val total = subtotal + deliveryFee + tax
+        val discount = if (vm.cart.coupon.isNotBlank()) 5000L.coerceAtMost(subtotal) else 0L
+        val total = (subtotal + deliveryFee + tax - discount).coerceAtLeast(0L)
 
         BillRow("Item Subtotal", subtotal)
         BillRow("Delivery Partner Fee", deliveryFee)
         BillRow("Taxes & Charges (5% GST)", tax)
         if (vm.cart.coupon.isNotBlank()) {
-            val discount = 5000L.coerceAtMost(subtotal)
             BillRow("Coupon Discount", -discount)
         }
         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
@@ -296,7 +297,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
                     ) {
                         Column {
                             Text("Default Delivery Location", fontWeight = FontWeight.Bold)
-                            Text("Flat 402, Green Glen Layout, Bellandur, Bengaluru", color = RestroTokens.muted, fontSize = 13.sp)
+                            Text("Flat 402, SV Road, Goregaon West, Mumbai", color = RestroTokens.muted, fontSize = 13.sp)
                         }
                         Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.green)
                     }
@@ -549,7 +550,15 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                             Text("Delivery Partner · KA-03-EM-8821", fontSize = 12.sp, color = RestroTokens.muted)
                             Text("Vaccinated & temperature verified", fontSize = 11.sp, color = RestroTokens.green)
                         }
-                        IconButton(onClick = {}) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        IconButton(onClick = {
+                            try {
+                                val dialIntent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                                    data = android.net.Uri.parse("tel:+919811234567")
+                                }
+                                context.startActivity(dialIntent)
+                            } catch (_: Exception) {}
+                        }) {
                             Icon(Icons.Default.Phone, "Call Rider", tint = RestroTokens.green)
                         }
                     }
@@ -678,7 +687,7 @@ fun AddressesScreen(vm: DeliveryViewModel) {
     if (vm.route == "Edit address") {
         var label by rememberSaveable { mutableStateOf("Home") }
         var line by rememberSaveable { mutableStateOf("") }
-        var city by rememberSaveable { mutableStateOf("Bengaluru") }
+        var city by rememberSaveable { mutableStateOf("Mumbai") }
         var postcode by rememberSaveable { mutableStateOf("560103") }
         var phone by rememberSaveable { mutableStateOf(vm.profile?.phone ?: "+91 98765 43210") }
 
@@ -829,6 +838,12 @@ fun ReviewsScreen(vm: DeliveryViewModel) {
 @Composable
 fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null) {
     val p = vm.profile
+    var showChangePasswordDialog by rememberSaveable { mutableStateOf(false) }
+    var oldPassword by rememberSaveable { mutableStateOf("") }
+    var newPassword by rememberSaveable { mutableStateOf("") }
+    var confirmPassword by rememberSaveable { mutableStateOf("") }
+    var passwordChangeMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isPasswordChangeSuccess by rememberSaveable { mutableStateOf(false) }
 
     Page {
         Heading("Your Profile", "Manage preferences, addresses and RBAC role")
@@ -955,6 +970,31 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
         Row(
             Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
+                .clickable {
+                    oldPassword = ""
+                    newPassword = ""
+                    confirmPassword = ""
+                    passwordChangeMessage = null
+                    showChangePasswordDialog = true
+                }
+                .background(RestroTokens.surface)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.LockReset, null, tint = RestroTokens.coral)
+                Column {
+                    Text("Change & Update Password", fontWeight = FontWeight.Medium)
+                    Text("Update your account security password", fontSize = 11.sp, color = RestroTokens.muted)
+                }
+            }
+            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
+        }
+
+        Row(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
                 .clickable { vm.route = "Favorites" }
                 .background(RestroTokens.surface)
                 .padding(16.dp),
@@ -1002,6 +1042,91 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             Icon(Icons.Default.Logout, null)
             Spacer(Modifier.width(8.dp))
             Text("Sign Out", fontWeight = FontWeight.Bold)
+        }
+
+        if (showChangePasswordDialog) {
+            AlertDialog(
+                onDismissRequest = { showChangePasswordDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.LockReset, null, tint = RestroTokens.coral)
+                        Text("Change Password", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = oldPassword,
+                            onValueChange = { oldPassword = it },
+                            label = { Text("Current Password") },
+                            placeholder = { Text("••••••••") },
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = newPassword,
+                            onValueChange = { newPassword = it },
+                            label = { Text("New Password (min 6 chars)") },
+                            placeholder = { Text("••••••••") },
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = confirmPassword,
+                            onValueChange = { confirmPassword = it },
+                            label = { Text("Confirm New Password") },
+                            placeholder = { Text("••••••••") },
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        passwordChangeMessage?.let { msg ->
+                            Text(
+                                msg,
+                                color = if (isPasswordChangeSuccess) RestroTokens.green else Color(0xFFEF4444),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (newPassword != confirmPassword) {
+                                passwordChangeMessage = "New passwords do not match"
+                                isPasswordChangeSuccess = false
+                                return@Button
+                            }
+                            vm.changePassword(oldPassword, newPassword) { ok, msg ->
+                                isPasswordChangeSuccess = ok
+                                passwordChangeMessage = msg
+                                if (ok) {
+                                    oldPassword = ""
+                                    newPassword = ""
+                                    confirmPassword = ""
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Update Password")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showChangePasswordDialog = false }) {
+                        Text("Cancel")
+                    }
+                },
+                containerColor = RestroTokens.surface,
+                shape = RoundedCornerShape(16.dp)
+            )
         }
     }
 }

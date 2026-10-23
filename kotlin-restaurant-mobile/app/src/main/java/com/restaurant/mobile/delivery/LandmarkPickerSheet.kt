@@ -16,6 +16,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import android.location.LocationManager
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import java.util.Locale
 
 data class DeliveryLandmarkPreset(
     val name: String,
@@ -35,36 +48,74 @@ fun LandmarkPickerSheet(
     vm: DeliveryViewModel,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val fetchHardwareLocation: () -> Unit = {
+        try {
+            vm.detectAndApplyLiveGps(force = true)
+            Toast.makeText(context, "GPS Synced: ${vm.currentLandmark}", Toast.LENGTH_SHORT).show()
+            onDismiss()
+        } catch (e: Exception) {
+            Toast.makeText(context, "GPS Error: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            fetchHardwareLocation()
+        } else {
+            Toast.makeText(context, "Location permission denied. Using preset.", Toast.LENGTH_SHORT).show()
+        }
+    }
     val presets = listOf(
         DeliveryLandmarkPreset(
-            name = "Indiranagar, Bengaluru",
-            description = "100ft Road · Central Hub",
-            latitude = 12.9784,
-            longitude = 77.6408
+            name = "Goregaon West, SV Road",
+            description = "Swami Vivekanand Road · Goregaon West, Mumbai",
+            latitude = 19.1663,
+            longitude = 72.8480
         ),
         DeliveryLandmarkPreset(
-            name = "Koramangala 5th Block",
-            description = "Jyoti Nivas College Road",
-            latitude = 12.9352,
-            longitude = 77.6245
+            name = "Bandra West, Hill Road",
+            description = "Linking Road · Bandra West, Mumbai",
+            latitude = 19.0596,
+            longitude = 72.8295
         ),
         DeliveryLandmarkPreset(
-            name = "Lavelle Road, Shanthala Nagar",
-            description = "Near UB City & Vittal Mallya",
-            latitude = 12.9698,
-            longitude = 77.5986
+            name = "Andheri West, Lokhandwala",
+            description = "Lokhandwala Complex · Andheri West, Mumbai",
+            latitude = 19.1412,
+            longitude = 72.8290
         ),
         DeliveryLandmarkPreset(
-            name = "Bellandur, Bengaluru",
-            description = "Green Glen Layout · Outer Ring Rd",
-            latitude = 12.9304,
-            longitude = 77.6784
+            name = "Juhu Beach, Tara Road",
+            description = "Near Juhu Beach · Juhu, Mumbai",
+            latitude = 19.0988,
+            longitude = 72.8267
         ),
         DeliveryLandmarkPreset(
-            name = "Whitefield, EPIP Zone",
-            description = "12 km away · Demonstrates Out-of-Range Guard",
-            latitude = 12.9863,
-            longitude = 77.7338,
+            name = "Powai, Hiranandani Gardens",
+            description = "Central Avenue · Powai, Mumbai",
+            latitude = 19.1176,
+            longitude = 72.9060
+        ),
+        DeliveryLandmarkPreset(
+            name = "Borivali West, Saibaba Mandir",
+            description = "Near Saibaba Mandir · Borivali West, Mumbai",
+            latitude = 19.2288,
+            longitude = 72.8541
+        ),
+        DeliveryLandmarkPreset(
+            name = "Colaba Causeway & Fort",
+            description = "South Mumbai · Gateway of India",
+            latitude = 18.9220,
+            longitude = 72.8346
+        ),
+        DeliveryLandmarkPreset(
+            name = "Pune Out-of-Range Demo",
+            description = "Demonstrates Out-of-Range Guard (>15km)",
+            latitude = 18.5204,
+            longitude = 73.8567,
             isDemoOutOfRange = true
         )
     )
@@ -97,6 +148,61 @@ fun LandmarkPickerSheet(
                 }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, "Dismiss")
+                }
+            }
+
+            // Hardware GPS Button
+            Surface(
+                onClick = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                        fetchHardwareLocation()
+                    } else {
+                        permissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                    }
+                },
+                color = RestroTokens.coral.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.5.dp, RestroTokens.coral),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(RestroTokens.coral),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.MyLocation,
+                            contentDescription = "Hardware GPS",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Use My Current Hardware GPS Location",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = RestroTokens.coral
+                        )
+                        Text(
+                            "Detect live coordinates via Android LocationManager",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForwardIos,
+                        contentDescription = null,
+                        tint = RestroTokens.coral,
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
             }
 

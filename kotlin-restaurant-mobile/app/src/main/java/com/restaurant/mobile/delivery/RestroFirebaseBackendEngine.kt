@@ -27,9 +27,72 @@ class RestroFirebaseBackendEngine(
         sqlDb.seedCatalogIfEmpty(MockCatalog.sample)
         sqlDb.seedDefaultStaffAccounts()
         sqlDb.seedDefaultStaffPins()
+        sqlDb.seedSampleDiningTabsIfEmpty()
     }
 
     fun verifyStaffPin(pin: String): UserRole? = sqlDb.verifyStaffPin(pin)
+
+    // -------------------------------------------------------------
+    // 0. SESSIONS — the engine, not the client, decides who the caller is.
+    // -------------------------------------------------------------
+
+    private fun issueSession(user: Profile, method: String): AuthResult {
+        val token = sqlDb.createSession(user.id, method, SessionStore.DEFAULT_SESSION_TTL_MS)
+        return AuthResult(token = token, profile = user)
+    }
+
+    /** Resolves the authenticated profile for a token using the persisted user record (never client-supplied role). */
+    fun authenticate(token: String?): Profile? {
+        val userId = sqlDb.resolveSessionUserId(token) ?: return null
+        return sqlDb.getUserById(userId)
+    }
+
+    fun logout(token: String?) = sqlDb.revokeSession(token)
+
+    // Staff PIN brute-force protection (per process).
+    private var failedPinAttempts = 0
+    private var pinLockedUntil = 0L
+
+    /**
+     * A PIN may only unlock a staff role that the *authenticated account already holds* (or a lower
+     * staff role). A customer account can never be promoted by guessing a PIN.
+     */
+    fun unlockStaffRoleWithPin(token: String?, pin: String): Result<UserRole> {
+        val now = System.currentTimeMillis()
+        if (now < pinLockedUntil) {
+            return Result.failure(ApiFailure(429, "Too many wrong PINs. Try again in ${(pinLockedUntil - now) / 1000 + 1}s."))
+        }
+        val account = authenticate(token)
+            ?: return Result.failure(ApiFailure(401, "Session expired. Please sign in again."))
+        if (account.role == UserRole.CUSTOMER) {
+            return Result.failure(ApiFailure(403, "Staff access requires a staff account. Customer accounts cannot unlock staff tools."))
+        }
+        val pinRole = sqlDb.verifyStaffPin(pin)
+        if (pinRole == null) {
+            failedPinAttempts++
+            if (failedPinAttempts >= 5) {
+                pinLockedUntil = now + 60_000L
+                failedPinAttempts = 0
+            }
+            sqlDb.recordAuditLog("STAFF_PIN_FAILED", account.email, account.role.name, account.id, "Incorrect staff PIN")
+            return Result.failure(ApiFailure(401, "Incorrect PIN"))
+        }
+        failedPinAttempts = 0
+        if (roleRank(pinRole) > roleRank(account.role)) {
+            sqlDb.recordAuditLog("STAFF_PIN_DENIED", account.email, account.role.name, account.id, "Attempted to unlock ${pinRole.name}")
+            return Result.failure(ApiFailure(403, "Your account (${account.role.name}) is not permitted to use ${pinRole.name} tools."))
+        }
+        sqlDb.recordAuditLog("STAFF_PIN_UNLOCK", account.email, account.role.name, account.id, "Unlocked ${pinRole.name} mode")
+        return Result.success(pinRole)
+    }
+
+    private fun roleRank(role: UserRole): Int = when (role) {
+        UserRole.CUSTOMER -> 0
+        UserRole.WAITER, UserRole.CHEF_KDS -> 1
+        UserRole.ADMIN -> 2
+        UserRole.MASTER_ADMIN -> 3
+        else -> 0
+    }
 
     private fun resolveRoleForTarget(target: String, requestedRole: String): UserRole {
         val lower = target.lowercase()
@@ -45,30 +108,90 @@ class RestroFirebaseBackendEngine(
     // 1. FIREBASE AUTHENTICATION & OTP
     // -------------------------------------------------------------
 
+    fun login(creds: Credentials): AuthResult {
+        val target = creds.email.trim()
+        val pass = creds.password.trim()
+        if (target.isBlank() || pass.isBlank()) {
+            throw ApiFailure(400, "Email/phone and password are required")
+        }
+        val user = sqlDb.getUserByTarget(target)
+            ?: throw ApiFailure(401, "No account found matching '$target'. Please register first.")
+
+        val isPasswordValid = sqlDb.verifyUserPassword(target, pass)
+        if (!isPasswordValid) {
+            throw ApiFailure(401, "Incorrect password. If you forgot your password, tap 'Forgot Password' to receive a temporary recovery key.")
+        }
+
+        val authToken = issueSession(user, "password").token
+        sqlDb.recordAuditLog("USER_LOGIN", user.email, user.role.name, user.id, "Successful login via credentials")
+        return AuthResult(token = authToken, profile = user)
+    }
+
+    fun register(creds: Credentials): AuthResult {
+        val target = creds.email.trim()
+        val pass = creds.password.trim()
+        if (target.isBlank() || pass.isBlank()) {
+            throw ApiFailure(400, "Email/phone and password are required")
+        }
+        if (pass.length < 6) {
+            throw ApiFailure(400, "Password must be at least 6 characters long")
+        }
+        val existing = sqlDb.getUserByTarget(target)
+        if (existing != null) {
+            throw ApiFailure(409, "An account with '$target' already exists. Please log in instead.")
+        }
+        val isEmail = target.contains("@")
+        val phoneToSave = if (creds.phone.isNotBlank()) {
+            if (creds.phone.startsWith("+91")) creds.phone.trim() else "+91 ${creds.phone.trim()}"
+        } else if (!isEmail) {
+            target
+        } else {
+            "+91 98765 43210"
+        }
+        val newUser = Profile(
+            id = "usr_" + UUID.randomUUID().toString().take(8),
+            name = creds.name.ifBlank { if (isEmail) target.substringBefore("@") else "Valued Diner" },
+            email = if (isEmail) target else "${target.takeLast(6)}@restaurant.firebase.io",
+            phone = phoneToSave,
+            role = UserRole.CUSTOMER // Strict RBAC: self-registration is always customer
+        )
+        sqlDb.saveUser(newUser)
+        sqlDb.saveUserPassword(newUser.email, pass)
+        sqlDb.saveUserPassword(newUser.phone, pass)
+        val authToken = issueSession(newUser, "password").token
+        sqlDb.recordAuditLog("USER_REGISTER", newUser.email, newUser.role.name, newUser.id, "Account registered")
+        return AuthResult(token = authToken, profile = newUser)
+    }
+
+    /**
+     * DEVELOPMENT-ONLY local OTP. No SMS or email is sent. Release builds refuse this path entirely;
+     * production phone sign-in must go through Firebase Phone Auth ([provisionFirebasePhoneUser]).
+     */
     fun sendOtp(request: OtpSendRequest): OtpSendResponse {
+        if (!com.restaurant.mobile.BuildConfig.DEBUG) {
+            throw ApiFailure(503, "Phone sign-in is unavailable: Firebase Phone Auth is not configured for this build.")
+        }
         val target = request.target.trim()
         if (target.isBlank()) {
             throw ApiFailure(400, "Phone number or email cannot be empty")
         }
 
-        // Generate 6-digit cryptographic random OTP
-        val code = (100000..999999).random().toString()
+        val code = String.format("%06d", java.security.SecureRandom().nextInt(1_000_000))
         // 5-minute expiry in SQL database
         sqlDb.storeOtp(target, code, 300_000L)
 
-        val isPhone = request.type == "phone" || !target.contains("@")
-        val channel = if (isPhone) "SMS" else "Email"
-        val message = "Firebase $channel verification code sent to $target"
-
         return OtpSendResponse(
             success = true,
-            message = message,
+            message = "DEV ONLY: no SMS/email was sent. Use the code shown on screen.",
             target = target,
-            previewOtp = code // Accessible in dev/offline mode
+            previewOtp = code
         )
     }
 
     fun verifyOtp(request: OtpVerifyRequest): AuthResult {
+        if (!com.restaurant.mobile.BuildConfig.DEBUG) {
+            throw ApiFailure(503, "Local OTP verification is disabled in release builds.")
+        }
         val target = request.target.trim()
         val code = request.code.trim()
 
@@ -76,30 +199,42 @@ class RestroFirebaseBackendEngine(
         if (!valid) {
             throw ApiFailure(401, errorMsg ?: "Invalid OTP verification code")
         }
+        val userProfile = findOrCreateCustomer(target, request.name, idPrefix = "dev_usr_")
+        sqlDb.recordAuditLog("USER_LOGIN", userProfile.email, userProfile.role.name, userProfile.id, "DEV local OTP login")
+        return issueSession(userProfile, "dev_local_otp")
+    }
 
-        val resolvedRole = resolveRoleForTarget(target, request.role)
+    /**
+     * Called only after FirebaseAuth.signInWithCredential succeeded on the device. The Firebase UID is
+     * the stable identity. NOTE: there is no server re-verifying the Firebase ID token yet — see report
+     * (BLOCKED until a trusted backend verifies ID tokens with the Firebase Admin SDK).
+     */
+    fun provisionFirebasePhoneUser(firebaseUid: String, phoneNumber: String, name: String): AuthResult {
+        require(firebaseUid.isNotBlank()) { "Firebase UID missing" }
+        val existing = sqlDb.getUserById("fb_$firebaseUid")
+        val user = existing ?: Profile(
+            id = "fb_$firebaseUid",
+            name = name.ifBlank { "Restro Diner" },
+            email = "",
+            phone = phoneNumber,
+            role = UserRole.CUSTOMER
+        ).also { sqlDb.saveUser(it) }
+        sqlDb.recordAuditLog("USER_LOGIN", user.phone, user.role.name, user.id, "Firebase phone auth login")
+        return issueSession(user, "firebase_phone")
+    }
 
-        // Retrieve existing profile or auto-provision new Firebase user profile
-        var userProfile = sqlDb.getUserByTarget(target)
-        if (userProfile == null) {
-            val isEmail = target.contains("@")
-            val generatedId = "fb_usr_" + UUID.randomUUID().toString().take(10)
-            userProfile = Profile(
-                id = generatedId,
-                name = request.name.ifBlank { if (isEmail) target.substringBefore("@") else "Foodie Diner" },
-                email = if (isEmail) target else "${target.takeLast(6)}@restaurant.firebase.io",
-                phone = if (!isEmail) target else "+91 98765 43210",
-                role = resolvedRole
-            )
-            sqlDb.saveUser(userProfile)
-        } else if (userProfile.role != resolvedRole && request.role.isNotBlank()) {
-            userProfile = userProfile.copy(role = resolvedRole)
-            sqlDb.saveUser(userProfile)
-        }
-
-        // Issue Firebase Auth token with role claim
-        val firebaseToken = "firebase_jwt_${userProfile.role.name}_" + UUID.randomUUID().toString()
-        return AuthResult(token = firebaseToken, profile = userProfile)
+    private fun findOrCreateCustomer(target: String, name: String, idPrefix: String): Profile {
+        sqlDb.getUserByTarget(target)?.let { return it }
+        val isEmail = target.contains("@")
+        val profile = Profile(
+            id = idPrefix + UUID.randomUUID().toString().take(10),
+            name = name.ifBlank { if (isEmail) target.substringBefore("@") else "Restro Diner" },
+            email = if (isEmail) target else "",
+            phone = if (!isEmail) target else "",
+            role = UserRole.CUSTOMER
+        )
+        sqlDb.saveUser(profile)
+        return profile
     }
 
     // -------------------------------------------------------------
@@ -269,21 +404,55 @@ class RestroFirebaseBackendEngine(
         sqlDb.saveOrder(order)
         processedIdempotencyKeys[checkout.idempotencyKey] = order
 
+        // Kitchen Display Ticket Generation
+        val kotItems = authoritativeQuote.lines.map { line ->
+            com.restaurant.mobile.model.KOTItem(
+                menuItemName = line.name,
+                quantity = line.quantity
+            )
+        }
+        val orderNumericId = (order.id.filter { it.isDigit() }.take(8).toLongOrNull() ?: 1001L)
+        sqlDb.createKotTicket(
+            tableNumber = "DELIVERY-${order.id}",
+            tableId = "DELIVERY-${order.id}",
+            items = kotItems,
+            round = 1,
+            roundName = "Delivery KDS Order",
+            customerName = order.address.label.ifBlank { "Delivery Customer" },
+            orderId = orderNumericId
+        )
+
+        // Idempotent Inventory Consumption
+        sqlDb.consumeInventoryForOrderIdempotent(order.id, authoritativeQuote.lines)
+
+        // Traceable Security & Order Audit Log
+        sqlDb.recordAuditLog(
+            action = "DELIVERY_ORDER_PLACED",
+            actorEmail = order.address.phone,
+            actorRole = "CUSTOMER",
+            targetId = order.id,
+            details = "Order for ${restaurant.name} placed. ₹${authoritativeQuote.total / 100} paid via ${checkout.paymentMethod}"
+        )
+
         return order
     }
 
     // -------------------------------------------------------------
-    // 5. 10-SECOND LIVE TRACKING COORDINATES STREAM
+    // 5. 10-SECOND LIVE TRACKING COORDINATES STREAM (MUMBAI)
     // -------------------------------------------------------------
 
     fun getTrackingStream(orderId: String, totalUpdates: Int = 12): Flow<TrackingResponse> = flow {
         val orders = sqlDb.getAllOrders()
         val order = orders.find { it.id == orderId } ?: orders.firstOrNull()
+        val rest = order?.restaurantId?.let { sqlDb.getRestaurantById(it) }
 
-        val restLat = 12.9716
-        val restLng = 77.5946
-        val destLat = order?.address?.latitude ?: 12.9650
-        val destLng = order?.address?.longitude ?: 77.6000
+        // Authoritative Mumbai Restaurant Coordinates (Goregaon West fallback)
+        val restLat = rest?.latitude ?: 19.1663
+        val restLng = rest?.longitude ?: 72.8480
+
+        // Authoritative Customer Mumbai Destination
+        val destLat = order?.address?.latitude ?: 19.1600
+        val destLng = order?.address?.longitude ?: 72.8550
 
         for (step in 0..totalUpdates) {
             val progress = step.toDouble() / totalUpdates.toDouble()
@@ -296,26 +465,29 @@ class RestroFirebaseBackendEngine(
             val etaMinutes = max(1, (roundedDist * 3.5).roundToInt())
             val isNearby = remainingDistanceKm < 0.5 // Under 500 meters
 
-            val statusText = when {
-                progress >= 1.0 -> "Delivered"
-                isNearby -> "Rider Arriving at Doorstep"
-                progress > 0.6 -> "On the Way (Out for Delivery)"
-                progress > 0.2 -> "Rider Picked up Order"
-                else -> "Preparing your food"
+            val (statusText, orderMappedStatus) = when {
+                progress >= 1.0 -> Pair("Delivered", "Delivered")
+                isNearby -> Pair("Ramesh is at your gate", "Out for delivery")
+                progress > 0.6 -> Pair("On the Way (Out for Delivery)", "Out for delivery")
+                progress > 0.2 -> Pair("Ramesh Picked up Order", "Out for delivery")
+                else -> Pair("Preparing your food", "Preparing")
             }
+
+            // Sync database state so orders and UI remain 100% coherent
+            order?.let { sqlDb.updateOrderStatus(it.id, orderMappedStatus) }
 
             emit(
                 TrackingResponse(
                     orderId = orderId,
-                    restaurantName = order?.restaurantName ?: "Restaurant",
+                    restaurantName = order?.restaurantName ?: rest?.name ?: "Spice Route Mumbai",
                     status = statusText,
                     etaMinutes = etaMinutes,
                     distanceRemainingKm = roundedDist,
                     isNearby = isNearby,
                     rider = RiderTracking(
-                        name = "Vikram Kumar",
+                        name = "Ramesh Kumar",
                         phone = "+91 98112 34567",
-                        vehicleNumber = "KA-01-EQ-9872",
+                        vehicleNumber = "MH-02-EM-8821",
                         currentLocation = LocationPoint(currentLat, currentLng)
                     )
                 )

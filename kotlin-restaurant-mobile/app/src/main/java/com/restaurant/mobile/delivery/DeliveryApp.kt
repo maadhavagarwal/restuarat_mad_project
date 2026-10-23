@@ -106,10 +106,12 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (vm.route != "Home")
+                            val isRootTab = vm.route in listOf("Home", "DineIn", "Orders", "Bookings", "Profile")
+                            if (!isRootTab) {
                                 IconButton(onClick = vm::back) {
                                     Icon(Icons.Default.ArrowBack, "Back")
                                 }
+                            }
                             Column(
                                 Modifier.weight(1f).clickable {
                                     showLandmarkPicker = true
@@ -227,6 +229,21 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                         "Reviews",
                                         "Review" -> ReviewsScreen(vm)
                                         "ForbiddenStaff" -> ForbiddenStaffScreen(vm, onOpenStaffPortal)
+                                        "DineIn" -> DineInScreen(
+                                            vm = vm,
+                                            onSelectRestaurantToBook = { selectedRest, partySize ->
+                                                vm.restaurantId = selectedRest.id
+                                                vm.resetTableBookingDraft(selectedRest.id, selectedRest.name)
+                                                vm.tableBookingDraft = vm.tableBookingDraft.copy(partySize = partySize)
+                                                vm.route = "BookTable"
+                                            },
+                                            onOpenMenu = { restId ->
+                                                vm.openRestaurant(restId)
+                                            },
+                                            onOpenLocationPicker = {
+                                                showLandmarkPicker = true
+                                            }
+                                        )
                                         "BookTable" -> BookTableScreen(
                                             vm = vm,
                                             onProceedToReview = { validatedDraft ->
@@ -248,7 +265,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                             onDone = {
                                                 vm.confirmedBooking = null
                                                 vm.resetTableBookingDraft()
-                                                vm.route = "Home"
+                                                vm.route = "DineIn"
                                             },
                                             onBookAnother = {
                                                 val currentRest = vm.catalog.restaurants.find { it.id == vm.restaurantId }
@@ -262,10 +279,11 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                                 vm.route = "MyBookings"
                                             }
                                         )
+                                        "Bookings",
                                         "MyBookings" -> MyTableBookingsScreen(
                                             vm = vm,
-                                            onBack = { vm.back() },
-                                            onBookNewTable = { vm.route = "Home" }
+                                            onBack = { vm.route = "Home" },
+                                            onBookNewTable = { vm.route = "DineIn" }
                                         )
                                         else -> ProfileScreen(vm, onOpenStaffPortal)
                                     }
@@ -403,19 +421,30 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                             ) {
                                 listOf(
-                                        "Home" to Icons.Default.Home,
-                                        "Map" to Icons.Default.Map,
-                                        "Favorites" to Icons.Default.FavoriteBorder,
-                                        "Orders" to Icons.Default.ReceiptLong,
-                                        "Profile" to Icons.Default.PersonOutline,
+                                        Triple("Home", "Delivery", Icons.Default.DeliveryDining),
+                                        Triple("DineIn", "Dine-In", Icons.Default.TableBar),
+                                        Triple("Orders", "Orders", Icons.Default.ReceiptLong),
+                                        Triple("Bookings", "Bookings", Icons.Default.EventSeat),
+                                        Triple("Profile", "Profile", Icons.Default.PersonOutline),
                                     )
-                                    .forEach { (name, icon) ->
+                                    .forEach { (route, label, icon) ->
+                                        val isSelected = when (route) {
+                                            "Home" -> vm.route in listOf("Home", "Search", "Favorites", "Restaurant", "Map", "Food")
+                                            "DineIn" -> vm.route in listOf("DineIn", "BookTable", "BookTableReview", "BookTableSuccess")
+                                            "Orders" -> vm.route in listOf("Orders", "Confirmation", "Tracking")
+                                            "Bookings" -> vm.route in listOf("Bookings", "MyBookings")
+                                            "Profile" -> vm.route in listOf("Profile", "Addresses", "Edit address", "Reviews", "Review")
+                                            else -> vm.route == route
+                                        }
                                         TextButton(
                                             onClick = {
-                                                vm.route = name
+                                                if (route == "Bookings") {
+                                                    vm.loadUserTableBookings()
+                                                }
+                                                vm.route = route
                                                 vm.error = null
                                             },
-                                            contentPadding = PaddingValues(6.dp),
+                                            contentPadding = PaddingValues(4.dp),
                                             modifier = Modifier.weight(1f),
                                         ) {
                                             Column(
@@ -423,17 +452,16 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                             ) {
                                                 Icon(
                                                     icon,
-                                                    name,
-                                                    tint =
-                                                        if (vm.route == name) RestroTokens.coral
-                                                        else RestroTokens.muted,
+                                                    label,
+                                                    tint = if (isSelected) RestroTokens.coral else RestroTokens.muted,
+                                                    modifier = Modifier.size(22.dp)
                                                 )
                                                 Text(
-                                                    name,
-                                                    fontSize = 11.sp,
-                                                    color =
-                                                        if (vm.route == name) RestroTokens.coral
-                                                        else RestroTokens.muted,
+                                                    label,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                    maxLines = 1,
+                                                    color = if (isSelected) RestroTokens.coral else RestroTokens.muted,
                                                 )
                                             }
                                         }

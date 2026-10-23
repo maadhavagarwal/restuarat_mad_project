@@ -45,8 +45,8 @@ fun AuthScreen(vm: DeliveryViewModel) {
     var register by rememberSaveable { mutableStateOf(false) }
     var email by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var selectedRoleName by rememberSaveable { mutableStateOf(UserRole.CUSTOMER.name) }
-    val selectedRole = UserRole.fromString(selectedRoleName)
+    var showForgotPasswordDialog by rememberSaveable { mutableStateOf(false) }
+    var forgotPasswordTarget by rememberSaveable { mutableStateOf("") }
 
     Page {
         vm.catalog.dishes.firstOrNull()?.let {
@@ -105,42 +105,6 @@ fun AuthScreen(vm: DeliveryViewModel) {
             else "Sign in to discover, save and order.",
         )
 
-        // Role-Based Access Control (RBAC) Selector
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                "Access Role (RBAC)",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = RestroTokens.muted
-            )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(UserRole.entries) { role ->
-                    FilterChip(
-                        selected = selectedRole == role,
-                        onClick = { selectedRoleName = role.name },
-                        label = {
-                            Text(
-                                role.label,
-                                fontSize = 12.sp,
-                                fontWeight = if (selectedRole == role) FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = when (role) {
-                                    UserRole.CUSTOMER -> Icons.Default.Person
-                                    UserRole.WAITER -> Icons.Default.PointOfSale
-                                    UserRole.CHEF_KDS -> Icons.Default.SoupKitchen
-                                    UserRole.ADMIN -> Icons.Default.AdminPanelSettings
-                                },
-                                contentDescription = role.label,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    )
-                }
-            }
-        }
 
         // Auth Mode Switcher Tab
         Row(
@@ -314,10 +278,10 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         )
 
                         Action(
-                            label = "Verify & Continue (${selectedRole.label})",
+                            label = "Verify & Sign In",
                             enabled = !vm.busy && otpCode.length == 6
                         ) {
-                            vm.verifyOtp(otpCode, name, selectedRole)
+                            vm.verifyOtp(otpCode, name)
                         }
 
                         Row(
@@ -343,18 +307,44 @@ fun AuthScreen(vm: DeliveryViewModel) {
             }
         } else {
             // Password Authentication Flow
-            if (register) Field("Your name", name, { name = it })
-            Field("Email", email, { email = it })
-            Field("Password · at least 10 characters", password, { password = it }, true)
-            Action(
-                if (register) "Create account (${selectedRole.label})" else "Sign in (${selectedRole.label})",
-                !vm.busy &&
-                    email.isNotBlank() &&
-                    password.length >= 10 &&
-                    (!register || name.trim().length >= 2),
-            ) {
-                vm.auth(email, password, name, register, selectedRole)
+            if (register) {
+                Field("Full Name", name, { name = it })
+                Field("Login Email or Mobile", email, { email = it })
+                Field("Password (min 6 chars)", password, { password = it }, true)
+                Action(
+                    label = "Create Account",
+                    enabled = !vm.busy && email.isNotBlank() && password.length >= 6 && name.trim().length >= 2
+                ) {
+                    vm.auth(email, password, name, register = true)
+                }
+            } else {
+                Field("Login ID (Email or Phone)", email, { email = it })
+                Field("Password", password, { password = it }, true)
+
+                // Forgot password button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = {
+                            forgotPasswordTarget = email
+                            showForgotPasswordDialog = true
+                        },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text("Forgot Password?", fontSize = 12.sp, color = RestroTokens.coral, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                Action(
+                    label = "Sign In",
+                    enabled = !vm.busy && email.isNotBlank() && password.length >= 4
+                ) {
+                    vm.auth(email, password, name, register = false)
+                }
             }
+
             TextButton(onClick = { register = !register }) {
                 Text(
                     if (register) "Already have an account? Sign in"
@@ -397,6 +387,74 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     )
                 }
             }
+        }
+
+        if (showForgotPasswordDialog) {
+            AlertDialog(
+                onDismissRequest = { showForgotPasswordDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.LockReset, null, tint = RestroTokens.coral)
+                        Text("Forgot Password", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "Enter your registered Email or 10-Digit Mobile number. We will message and email you a new temporary secure password.",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                        OutlinedTextField(
+                            value = forgotPasswordTarget,
+                            onValueChange = { forgotPasswordTarget = it.trim() },
+                            label = { Text("Email or Mobile Number") },
+                            placeholder = { Text("e.g. 9876543210 or user@example.com") },
+                            leadingIcon = { Icon(Icons.Default.AccountCircle, null, tint = RestroTokens.coral) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        vm.forgotPasswordSuccessMessage?.let { msg ->
+                            Surface(
+                                color = RestroTokens.green.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    msg,
+                                    color = RestroTokens.green,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (forgotPasswordTarget.isNotBlank()) {
+                                vm.requestPasswordReset(forgotPasswordTarget)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Send New Password")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showForgotPasswordDialog = false
+                        vm.forgotPasswordSuccessMessage = null
+                    }) {
+                        Text("Close")
+                    }
+                },
+                containerColor = RestroTokens.surface,
+                shape = RoundedCornerShape(16.dp)
+            )
         }
     }
 }

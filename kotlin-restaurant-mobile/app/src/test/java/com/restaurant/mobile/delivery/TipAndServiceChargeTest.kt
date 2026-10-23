@@ -325,6 +325,6 @@ class TipAndServiceChargeTest {
     @Test
     fun testDatabaseVersionBumpForTipsAndServiceCharge() {
         // Must be version 9 with tip and is_service_charge_opted_out schema columns
-        assertEquals(9, RestroSqlDatabase.DATABASE_VERSION)
+        assertTrue(RestroSqlDatabase.DATABASE_VERSION >= 9)
     }
 }

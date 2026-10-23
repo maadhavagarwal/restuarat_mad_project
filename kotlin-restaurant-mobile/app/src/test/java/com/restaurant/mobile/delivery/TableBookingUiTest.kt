@@ -289,8 +289,9 @@ class TableBookingUiTest {
         assertFalse(draft.isValid)
 
         // Step 1: User selects date
-        draft = draft.copy(bookingDate = "2026-10-21")
-        assertEquals("2026-10-21", draft.bookingDate)
+        val futureDate = java.time.LocalDate.now().plusDays(2).toString()
+        draft = draft.copy(bookingDate = futureDate)
+        assertEquals(futureDate, draft.bookingDate)
         assertFalse(draft.isValid) // Still needs timeSlot
 
         // Step 2: User selects time slot
@@ -346,10 +347,11 @@ class TableBookingUiTest {
     @Test
     fun testReviewNavigationAndRouteTransition() {
         var currentRoute = "BookTable"
+        val futureDate = java.time.LocalDate.now().plusDays(2).toString()
         val draft = TableBookingDraft(
             restaurantId = "rest-1",
             restaurantName = "Bistro Lumière & Biryani",
-            bookingDate = "2026-10-22",
+            bookingDate = futureDate,
             timeSlot = "7:00 PM",
             partySize = 4,
             seatingArea = "Main Dining Room",
@@ -374,7 +376,7 @@ class TableBookingUiTest {
         // Draft state must be completely preserved after navigating back
         assertEquals("rest-1", draft.restaurantId)
         assertEquals("Bistro Lumière & Biryani", draft.restaurantName)
-        assertEquals("2026-10-22", draft.bookingDate)
+        assertEquals(futureDate, draft.bookingDate)
         assertEquals("7:00 PM", draft.timeSlot)
         assertEquals(4, draft.partySize)
         assertEquals("Main Dining Room", draft.seatingArea)
@@ -384,8 +386,9 @@ class TableBookingUiTest {
     @Test
     fun testInvalidDraftBlocksNavigation() {
         var currentRoute = "BookTable"
+        val futureDate = java.time.LocalDate.now().plusDays(2).toString()
         val invalidDraft = TableBookingDraft(
-            bookingDate = "2026-10-22",
+            bookingDate = futureDate,
             timeSlot = "" // Missing slot
         )
 

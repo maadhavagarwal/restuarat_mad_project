@@ -36,6 +36,13 @@ data class Restaurant(
     val deliveryMinutes: Int,
     val deliveryFee: Long,
     val open: Boolean = true,
+    val rating: Double = 4.8,
+    val reviewCount: Int = 1240,
+    val costForTwo: Int = 850,
+    val vibes: List<String> = listOf("Fine Dining", "Romantic", "Family Friendly"),
+    val amenities: List<String> = listOf("AC Dining", "Valet Parking", "Full Bar"),
+    val tableBookingAvailable: Boolean = true,
+    val maxPartySize: Int = 12,
 )
 
 data class Offer(
@@ -56,16 +63,39 @@ enum class UserRole(val label: String) {
     CUSTOMER("Customer"),
     WAITER("Waiter / POS"),
     CHEF_KDS("Kitchen Chef"),
-    ADMIN("Admin");
+    ADMIN("Admin"),
+    MASTER_ADMIN("Master Admin");
 
     val isStaff: Boolean
         get() = this != CUSTOMER
+
+    val isAdmin: Boolean
+        get() = this == ADMIN || this == MASTER_ADMIN
+
+    val isMasterAdmin: Boolean
+        get() = this == MASTER_ADMIN
 
     companion object {
         fun fromString(value: String?): UserRole =
             entries.find { it.name.equals(value?.trim(), ignoreCase = true) } ?: CUSTOMER
     }
 }
+
+data class StaffPayrollRecord(
+    val id: String,
+    val staffId: String,
+    val staffName: String,
+    val staffRole: String, // "Waiter", "Chef", "Delivery", "Cashier", "Manager"
+    val monthYear: String, // "October 2026"
+    val baseSalary: Long, // in INR (e.g. 25000)
+    val bonusTips: Long = 0L,
+    val deductions: Long = 0L,
+    val netSalary: Long = baseSalary + bonusTips - deductions,
+    val status: String = "PENDING", // "PAID", "PENDING"
+    val paidAt: String? = null,
+    val paymentMethod: String = "UPI / Bank Transfer",
+    val transactionRef: String = ""
+)
 
 data class Profile(
     val id: String,
@@ -126,7 +156,45 @@ data class DeliveryOrder(
     val paymentStatus: String = "Due on delivery",
     val status: String = "Confirmed",
     val events: List<Event> = listOf(Event("Confirmed")),
+    /** Owner of the order (authenticated user id). Empty only for legacy rows created before v10.1. */
+    val userId: String = "",
+    val idempotencyKey: String? = null,
 )
+
+/** Payment status values. Only a provider-verified payment may ever be [PAID_VERIFIED]. */
+object PaymentStatus {
+    const val PENDING_COD = "Pending - pay on delivery"
+    const val TEST_SIMULATED = "TEST ONLY - simulated, no money collected"
+    const val PAID_VERIFIED = "Paid (provider verified)"
+    const val RECORDED_BY_STAFF = "Paid - recorded by staff"
+
+    fun isCashOnDelivery(method: String): Boolean {
+        val m = method.trim().lowercase()
+        return m.contains("cash") || m.contains("on delivery") || m.contains("cod")
+    }
+}
+
+/** Customer delivery order lifecycle. Transitions not listed here are rejected. */
+object DeliveryOrderStatus {
+    const val CONFIRMED = "Confirmed"
+    const val PREPARING = "Preparing"
+    const val OUT_FOR_DELIVERY = "Out for delivery"
+    const val DELIVERED = "Delivered"
+    const val CANCELLED = "Cancelled"
+
+    private val allowed = mapOf(
+        CONFIRMED to setOf(PREPARING, CANCELLED),
+        PREPARING to setOf(OUT_FOR_DELIVERY),
+        OUT_FOR_DELIVERY to setOf(DELIVERED),
+        DELIVERED to emptySet(),
+        CANCELLED to emptySet(),
+    )
+
+    fun canTransition(from: String, to: String): Boolean = from == to || (allowed[from]?.contains(to) == true)
+
+    /** A customer may cancel only before the kitchen starts preparing. */
+    fun customerCanCancel(status: String): Boolean = status == CONFIRMED
+}
 
 data class Review(
     val orderId: String,
@@ -142,6 +210,7 @@ data class Credentials(
     val password: String,
     val name: String = "",
     val role: String = "CUSTOMER",
+    val phone: String = "",
 )
 
 data class Checkout(
@@ -223,17 +292,64 @@ object RestaurantTableDefaults {
         RestaurantTable("T3", "T3", 4, "Main Dining Room"),
         RestaurantTable("T4", "T4", 4, "Main Dining Room"),
         RestaurantTable("T5", "T5", 6, "Main Dining Room"),
-        RestaurantTable("T6", "T6", 8, "Main Dining Room"),
+        RestaurantTable("T6", "T6", 10, "Main Dining Room"),
         RestaurantTable("T7", "T7", 2, "Outdoor Garden"),
         RestaurantTable("T8", "T8", 4, "Outdoor Garden"),
         RestaurantTable("T9", "T9", 4, "Private Booth"),
         RestaurantTable("T10", "T10", 6, "Private Booth"),
         RestaurantTable("T11", "T11", 2, "Rooftop Lounge"),
-        RestaurantTable("T12", "T12", 4, "Rooftop Lounge"),
+        RestaurantTable("T12", "T12", 12, "Rooftop Lounge"),
     )
 
     fun getTablesForRestaurant(restaurantId: String): List<RestaurantTable> {
-        return DEFAULT_TABLES.map { table ->
+        val baseTables = when (restaurantId) {
+            "rest-1" -> DEFAULT_TABLES
+            "rest-2" -> listOf(
+                RestaurantTable("T1", "T1", 2, "Main Dining Room"),
+                RestaurantTable("T2", "T2", 2, "Main Dining Room"),
+                RestaurantTable("T3", "T3", 4, "Main Dining Room"),
+                RestaurantTable("T4", "T4", 4, "Main Dining Room"),
+                RestaurantTable("T5", "T5", 12, "Main Dining Room"),
+                RestaurantTable("T6", "T6", 2, "Outdoor Garden"),
+                RestaurantTable("T7", "T7", 4, "Outdoor Garden"),
+                RestaurantTable("T8", "T8", 4, "Private Booth")
+            )
+            "rest-3" -> listOf(
+                RestaurantTable("T1", "T1", 2, "Main Dining Room"),
+                RestaurantTable("T2", "T2", 2, "Main Dining Room"),
+                RestaurantTable("T3", "T3", 4, "Main Dining Room"),
+                RestaurantTable("T4", "T4", 4, "Main Dining Room"),
+                RestaurantTable("T5", "T5", 4, "Main Dining Room"),
+                RestaurantTable("T6", "T6", 6, "Main Dining Room"),
+                RestaurantTable("T7", "T7", 6, "Main Dining Room"),
+                RestaurantTable("T8", "T8", 20, "Main Dining Room"),
+                RestaurantTable("T9", "T9", 2, "Outdoor Garden"),
+                RestaurantTable("T10", "T10", 4, "Outdoor Garden"),
+                RestaurantTable("T11", "T11", 4, "Outdoor Garden"),
+                RestaurantTable("T12", "T12", 4, "Private Booth"),
+                RestaurantTable("T13", "T13", 6, "Private Booth"),
+                RestaurantTable("T14", "T14", 8, "Rooftop Lounge")
+            )
+            "rest-4" -> listOf(
+                RestaurantTable("T1", "T1", 2, "Main Dining Room"),
+                RestaurantTable("T2", "T2", 2, "Main Dining Room"),
+                RestaurantTable("T3", "T3", 4, "Main Dining Room"),
+                RestaurantTable("T4", "T4", 10, "Main Dining Room"),
+                RestaurantTable("T5", "T5", 2, "Private Booth"),
+                RestaurantTable("T6", "T6", 4, "Private Booth")
+            )
+            "rest-5" -> listOf(
+                RestaurantTable("T1", "T1", 2, "Main Dining Room"),
+                RestaurantTable("T2", "T2", 4, "Main Dining Room"),
+                RestaurantTable("T3", "T3", 4, "Main Dining Room"),
+                RestaurantTable("T4", "T4", 2, "Outdoor Garden"),
+                RestaurantTable("T5", "T5", 4, "Outdoor Garden"),
+                RestaurantTable("T6", "T6", 4, "Rooftop Lounge"),
+                RestaurantTable("T7", "T7", 6, "Rooftop Lounge")
+            )
+            else -> DEFAULT_TABLES
+        }
+        return baseTables.map { table ->
             table.copy(
                 tableId = if (restaurantId.isNotBlank()) "${restaurantId}_${table.tableNumber}" else table.tableId,
                 restaurantId = restaurantId
@@ -825,9 +941,30 @@ data class BillSplitResult(
     }
 }
 
+data class BillShare(
+    val guestIndex: Int = 0,
+    val amountPaise: Long = 0L
+)
+
 object BillSplittingRules {
     const val MIN_PARTY_SIZE = 1
     const val MAX_PARTY_SIZE = 50
+
+    /**
+     * Splits a bill in paise equally with exact remainder reconciliation (no penny loss).
+     */
+    fun splitBillEqually(totalPaise: Long, numGuests: Int): List<BillShare> {
+        if (numGuests <= 0) return emptyList()
+        val clampedGuests = numGuests.coerceIn(MIN_PARTY_SIZE, MAX_PARTY_SIZE)
+        val safeTotal = if (totalPaise < 0L) 0L else totalPaise
+        val basePaise = safeTotal / clampedGuests
+        val remainder = (safeTotal % clampedGuests).toInt()
+
+        return List(clampedGuests) { index ->
+            val share = if (index < remainder) basePaise + 1L else basePaise
+            BillShare(guestIndex = index + 1, amountPaise = share)
+        }
+    }
 
     /**
      * Validates party size.
@@ -1697,5 +1834,55 @@ object AnalyticsEngine {
                     .thenBy { it.name }
             )
             .take(limit)
+    }
+}
+
+data class InventoryItem(
+    val id: String,
+    val name: String,
+    val category: String,
+    val unit: String,
+    val currentStock: Double,
+    val reorderLevel: Double,
+    val costPerUnitPaise: Long,
+    val updatedAt: String = Instant.now().toString()
+) {
+    val isLowStock: Boolean
+        get() = currentStock <= reorderLevel
+}
+
+data class StockMovement(
+    val id: String = "MOV-${UUID.randomUUID().toString().take(8).uppercase()}",
+    val itemId: String,
+    val itemName: String,
+    val delta: Double,
+    val reason: String, // "ORDER_CONSUMPTION", "RESTOCK", "WASTAGE", "ADJUSTMENT"
+    val referenceId: String = "",
+    val actor: String = "System",
+    val createdAt: String = Instant.now().toString()
+)
+
+data class AuditLogEntry(
+    val id: String = "AUD-${UUID.randomUUID().toString().take(8).uppercase()}",
+    val action: String,
+    val actorEmail: String,
+    val actorRole: String,
+    val targetId: String,
+    val details: String,
+    val createdAt: String = Instant.now().toString()
+)
+
+object KotLifecycleRules {
+    private val STATUS_RANK = mapOf(
+        "NEW" to 0,
+        "PREPARING" to 1,
+        "READY" to 2,
+        "SERVED" to 3
+    )
+
+    fun canTransition(currentStatus: String, nextStatus: String): Boolean {
+        val currentRank = STATUS_RANK[currentStatus.trim().uppercase()] ?: 0
+        val nextRank = STATUS_RANK[nextStatus.trim().uppercase()] ?: return false
+        return nextRank > currentRank
     }
 }

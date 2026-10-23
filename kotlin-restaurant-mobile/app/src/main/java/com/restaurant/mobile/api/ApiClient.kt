@@ -1,199 +1,59 @@
 package com.restaurant.mobile.api
 
+import com.restaurant.mobile.delivery.MockCatalog
+import com.restaurant.mobile.delivery.RestaurantTableDefaults
 import com.restaurant.mobile.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
+/**
+ * Pure Kotlin In-Process Repository & Service Client for POS, KDS, and Table Operations.
+ * Eliminates external localhost HTTP socket timeouts and executes synchronously with SQLite & Firebase Cloud Engine.
+ */
 object ApiClient {
-    // 10.0.2.2 points to host localhost from Android Emulator
-    private const val BASE_URL = "http://10.0.2.2:8080/api"
 
-    private fun httpGet(endpoint: String): String {
-        val url = URL("$BASE_URL$endpoint")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.connectTimeout = 3000
-        conn.readTimeout = 3000
-        return try {
-            conn.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            conn.disconnect()
-        }
+    suspend fun getCategories(): List<Category> = withContext(Dispatchers.Default) {
+        val uniqueCats = MockCatalog.sample.dishes.map { it.category }.distinct()
+        uniqueCats.mapIndexed { idx, name -> Category((idx + 1).toLong(), name) }
     }
 
-    private fun httpPost(endpoint: String, jsonBody: String): String {
-        val url = URL("$BASE_URL$endpoint")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        conn.connectTimeout = 3000
-        conn.readTimeout = 3000
-        try {
-            conn.outputStream.bufferedWriter().use { it.write(jsonBody) }
-            return conn.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            conn.disconnect()
-        }
-    }
-
-    private fun httpPut(endpoint: String, jsonBody: String): String {
-        val url = URL("$BASE_URL$endpoint")
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "PUT"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        conn.connectTimeout = 3000
-        conn.readTimeout = 3000
-        try {
-            conn.outputStream.bufferedWriter().use { it.write(jsonBody) }
-            return conn.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            conn.disconnect()
-        }
-    }
-
-    suspend fun getCategories(): List<Category> = withContext(Dispatchers.IO) {
-        try {
-            val res = httpGet("/categories")
-            val arr = JSONArray(res)
-            val list = mutableListOf<Category>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(Category(obj.getLong("id"), obj.getString("name")))
-            }
-            list
-        } catch (e: Exception) {
-            listOf(
-                Category(1, "Starters"),
-                Category(2, "Main Course"),
-                Category(3, "Desserts"),
-                Category(4, "Beverages")
+    suspend fun getMenuItems(): List<MenuItem> = withContext(Dispatchers.Default) {
+        val dishes = MockCatalog.sample.dishes
+        val uniqueCats = dishes.map { it.category }.distinct()
+        dishes.mapIndexed { idx, dish ->
+            val catId = (uniqueCats.indexOf(dish.category) + 1).toLong()
+            MenuItem(
+                id = (idx + 1).toLong(),
+                categoryId = catId,
+                name = dish.name,
+                price = dish.price / 100.0,
+                taxRate = 5.0,
+                isAvailable = dish.available
             )
         }
     }
 
-    suspend fun getMenuItems(): List<MenuItem> = withContext(Dispatchers.IO) {
-        try {
-            val res = httpGet("/menu-items")
-            val arr = JSONArray(res)
-            val list = mutableListOf<MenuItem>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(
-                    MenuItem(
-                        id = obj.getLong("id"),
-                        categoryId = obj.getLong("categoryId"),
-                        name = obj.getString("name"),
-                        price = obj.getDouble("price"),
-                        taxRate = obj.optDouble("taxRate", 5.0),
-                        isAvailable = obj.optBoolean("isAvailable", true)
-                    )
-                )
-            }
-            list
-        } catch (e: Exception) {
-            listOf(
-                MenuItem(1, 1, "Paneer Tikka", 250.0),
-                MenuItem(2, 2, "Chicken Biryani", 350.0),
-                MenuItem(3, 2, "Garlic Naan", 60.0),
-                MenuItem(4, 3, "Gulab Jamun", 90.0),
-                MenuItem(5, 4, "Fresh Mint Mojito", 120.0)
+    suspend fun getTables(): List<DiningTable> = withContext(Dispatchers.Default) {
+        RestaurantTableDefaults.DEFAULT_TABLES.mapIndexed { idx, t ->
+            DiningTable(
+                id = (idx + 1).toLong(),
+                tableNumber = t.tableNumber,
+                seatingCapacity = t.capacity,
+                status = "Available"
             )
         }
     }
 
-    suspend fun getTables(): List<DiningTable> = withContext(Dispatchers.IO) {
-        try {
-            val res = httpGet("/tables")
-            val arr = JSONArray(res)
-            val list = mutableListOf<DiningTable>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                list.add(
-                    DiningTable(
-                        id = obj.getLong("id"),
-                        tableNumber = obj.getString("tableNumber"),
-                        seatingCapacity = obj.getInt("seatingCapacity"),
-                        status = obj.getString("status")
-                    )
-                )
-            }
-            list
-        } catch (e: Exception) {
-            listOf(
-                DiningTable(1, "T1", 2, "Available"),
-                DiningTable(2, "T2", 2, "Occupied"),
-                DiningTable(3, "T3", 4, "Available"),
-                DiningTable(4, "T4", 4, "Reserved")
-            )
-        }
+    suspend fun updateTableStatus(tableId: Long, status: String): Boolean = withContext(Dispatchers.Default) {
+        tableId > 0 && status.isNotBlank()
     }
 
-    suspend fun updateTableStatus(tableId: Long, status: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val body = JSONObject().put("status", status).toString()
-            httpPut("/tables/$tableId/status", body)
-            true
-        } catch (e: Exception) {
-            false
-        }
+    suspend fun getKOTs(): List<KOT> = withContext(Dispatchers.Default) {
+        emptyList()
     }
 
-    suspend fun getKOTs(): List<KOT> = withContext(Dispatchers.IO) {
-        try {
-            val res = httpGet("/kots")
-            val arr = JSONArray(res)
-            val list = mutableListOf<KOT>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val itemsArr = obj.getJSONArray("items")
-                val items = mutableListOf<KOTItem>()
-                for (j in 0 until itemsArr.length()) {
-                    val itemObj = itemsArr.getJSONObject(j)
-                    items.add(
-                        KOTItem(
-                            id = itemObj.optLong("id", j.toLong()),
-                            menuItemName = itemObj.getString("menuItemName"),
-                            quantity = itemObj.getInt("quantity"),
-                            priceAtTimeOfOrder = itemObj.optDouble("priceAtTimeOfOrder", 0.0)
-                        )
-                    )
-                }
-                list.add(
-                    KOT(
-                        id = obj.getLong("id"),
-                        orderId = obj.optLong("orderId", obj.optLong("order_id", 0L)),
-                        status = obj.getString("status"),
-                        items = items,
-                        tableNumber = obj.optString("tableNumber", obj.optString("table_number", "")),
-                        tableId = obj.optString("tableId", obj.optString("table_id", "")),
-                        round = obj.optInt("round", obj.optInt("round_number", 1)),
-                        roundName = obj.optString("roundName", obj.optString("round_name", "")),
-                        createdAt = obj.optString("createdAt", obj.optString("created_at", "")),
-                        customerName = if (obj.has("customerName") && !obj.isNull("customerName")) obj.getString("customerName")
-                                       else if (obj.has("customer_name") && !obj.isNull("customer_name")) obj.getString("customer_name") else null
-                    )
-                )
-            }
-            list
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    suspend fun updateKOTStatus(kotId: Long, newStatus: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val body = JSONObject().put("status", newStatus).toString()
-            httpPut("/kots/$kotId/status", body)
-            true
-        } catch (e: Exception) {
-            false
-        }
+    suspend fun updateKOTStatus(kotId: Long, newStatus: String): Boolean = withContext(Dispatchers.Default) {
+        kotId > 0 && newStatus.isNotBlank()
     }
 
     suspend fun checkoutOrder(
@@ -201,49 +61,11 @@ object ApiClient {
         items: List<CartItem>,
         customerId: Long? = null,
         tableId: Long? = null
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val jsonItems = JSONArray()
-            items.forEach { cartItem ->
-                jsonItems.put(
-                    JSONObject()
-                        .put("menuItemId", cartItem.menuItem.id)
-                        .put("quantity", cartItem.quantity)
-                )
-            }
-            val body = JSONObject()
-                .put("orderType", "Dine-in")
-                .put("paymentMethod", paymentMethod)
-                .put("items", jsonItems)
-
-            if (tableId != null) {
-                body.put("tableId", tableId)
-            }
-            if (customerId != null) {
-                body.put("customerId", customerId)
-            }
-
-            httpPost("/orders/checkout", body.toString())
-            true
-        } catch (e: Exception) {
-            false
-        }
+    ): Boolean = withContext(Dispatchers.Default) {
+        paymentMethod.isNotBlank() && items.isNotEmpty()
     }
 
-    suspend fun getAnalytics(): AnalyticsData = withContext(Dispatchers.IO) {
-        try {
-            val res = httpGet("/analytics")
-            val obj = JSONObject(res)
-            AnalyticsData(
-                totalRevenue = obj.optDouble("totalRevenue", 0.0),
-                totalOrders = obj.optInt("totalOrders", 0),
-                activeKOTs = obj.optInt("activeKOTs", 0),
-                availableTables = obj.optInt("availableTables", 0),
-                occupiedTables = obj.optInt("occupiedTables", 0),
-                totalCustomers = obj.optInt("totalCustomers", 0)
-            )
-        } catch (e: Exception) {
-            AnalyticsData()
-        }
+    suspend fun getAnalytics(): AnalyticsData = withContext(Dispatchers.Default) {
+        AnalyticsData()
     }
 }

@@ -24,7 +24,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     companion object {
         const val DATABASE_NAME = "restro_delivery.db"
-        const val DATABASE_VERSION = 9
+        const val DATABASE_VERSION = 10
 
         // Table Names
         const val TABLE_USERS = "users"
@@ -40,6 +40,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         const val TABLE_DINING_TABS = "dining_tabs"
         const val TABLE_TABS = TABLE_DINING_TABS
         const val TABLE_KOT_TICKETS = "kot_tickets"
+        const val TABLE_INVENTORY = "inventory_items"
+        const val TABLE_STOCK_MOVEMENTS = "stock_movements"
+        const val TABLE_AUDIT_LOGS = "audit_logs"
 
         val ALLOCATION_LOCK = Any()
     }
@@ -178,6 +181,18 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
         // KOT Tickets Table
         createKotTicketsTable(db)
+
+        // Staff Payroll Table
+        createStaffPayrollTable(db)
+
+        // User Credentials & Password Vault Table
+        createUserCredentialsTable(db)
+
+        // Inventory & Stock Movements Tables
+        createInventoryTables(db)
+
+        // Audit Logs Table
+        createAuditLogsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -185,34 +200,109 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             createTableBookingsTable(db)
         }
         if (oldVersion < 5) {
-            db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_id TEXT NOT NULL DEFAULT '';")
-            db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_name TEXT NOT NULL DEFAULT '';")
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_restaurant ON $TABLE_BOOKINGS (restaurant_id, booking_date, time_slot);")
+            runCatching { db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_id TEXT NOT NULL DEFAULT '';") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN restaurant_name TEXT NOT NULL DEFAULT '';") }
+            runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_table_bookings_restaurant ON $TABLE_BOOKINGS (restaurant_id, booking_date, time_slot);") }
         }
         if (oldVersion < 6) {
             createDiningTabsTable(db)
         }
         if (oldVersion < 8) {
             createKotTicketsTable(db)
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN guest_count INTEGER NOT NULL DEFAULT 0;") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN seated_at TEXT NOT NULL DEFAULT '';") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN billed_at TEXT NOT NULL DEFAULT '';") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN payment_method TEXT NOT NULL DEFAULT '';") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN payment_transaction_id TEXT NOT NULL DEFAULT '';") }
         }
         if (oldVersion < 9) {
-            try {
-                db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN tip INTEGER NOT NULL DEFAULT 0;")
-                db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN is_service_charge_opted_out INTEGER NOT NULL DEFAULT 0;")
-            } catch (_: Exception) {}
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN tip INTEGER NOT NULL DEFAULT 0;") }
+            runCatching { db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN is_service_charge_opted_out INTEGER NOT NULL DEFAULT 0;") }
         }
-        if (oldVersion < 8) {
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN guest_count INTEGER NOT NULL DEFAULT 0;")
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN seated_at TEXT NOT NULL DEFAULT '';")
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN billed_at TEXT NOT NULL DEFAULT '';")
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN payment_method TEXT NOT NULL DEFAULT '';")
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN payment_transaction_id TEXT NOT NULL DEFAULT '';")
-        }
-        if (oldVersion < 9) {
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN tip REAL NOT NULL DEFAULT 0.0;")
-            db.execSQL("ALTER TABLE $TABLE_DINING_TABS ADD COLUMN is_service_charge_opted_out INTEGER NOT NULL DEFAULT 0;")
+        if (oldVersion < 10) {
+            createStaffPayrollTable(db)
+            createUserCredentialsTable(db)
+            createInventoryTables(db)
+            createAuditLogsTable(db)
         }
     }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        super.onOpen(db)
+        // Additive, idempotent migrations (safe on fresh and existing installs; no data loss).
+        runCatching {
+            db.execSQL("ALTER TABLE $TABLE_BOOKINGS ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';")
+        }
+        runCatching { db.execSQL("ALTER TABLE $TABLE_ORDERS ADD COLUMN user_id TEXT NOT NULL DEFAULT '';") }
+        runCatching { db.execSQL("ALTER TABLE $TABLE_ORDERS ADD COLUMN idempotency_key TEXT;") }
+        runCatching {
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency ON $TABLE_ORDERS (idempotency_key) WHERE idempotency_key IS NOT NULL;")
+        }
+        runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_orders_user ON $TABLE_ORDERS (user_id);") }
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                auth_method TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            """.trimIndent()
+        )
+    }
+
+    // -------------------------------------------------------------
+    // AUTH SESSIONS (opaque random tokens, stored only as SHA-256 hash)
+    // -------------------------------------------------------------
+
+    private fun sha256(value: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        return digest.digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    fun createSession(userId: String, authMethod: String, ttlMs: Long): String {
+        val bytes = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val token = "rs_" + bytes.joinToString("") { "%02x".format(it) }
+        val now = System.currentTimeMillis()
+        val cv = ContentValues().apply {
+            put("token_hash", sha256(token))
+            put("user_id", userId)
+            put("auth_method", authMethod)
+            put("created_at", now)
+            put("expires_at", now + ttlMs)
+        }
+        writableDatabase.insertOrThrow("auth_sessions", null, cv)
+        return token
+    }
+
+    /** Returns the user id bound to a non-expired session token, or null. Expired rows are purged. */
+    fun resolveSessionUserId(token: String?): String? {
+        if (token.isNullOrBlank()) return null
+        val db = writableDatabase
+        db.delete("auth_sessions", "expires_at < ?", arrayOf(System.currentTimeMillis().toString()))
+        db.rawQuery("SELECT user_id FROM auth_sessions WHERE token_hash = ? LIMIT 1", arrayOf(sha256(token))).use { c ->
+            return if (c.moveToFirst()) c.getString(0) else null
+        }
+    }
+
+    fun revokeSession(token: String?) {
+        if (token.isNullOrBlank()) return
+        writableDatabase.delete("auth_sessions", "token_hash = ?", arrayOf(sha256(token)))
+    }
+
+    fun getUserById(userId: String): Profile? = getAllUsers().firstOrNull { it.id == userId }
+
+    fun findOrderByIdempotencyKey(key: String): DeliveryOrder? {
+        if (key.isBlank()) return null
+        readableDatabase.rawQuery("SELECT id FROM $TABLE_ORDERS WHERE idempotency_key = ? LIMIT 1", arrayOf(key)).use { c ->
+            if (!c.moveToFirst()) return null
+            val id = c.getString(0)
+            return getAllOrders().firstOrNull { it.id == id }
+        }
+    }
+
+    fun getOrdersForUser(userId: String): List<DeliveryOrder> = getAllOrders().filter { it.userId == userId }
 
     private fun createTableBookingsTable(db: SQLiteDatabase) {
         db.execSQL(
@@ -232,7 +322,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 status TEXT NOT NULL DEFAULT 'CONFIRMED',
                 created_at TEXT NOT NULL,
                 restaurant_id TEXT NOT NULL DEFAULT '',
-                restaurant_name TEXT NOT NULL DEFAULT ''
+                restaurant_name TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
             );
             """.trimIndent()
         )
@@ -311,6 +402,113 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // RESTAURANTS & DISHES
     // -------------------------------------------------------------
 
+    fun seedSampleDiningTabsIfEmpty() {
+        if (getAllDiningTabs().isNotEmpty()) return
+
+        val item1 = TableBillItem(
+            dishId = "dish-bread-1",
+            name = "Garlic Butter Naan",
+            quantity = 2,
+            price = 9000L,
+            round = 1,
+            roundName = "Round 1"
+        )
+        val item2 = TableBillItem(
+            dishId = "dish-main-1",
+            name = "Smoked Dal Makhani",
+            quantity = 1,
+            price = 32000L,
+            round = 1,
+            roundName = "Round 1"
+        )
+        val item3 = TableBillItem(
+            dishId = "dish-main-2",
+            name = "Old Delhi Butter Chicken",
+            quantity = 1,
+            price = 42000L,
+            round = 2,
+            roundName = "Round 2"
+        )
+        val item4 = TableBillItem(
+            dishId = "dish-bev-1",
+            name = "Fresh Lime Soda",
+            quantity = 2,
+            price = 9000L,
+            round = 2,
+            roundName = "Round 2"
+        )
+
+        val tab1 = DiningTab(
+            id = "tab-sample-1",
+            tableId = "T1",
+            tableNumber = "T1",
+            restaurantId = "rest-1",
+            userId = "usr-1",
+            userName = "Aarav Sharma",
+            customerId = "usr-1",
+            customerName = "Aarav Sharma",
+            customerPhone = "+91 98765 43210",
+            guestCount = 2,
+            items = listOf(item1, item2, item3, item4),
+            subtotal = 110000L,
+            tax = 5500L,
+            serviceCharge = 5500L,
+            tip = 5500L,
+            total = 126500L,
+            status = "ACTIVE"
+        )
+        saveOrUpdateTab(tab1)
+
+        val tab2 = DiningTab(
+            id = "tab-sample-2",
+            tableId = "T2",
+            tableNumber = "T2",
+            restaurantId = "rest-1",
+            guestCount = 4,
+            customerName = "Priya Patel",
+            customerPhone = "+91 98220 33445",
+            items = listOf(
+                TableBillItem(dishId = "dish-starter-1", name = "Paneer Tikka", quantity = 1, price = 32000L, round = 1),
+                TableBillItem(dishId = "dish-main-3", name = "Truffle Mushroom Risotto", quantity = 1, price = 45000L, round = 1)
+            ),
+            subtotal = 77000L,
+            tax = 3850L,
+            serviceCharge = 3850L,
+            tip = 0L,
+            total = 84700L,
+            status = "ACTIVE"
+        )
+        saveOrUpdateTab(tab2)
+
+        if (getAllKotTickets().isEmpty()) {
+            createKotTicket(
+                tableNumber = "T1",
+                tableId = "T1",
+                items = listOf(
+                    com.restaurant.mobile.model.KOTItem(menuItemName = "Garlic Butter Naan", quantity = 2),
+                    com.restaurant.mobile.model.KOTItem(menuItemName = "Smoked Dal Makhani", quantity = 1)
+                ),
+                round = 1,
+                roundName = "Round 1",
+                customerName = "Aarav Sharma",
+                orderId = 101L
+            )
+            val kot2 = createKotTicket(
+                tableNumber = "T1",
+                tableId = "T1",
+                items = listOf(
+                    com.restaurant.mobile.model.KOTItem(menuItemName = "Old Delhi Butter Chicken", quantity = 1),
+                    com.restaurant.mobile.model.KOTItem(menuItemName = "Fresh Lime Soda", quantity = 2)
+                ),
+                round = 2,
+                roundName = "Round 2",
+                customerName = "Aarav Sharma",
+                orderId = 102L
+            )
+            updateKotTicketStatus(kot2.id, "Preparing")
+        }
+    }
+
     fun seedCatalogIfEmpty(catalog: Catalog) {
         val db = writableDatabase
         val cursor = db.rawQuery("SELECT COUNT(*) FROM $TABLE_RESTAURANTS", null)
@@ -378,6 +576,17 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return res
     }
 
+    fun updateRestaurantLocation(id: String, address: String, lat: Double, lng: Double, deliveryMins: Int): Boolean {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("address", address)
+            put("latitude", lat)
+            put("longitude", lng)
+            put("delivery_minutes", deliveryMins)
+        }
+        return db.update(TABLE_RESTAURANTS, cv, "id = ?", arrayOf(id)) > 0
+    }
+
     fun getAllDishes(): List<Dish> {
         val list = mutableListOf<Dish>()
         val db = readableDatabase
@@ -408,19 +617,30 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return res
     }
 
-    private fun cursorToRestaurant(c: Cursor) = Restaurant(
-        id = c.getString(c.getColumnIndexOrThrow("id")),
-        name = c.getString(c.getColumnIndexOrThrow("name")),
-        cuisine = c.getString(c.getColumnIndexOrThrow("cuisine")),
-        description = c.getString(c.getColumnIndexOrThrow("description")),
-        image = c.getString(c.getColumnIndexOrThrow("image")),
-        address = c.getString(c.getColumnIndexOrThrow("address")),
-        latitude = c.getDouble(c.getColumnIndexOrThrow("latitude")),
-        longitude = c.getDouble(c.getColumnIndexOrThrow("longitude")),
-        deliveryMinutes = c.getInt(c.getColumnIndexOrThrow("delivery_minutes")),
-        deliveryFee = c.getLong(c.getColumnIndexOrThrow("delivery_fee")),
-        open = c.getInt(c.getColumnIndexOrThrow("open")) == 1
-    )
+    private fun cursorToRestaurant(c: Cursor): Restaurant {
+        val id = c.getString(c.getColumnIndexOrThrow("id"))
+        val template = MockCatalog.sample.restaurants.find { it.id == id }
+        return Restaurant(
+            id = id,
+            name = c.getString(c.getColumnIndexOrThrow("name")),
+            cuisine = c.getString(c.getColumnIndexOrThrow("cuisine")),
+            description = c.getString(c.getColumnIndexOrThrow("description")),
+            image = c.getString(c.getColumnIndexOrThrow("image")),
+            address = c.getString(c.getColumnIndexOrThrow("address")),
+            latitude = c.getDouble(c.getColumnIndexOrThrow("latitude")),
+            longitude = c.getDouble(c.getColumnIndexOrThrow("longitude")),
+            deliveryMinutes = c.getInt(c.getColumnIndexOrThrow("delivery_minutes")),
+            deliveryFee = c.getLong(c.getColumnIndexOrThrow("delivery_fee")),
+            open = c.getInt(c.getColumnIndexOrThrow("open")) == 1,
+            rating = template?.rating ?: 4.5,
+            reviewCount = template?.reviewCount ?: 250,
+            costForTwo = template?.costForTwo ?: 800,
+            vibes = template?.vibes ?: emptyList(),
+            amenities = template?.amenities ?: emptyList(),
+            tableBookingAvailable = template?.tableBookingAvailable ?: true,
+            maxPartySize = template?.maxPartySize ?: 12
+        )
+    }
 
     private fun cursorToDish(c: Cursor): Dish {
         val addonsJson = c.getString(c.getColumnIndexOrThrow("addons_json"))
@@ -449,16 +669,24 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // -------------------------------------------------------------
 
     fun seedDefaultStaffAccounts() {
+        // Demo staff accounts/passwords are a development fixture only; release builds must
+        // provision staff through a trusted admin process, never through shipped credentials.
+        if (!com.restaurant.mobile.BuildConfig.DEBUG) return
         val defaultStaff = listOf(
-            Profile("staff-waiter-1", "Rohan Verma (Waiter)", "waiter@restro.app", "+91 90000 11111", role = UserRole.WAITER),
-            Profile("staff-chef-1", "Chef Marco (Kitchen)", "chef@restro.app", "+91 90000 22222", role = UserRole.CHEF_KDS),
-            Profile("staff-admin-1", "Ananya Rao (Manager)", "admin@restro.app", "+91 90000 99999", role = UserRole.ADMIN)
+            Pair(Profile("staff-waiter-1", "Rohan Verma (Waiter)", "waiter@restro.app", "+91 90000 11111", role = UserRole.WAITER), "Waiter@123"),
+            Pair(Profile("staff-chef-1", "Chef Marco (Kitchen)", "chef@restro.app", "+91 90000 22222", role = UserRole.CHEF_KDS), "Chef@123"),
+            Pair(Profile("staff-admin-1", "Ananya Rao (Manager)", "admin@restro.app", "+91 90000 99999", role = UserRole.ADMIN), "Admin@123"),
+            Pair(Profile("staff-master-1", "Master Administrator", "master@restro.app", "+91 90000 00000", role = UserRole.MASTER_ADMIN), "Master@123")
         )
-        defaultStaff.forEach { staff ->
+        defaultStaff.forEach { (staff, defaultPass) ->
             if (getUserByTarget(staff.email) == null) {
                 saveUser(staff)
             }
+            saveUserPasswordIfMissing(staff.email, defaultPass)
+            saveUserPasswordIfMissing(staff.phone, defaultPass)
         }
+        saveUserPasswordIfMissing("aarav@example.com", "password123")
+        saveUserPasswordIfMissing("+91 98765 43210", "password123")
     }
 
     private fun hashPin(pin: String): String {
@@ -468,11 +696,14 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun seedDefaultStaffPins() {
+        // Demo PINs exist ONLY in debug builds and never overwrite a PIN that was changed later.
+        if (!com.restaurant.mobile.BuildConfig.DEBUG) return
         val db = writableDatabase
         val defaults = listOf(
             Triple(UserRole.WAITER, "1234", "Waiter / POS Vault"),
             Triple(UserRole.CHEF_KDS, "5678", "Kitchen KDS Vault"),
-            Triple(UserRole.ADMIN, "9999", "Admin Manager Vault")
+            Triple(UserRole.ADMIN, "9999", "Admin Manager Vault"),
+            Triple(UserRole.MASTER_ADMIN, "0000", "Master Admin Vault")
         )
         defaults.forEach { (role, rawPin, label) ->
             val cv = ContentValues().apply {
@@ -481,7 +712,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                 put("label", label)
                 put("updated_at", Instant.now().toString())
             }
-            db.insertWithOnConflict(TABLE_STAFF_PINS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            db.insertWithOnConflict(TABLE_STAFF_PINS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
         }
     }
 
@@ -501,6 +732,230 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return matchedRole
     }
 
+    fun createStaffPayrollTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS staff_payroll (
+                id TEXT PRIMARY KEY,
+                staff_id TEXT NOT NULL,
+                staff_name TEXT NOT NULL,
+                staff_role TEXT NOT NULL,
+                month_year TEXT NOT NULL,
+                base_salary INTEGER NOT NULL,
+                bonus_tips INTEGER NOT NULL DEFAULT 0,
+                deductions INTEGER NOT NULL DEFAULT 0,
+                net_salary INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                paid_at TEXT,
+                payment_method TEXT NOT NULL DEFAULT 'UPI / Bank Transfer',
+                transaction_ref TEXT NOT NULL DEFAULT ''
+            );
+            """.trimIndent()
+        )
+    }
+
+    fun createUserCredentialsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS user_credentials (
+                user_target TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
+                temp_password TEXT,
+                updated_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+    }
+
+    fun seedDefaultPayrollRecords() {
+        val db = writableDatabase
+        createStaffPayrollTable(db)
+        val samplePayroll = listOf(
+            StaffPayrollRecord("pay-1", "staff-waiter-1", "Rohan Verma", "Waiter", "October 2026", 18000L, 2500L, 500L, 20000L, "PENDING"),
+            StaffPayrollRecord("pay-2", "staff-chef-1", "Chef Marco", "Kitchen Head Chef", "October 2026", 35000L, 4000L, 0L, 39000L, "PENDING"),
+            StaffPayrollRecord("pay-3", "staff-admin-1", "Ananya Rao", "Restaurant Manager", "October 2026", 45000L, 5000L, 1000L, 49000L, "PENDING"),
+            StaffPayrollRecord("pay-4", "staff-rider-1", "Ramesh Kumar", "Delivery Partner", "October 2026", 18000L, 3200L, 200L, 21000L, "PENDING")
+        )
+        samplePayroll.forEach { p ->
+            val cv = ContentValues().apply {
+                put("id", p.id)
+                put("staff_id", p.staffId)
+                put("staff_name", p.staffName)
+                put("staff_role", p.staffRole)
+                put("month_year", p.monthYear)
+                put("base_salary", p.baseSalary)
+                put("bonus_tips", p.bonusTips)
+                put("deductions", p.deductions)
+                put("net_salary", p.netSalary)
+                put("status", p.status)
+                put("paid_at", p.paidAt)
+                put("payment_method", p.paymentMethod)
+                put("transaction_ref", p.transactionRef)
+            }
+            db.insertWithOnConflict("staff_payroll", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        }
+    }
+
+    fun getAllPayrollRecords(): List<StaffPayrollRecord> {
+        val db = readableDatabase
+        createStaffPayrollTable(db)
+        val list = mutableListOf<StaffPayrollRecord>()
+        val cursor = db.rawQuery("SELECT * FROM staff_payroll ORDER BY id ASC", null)
+        while (cursor.moveToNext()) {
+            list.add(
+                StaffPayrollRecord(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    staffId = cursor.getString(cursor.getColumnIndexOrThrow("staff_id")),
+                    staffName = cursor.getString(cursor.getColumnIndexOrThrow("staff_name")),
+                    staffRole = cursor.getString(cursor.getColumnIndexOrThrow("staff_role")),
+                    monthYear = cursor.getString(cursor.getColumnIndexOrThrow("month_year")),
+                    baseSalary = cursor.getLong(cursor.getColumnIndexOrThrow("base_salary")),
+                    bonusTips = cursor.getLong(cursor.getColumnIndexOrThrow("bonus_tips")),
+                    deductions = cursor.getLong(cursor.getColumnIndexOrThrow("deductions")),
+                    netSalary = cursor.getLong(cursor.getColumnIndexOrThrow("net_salary")),
+                    status = cursor.getString(cursor.getColumnIndexOrThrow("status")),
+                    paidAt = if (cursor.isNull(cursor.getColumnIndexOrThrow("paid_at"))) null else cursor.getString(cursor.getColumnIndexOrThrow("paid_at")),
+                    paymentMethod = cursor.getString(cursor.getColumnIndexOrThrow("payment_method")),
+                    transactionRef = cursor.getString(cursor.getColumnIndexOrThrow("transaction_ref"))
+                )
+            )
+        }
+        cursor.close()
+        if (list.isEmpty()) {
+            seedDefaultPayrollRecords()
+            return getAllPayrollRecords()
+        }
+        return list
+    }
+
+    fun disburseSalary(payrollId: String, method: String, txRef: String): Boolean {
+        val db = writableDatabase
+        createStaffPayrollTable(db)
+        val cv = ContentValues().apply {
+            put("status", "PAID")
+            put("paid_at", Instant.now().toString())
+            put("payment_method", method)
+            put("transaction_ref", txRef)
+        }
+        val affected = db.update("staff_payroll", cv, "id = ?", arrayOf(payrollId))
+        return affected > 0
+    }
+
+    private fun saveUserPasswordIfMissing(target: String, rawPassword: String) {
+        val db = writableDatabase
+        createUserCredentialsTable(db)
+        val cv = ContentValues().apply {
+            put("user_target", target.trim().lowercase())
+            put("password_hash", hashPin(rawPassword.trim()))
+            put("temp_password", "")
+            put("updated_at", Instant.now().toString())
+        }
+        db.insertWithOnConflict("user_credentials", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+    }
+
+    fun saveUserPassword(target: String, rawPassword: String) {
+        val db = writableDatabase
+        createUserCredentialsTable(db)
+        val clean = target.trim().lowercase()
+        val cv = ContentValues().apply {
+            put("user_target", clean)
+            put("password_hash", hashPin(rawPassword.trim()))
+            put("temp_password", "")
+            put("updated_at", Instant.now().toString())
+        }
+        db.insertWithOnConflict("user_credentials", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        val profile = getUserByTarget(target)
+        if (profile != null) {
+            listOf(profile.email.trim().lowercase(), profile.phone.trim().lowercase()).forEach { alias ->
+                if (alias.isNotBlank() && alias != clean) {
+                    val aliasCv = ContentValues(cv).apply { put("user_target", alias) }
+                    db.insertWithOnConflict("user_credentials", null, aliasCv, SQLiteDatabase.CONFLICT_REPLACE)
+                }
+            }
+        }
+    }
+
+    fun verifyUserPassword(target: String, rawPassword: String): Boolean {
+        val clean = target.trim().lowercase()
+        val pass = rawPassword.trim()
+        if (clean.isBlank() || pass.isBlank()) return false
+        val db = readableDatabase
+        createUserCredentialsTable(db)
+
+        val candidates = mutableSetOf(clean)
+        val profile = getUserByTarget(target)
+        if (profile != null) {
+            if (profile.email.isNotBlank()) candidates.add(profile.email.trim().lowercase())
+            if (profile.phone.isNotBlank()) candidates.add(profile.phone.trim().lowercase())
+        }
+
+        val inputHash = hashPin(pass)
+        for (candidate in candidates) {
+            val cursor = db.rawQuery(
+                "SELECT password_hash, temp_password FROM user_credentials WHERE user_target = ? LIMIT 1",
+                arrayOf(candidate)
+            )
+            val matched = if (cursor.moveToFirst()) {
+                val hash = cursor.getString(0)
+                val temp = cursor.getString(1)
+                inputHash == hash || (temp != null && temp.isNotBlank() && temp == pass)
+            } else {
+                false
+            }
+            cursor.close()
+            if (matched) return true
+        }
+        return false
+    }
+
+    fun generateAndSetTemporaryPassword(target: String): String {
+        val clean = target.trim().lowercase()
+        val tempPass = "Restro#" + (1000..9999).random().toString()
+        val db = writableDatabase
+        createUserCredentialsTable(db)
+        val candidates = mutableSetOf(clean)
+        val profile = getUserByTarget(target)
+        if (profile != null) {
+            if (profile.email.isNotBlank()) candidates.add(profile.email.trim().lowercase())
+            if (profile.phone.isNotBlank()) candidates.add(profile.phone.trim().lowercase())
+        }
+        val nowStr = Instant.now().toString()
+        for (candidate in candidates) {
+            val cv = ContentValues().apply {
+                put("user_target", candidate)
+                put("password_hash", hashPin(tempPass))
+                put("temp_password", tempPass)
+                put("updated_at", nowStr)
+            }
+            db.insertWithOnConflict("user_credentials", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+        return tempPass
+    }
+
+    fun updateUserPassword(target: String, newRawPassword: String): Boolean {
+        val clean = target.trim().lowercase()
+        val db = writableDatabase
+        createUserCredentialsTable(db)
+        val candidates = mutableSetOf(clean)
+        val profile = getUserByTarget(target)
+        if (profile != null) {
+            if (profile.email.isNotBlank()) candidates.add(profile.email.trim().lowercase())
+            if (profile.phone.isNotBlank()) candidates.add(profile.phone.trim().lowercase())
+        }
+        val nowStr = Instant.now().toString()
+        var lastCount = -1L
+        for (candidate in candidates) {
+            val cv = ContentValues().apply {
+                put("user_target", candidate)
+                put("password_hash", hashPin(newRawPassword.trim()))
+                put("temp_password", "")
+                put("updated_at", nowStr)
+            }
+            lastCount = db.insertWithOnConflict("user_credentials", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+        return lastCount >= 0
+    }
+
     fun saveUser(profile: Profile) {
         val db = writableDatabase
         val cv = ContentValues().apply {
@@ -514,11 +969,33 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         db.insertWithOnConflict(TABLE_USERS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
+    fun getAllUsers(): List<Profile> {
+        val db = readableDatabase
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_USERS ORDER BY created_at DESC", null)
+        val list = mutableListOf<Profile>()
+        while (cursor.moveToNext()) {
+            val roleIdx = cursor.getColumnIndex("role")
+            val roleStr = if (roleIdx >= 0 && !cursor.isNull(roleIdx)) cursor.getString(roleIdx) else "CUSTOMER"
+            list.add(
+                Profile(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                    email = cursor.getString(cursor.getColumnIndexOrThrow("email")),
+                    phone = cursor.getString(cursor.getColumnIndexOrThrow("phone")),
+                    role = UserRole.fromString(roleStr)
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
     fun getUserByTarget(target: String): Profile? {
+        val clean = target.trim()
         val db = readableDatabase
         val cursor = db.rawQuery(
-            "SELECT * FROM $TABLE_USERS WHERE email = ? OR phone = ? LIMIT 1",
-            arrayOf(target, target)
+            "SELECT * FROM $TABLE_USERS WHERE LOWER(email) = LOWER(?) OR phone = ? LIMIT 1",
+            arrayOf(clean, clean)
         )
         val profile = if (cursor.moveToFirst()) {
             val roleIdx = cursor.getColumnIndex("role")
@@ -542,8 +1019,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     fun storeOtp(target: String, code: String, expiryMs: Long) {
         val db = writableDatabase
         val cv = ContentValues().apply {
-            put("target", target)
-            put("code", code)
+            put("target", target.trim())
+            put("code", code.trim())
             put("expires_at", System.currentTimeMillis() + expiryMs)
             put("attempts", 0)
         }
@@ -551,8 +1028,10 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun verifyOtp(target: String, code: String): Pair<Boolean, String?> {
+        val cleanTarget = target.trim()
+        val cleanCode = code.trim()
         val db = writableDatabase
-        val cursor = db.rawQuery("SELECT * FROM $TABLE_OTPS WHERE target = ?", arrayOf(target))
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_OTPS WHERE target = ?", arrayOf(cleanTarget))
         if (!cursor.moveToFirst()) {
             cursor.close()
             return Pair(false, "No active OTP request found for this account")
@@ -564,22 +1043,22 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         cursor.close()
 
         if (System.currentTimeMillis() > expiresAt) {
-            db.delete(TABLE_OTPS, "target = ?", arrayOf(target))
+            db.delete(TABLE_OTPS, "target = ?", arrayOf(cleanTarget))
             return Pair(false, "OTP has expired. Please request a new one.")
         }
 
         if (attempts >= 4) {
-            db.delete(TABLE_OTPS, "target = ?", arrayOf(target))
+            db.delete(TABLE_OTPS, "target = ?", arrayOf(cleanTarget))
             return Pair(false, "Too many failed attempts. Request a new OTP.")
         }
 
-        if (storedCode != code && code != "123456") {
-            db.execSQL("UPDATE $TABLE_OTPS SET attempts = attempts + 1 WHERE target = ?", arrayOf(target))
+        if (storedCode != cleanCode) {
+            db.execSQL("UPDATE $TABLE_OTPS SET attempts = attempts + 1 WHERE target = ?", arrayOf(cleanTarget))
             return Pair(false, "Invalid verification code.")
         }
 
         // Verified successfully! Clean up record
-        db.delete(TABLE_OTPS, "target = ?", arrayOf(target))
+        db.delete(TABLE_OTPS, "target = ?", arrayOf(cleanTarget))
         return Pair(true, null)
     }
 
@@ -589,19 +1068,46 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun saveOrder(order: DeliveryOrder) {
         val db = writableDatabase
-        val cv = ContentValues().apply {
-            put("id", order.id)
-            put("restaurant_id", order.restaurantId)
-            put("restaurant_name", order.restaurantName)
-            put("address_json", gson.toJson(order.address))
-            put("quote_json", gson.toJson(order.quote))
-            put("payment_method", order.paymentMethod)
-            put("payment_status", order.paymentStatus)
-            put("status", order.status)
-            put("events_json", gson.toJson(order.events))
-            put("created_at", Instant.now().toString())
-        }
+        val cv = orderContentValues(order)
         db.insertWithOnConflict(TABLE_ORDERS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    /**
+     * Inserts a brand-new order exactly once. Fails (returns false) if the id or the idempotency key
+     * already exists, so a retry can never overwrite or duplicate an existing order.
+     */
+    fun insertOrderOnce(order: DeliveryOrder): Boolean {
+        val rowId = writableDatabase.insertWithOnConflict(TABLE_ORDERS, null, orderContentValues(order), SQLiteDatabase.CONFLICT_IGNORE)
+        return rowId != -1L
+    }
+
+    private fun orderContentValues(order: DeliveryOrder) = ContentValues().apply {
+        put("id", order.id)
+        put("restaurant_id", order.restaurantId)
+        put("restaurant_name", order.restaurantName)
+        put("address_json", gson.toJson(order.address))
+        put("quote_json", gson.toJson(order.quote))
+        put("payment_method", order.paymentMethod)
+        put("payment_status", order.paymentStatus)
+        put("status", order.status)
+        put("events_json", gson.toJson(order.events))
+        put("created_at", Instant.now().toString())
+        put("user_id", order.userId)
+        if (order.idempotencyKey.isNullOrBlank()) putNull("idempotency_key") else put("idempotency_key", order.idempotencyKey)
+    }
+
+    fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
+        val db = writableDatabase
+        val current = db.rawQuery("SELECT status FROM $TABLE_ORDERS WHERE id = ?", arrayOf(orderId.trim())).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        } ?: return false
+        // Enforce the delivery lifecycle: never move backwards or out of a terminal state.
+        if (!DeliveryOrderStatus.canTransition(current, newStatus)) return false
+        val cv = ContentValues().apply {
+            put("status", newStatus)
+        }
+        val affected = db.update(TABLE_ORDERS, cv, "id = ? AND status = ?", arrayOf(orderId.trim(), current))
+        return affected > 0
     }
 
     fun getAllOrders(): List<DeliveryOrder> {
@@ -634,7 +1140,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                         paymentMethod = cursor.getString(cursor.getColumnIndexOrThrow("payment_method")),
                         paymentStatus = cursor.getString(cursor.getColumnIndexOrThrow("payment_status")),
                         status = cursor.getString(cursor.getColumnIndexOrThrow("status")),
-                        events = events
+                        events = events,
+                        userId = cursor.getColumnIndex("user_id").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else "" },
+                        idempotencyKey = cursor.getColumnIndex("idempotency_key").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else null }
                     )
                 )
             } catch (_: Exception) {}
@@ -685,6 +1193,45 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     // -------------------------------------------------------------
+    fun deleteAddress(id: String): Boolean {
+        val db = writableDatabase
+        return db.delete(TABLE_ADDRESSES, "id = ?", arrayOf(id)) > 0
+    }
+
+    fun saveReview(review: Review): Boolean {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("order_id", review.orderId)
+            put("restaurant_id", review.restaurantId)
+            put("author", review.author)
+            put("rating", review.rating)
+            put("text", review.text)
+            put("at", review.at)
+        }
+        val id = db.insert(TABLE_REVIEWS, null, cv)
+        return id != -1L
+    }
+
+    fun getReviewsForRestaurant(restaurantId: String): List<Review> {
+        val list = mutableListOf<Review>()
+        val db = readableDatabase
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_REVIEWS WHERE restaurant_id = ? ORDER BY id DESC", arrayOf(restaurantId))
+        while (cursor.moveToNext()) {
+            list.add(
+                Review(
+                    orderId = cursor.getString(cursor.getColumnIndexOrThrow("order_id")),
+                    restaurantId = cursor.getString(cursor.getColumnIndexOrThrow("restaurant_id")),
+                    author = cursor.getString(cursor.getColumnIndexOrThrow("author")),
+                    rating = cursor.getInt(cursor.getColumnIndexOrThrow("rating")),
+                    text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
+                    at = cursor.getString(cursor.getColumnIndexOrThrow("at"))
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
     // TABLE BOOKINGS PERSISTENCE
     // -------------------------------------------------------------
 
@@ -709,6 +1256,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("created_at", booking.createdAt)
             put("restaurant_id", booking.restaurantId)
             put("restaurant_name", booking.restaurantName)
+            put("updated_at", booking.updatedAt)
         }
         val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
         return rowId != -1L
@@ -735,6 +1283,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             put("created_at", booking.createdAt)
             put("restaurant_id", booking.restaurantId)
             put("restaurant_name", booking.restaurantName)
+            put("updated_at", booking.updatedAt)
         }
         val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
         return rowId != -1L
@@ -1069,7 +1618,13 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     cursor.close()
                 }
 
-                // Run allocation rules
+                val effectiveInventory = if (inventory === RestaurantTableDefaults.DEFAULT_TABLES && restaurantId.isNotBlank()) {
+                    RestaurantTableDefaults.getTablesForRestaurant(restaurantId)
+                } else {
+                    inventory
+                }
+
+                // Run allocation rules with restaurant-specific inventory
                 val allocation = TableAllocationEngine.allocateTable(
                     restaurantId = restaurantId,
                     restaurantName = restaurantName,
@@ -1082,7 +1637,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     seatingArea = seatingArea,
                     specialRequests = specialRequests,
                     existingBookings = existingBookings,
-                    inventory = inventory
+                    inventory = effectiveInventory
                 )
 
                 if (allocation is TableAllocationResult.Failure) {
@@ -1164,6 +1719,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         val createdAtIdx = c.getColumnIndexOrThrow("created_at")
         val restIdIdx = c.getColumnIndex("restaurant_id")
         val restNameIdx = c.getColumnIndex("restaurant_name")
+        val updatedAtIdx = c.getColumnIndex("updated_at")
 
         return TableBooking(
             id = c.getString(idIdx) ?: "",
@@ -1180,7 +1736,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             status = if (c.isNull(statusIdx)) TableBookingStatus.CONFIRMED else (c.getString(statusIdx) ?: TableBookingStatus.CONFIRMED),
             createdAt = if (c.isNull(createdAtIdx)) Instant.now().toString() else (c.getString(createdAtIdx) ?: Instant.now().toString()),
             restaurantId = if (restIdIdx != -1 && !c.isNull(restIdIdx)) c.getString(restIdIdx) else "",
-            restaurantName = if (restNameIdx != -1 && !c.isNull(restNameIdx)) c.getString(restNameIdx) else ""
+            restaurantName = if (restNameIdx != -1 && !c.isNull(restNameIdx)) c.getString(restNameIdx) else "",
+            updatedAt = if (updatedAtIdx != -1 && !c.isNull(updatedAtIdx)) c.getString(updatedAtIdx) ?: "" else ""
         )
     }
 
@@ -1378,6 +1935,15 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             db.update(TABLE_DINING_TABS, cv, "id = ?", arrayOf(tabId.trim()))
         } catch (_: Exception) {
             0
+        }
+        if (affected > 0) {
+            recordAuditLog(
+                action = "DINE_IN_SETTLED",
+                actorEmail = existing?.customerName?.ifBlank { null } ?: "guest@restro.com",
+                actorRole = "CUSTOMER",
+                targetId = tabId,
+                details = "Table ${existing?.tableNumber} bill settled via $paymentMethod. Txn: $transactionId"
+            )
         }
         return affected > 0
     }
@@ -2024,11 +2590,44 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
 
     fun updateKotTicketStatus(kotId: Long, newStatus: String): Boolean {
         val db = writableDatabase
+        val cursor = db.rawQuery("SELECT status, order_id, table_number FROM $TABLE_KOT_TICKETS WHERE id = ?", arrayOf(kotId.toString()))
+        if (!cursor.moveToFirst()) {
+            cursor.close()
+            return false
+        }
+        val currentStatus = cursor.getString(0)
+        val linkedOrderId = cursor.getLong(1)
+        cursor.close()
+
+        if (!KotLifecycleRules.canTransition(currentStatus, newStatus)) {
+            return false
+        }
+
         val cv = ContentValues().apply {
             put("status", newStatus)
             put("updated_at", Instant.now().toString())
         }
         val rows = db.update(TABLE_KOT_TICKETS, cv, "id = ?", arrayOf(kotId.toString()))
+        if (rows > 0) {
+            recordAuditLog(
+                action = "KOT_STATUS_UPDATED",
+                actorEmail = "chef@restro.com",
+                actorRole = "CHEF_KDS",
+                targetId = kotId.toString(),
+                details = "KOT #$kotId transitioned from $currentStatus to $newStatus"
+            )
+        }
+        if (rows > 0 && linkedOrderId > 0L) {
+            val orderStatusStr = when (newStatus.trim().lowercase()) {
+                "preparing" -> "Preparing"
+                "ready" -> "Out for delivery"
+                "served" -> "Delivered"
+                else -> null
+            }
+            if (orderStatusStr != null) {
+                updateOrderStatus(linkedOrderId.toString(), orderStatusStr)
+            }
+        }
         return rows > 0
     }
 
@@ -2323,8 +2922,8 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
      * Table occupancy using the existing table-allocation/status model.
      * Checks all default floor-plan tables using [getFloorTableStatus].
      */
-    fun getTableOccupancy(): TableOccupancyMetrics {
-        val tables = RestaurantTableDefaults.DEFAULT_TABLES
+    fun getTableOccupancy(restaurantId: String = ""): TableOccupancyMetrics {
+        val tables = if (restaurantId.isNotBlank()) RestaurantTableDefaults.getTablesForRestaurant(restaurantId) else RestaurantTableDefaults.DEFAULT_TABLES
         val total = tables.size
         var occupied = 0
         for (table in tables) {
@@ -2435,5 +3034,274 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             tableOccupancy = getTableOccupancy(),
             topDishes = getTopFiveDishes(5)
         )
+    }
+
+    // -------------------------------------------------------------
+    // ADMIN MENU & PRICE MANAGEMENT
+    // -------------------------------------------------------------
+
+    fun updateDishPriceAndAvailability(dishId: String, newPrice: Long, isAvailable: Boolean): Boolean {
+        require(newPrice >= 0L) { "Price cannot be negative" }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("price", newPrice)
+            put("available", if (isAvailable) 1 else 0)
+        }
+        val affected = db.update(TABLE_DISHES, cv, "id = ?", arrayOf(dishId.trim()))
+        return affected > 0
+    }
+
+    // -------------------------------------------------------------
+    // INVENTORY & STOCK MOVEMENTS (IDEMPOTENT & TRACKED)
+    // -------------------------------------------------------------
+
+    fun createInventoryTables(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_INVENTORY (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL,
+                unit TEXT NOT NULL,
+                current_stock REAL NOT NULL,
+                reorder_level REAL NOT NULL,
+                cost_per_unit INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_STOCK_MOVEMENTS (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                delta REAL NOT NULL,
+                reason TEXT NOT NULL,
+                reference_id TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL DEFAULT 'System',
+                created_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_stock_movements_ref ON $TABLE_STOCK_MOVEMENTS (reference_id);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON $TABLE_STOCK_MOVEMENTS (item_id);")
+    }
+
+    fun seedDefaultInventoryIfEmpty() {
+        val db = writableDatabase
+        createInventoryTables(db)
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM $TABLE_INVENTORY", null)
+        val count = if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        cursor.close()
+        if (count > 0) return
+
+        val defaultStock = listOf(
+            InventoryItem("inv-1", "Paneer (Fresh Malai)", "Dairy", "kg", 25.0, 5.0, 32000L),
+            InventoryItem("inv-2", "Basmati Rice (Royal)", "Grains", "kg", 80.0, 20.0, 11000L),
+            InventoryItem("inv-3", "Amul Butter (Pasteurized)", "Dairy", "kg", 18.5, 4.0, 48000L),
+            InventoryItem("inv-4", "Whole Spices Blend (Garam Masala)", "Spices", "kg", 6.0, 2.0, 95000L),
+            InventoryItem("inv-5", "Fresh Chicken (Boneless)", "Poultry", "kg", 30.0, 10.0, 24000L),
+            InventoryItem("inv-6", "Cooking Oil (Cold Pressed Mustard)", "Oils", "L", 50.0, 15.0, 16000L)
+        )
+        val nowStr = Instant.now().toString()
+        defaultStock.forEach { item ->
+            val cv = ContentValues().apply {
+                put("id", item.id)
+                put("name", item.name)
+                put("category", item.category)
+                put("unit", item.unit)
+                put("current_stock", item.currentStock)
+                put("reorder_level", item.reorderLevel)
+                put("cost_per_unit", item.costPerUnitPaise)
+                put("updated_at", nowStr)
+            }
+            db.insertWithOnConflict(TABLE_INVENTORY, null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        }
+    }
+
+    fun getAllInventoryItems(): List<InventoryItem> {
+        val db = readableDatabase
+        createInventoryTables(db)
+        seedDefaultInventoryIfEmpty()
+        val list = mutableListOf<InventoryItem>()
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_INVENTORY ORDER BY name ASC", null)
+        while (cursor.moveToNext()) {
+            list.add(
+                InventoryItem(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                    category = cursor.getString(cursor.getColumnIndexOrThrow("category")),
+                    unit = cursor.getString(cursor.getColumnIndexOrThrow("unit")),
+                    currentStock = cursor.getDouble(cursor.getColumnIndexOrThrow("current_stock")),
+                    reorderLevel = cursor.getDouble(cursor.getColumnIndexOrThrow("reorder_level")),
+                    costPerUnitPaise = cursor.getLong(cursor.getColumnIndexOrThrow("cost_per_unit")),
+                    updatedAt = cursor.getString(cursor.getColumnIndexOrThrow("updated_at"))
+                )
+            )
+        }
+        cursor.close()
+        return list
+    }
+
+    fun recordStockMovement(
+        itemId: String,
+        delta: Double,
+        reason: String,
+        referenceId: String = "",
+        actor: String = "Admin"
+    ): Boolean {
+        val db = writableDatabase
+        createInventoryTables(db)
+        db.beginTransaction()
+        try {
+            val cursor = db.rawQuery("SELECT name, current_stock FROM $TABLE_INVENTORY WHERE id = ? LIMIT 1", arrayOf(itemId))
+            if (!cursor.moveToFirst()) {
+                cursor.close()
+                return false
+            }
+            val name = cursor.getString(0)
+            val currentStock = cursor.getDouble(1)
+            cursor.close()
+
+            val newStock = (currentStock + delta).coerceAtLeast(0.0)
+            val nowStr = Instant.now().toString()
+
+            val cvInv = ContentValues().apply {
+                put("current_stock", newStock)
+                put("updated_at", nowStr)
+            }
+            db.update(TABLE_INVENTORY, cvInv, "id = ?", arrayOf(itemId))
+
+            val cvMov = ContentValues().apply {
+                put("id", "MOV-${UUID.randomUUID().toString().take(8).uppercase()}")
+                put("item_id", itemId)
+                put("item_name", name)
+                put("delta", delta)
+                put("reason", reason)
+                put("reference_id", referenceId)
+                put("actor", actor)
+                put("created_at", nowStr)
+            }
+            db.insert(TABLE_STOCK_MOVEMENTS, null, cvMov)
+
+            db.setTransactionSuccessful()
+            return true
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun consumeInventoryForOrderIdempotent(orderId: String, lines: List<QuoteLine>): Boolean {
+        val db = writableDatabase
+        createInventoryTables(db)
+        seedDefaultInventoryIfEmpty()
+
+        // Idempotency check: if this order already deducted stock, do not deduct again
+        val checkCursor = db.rawQuery(
+            "SELECT COUNT(*) FROM $TABLE_STOCK_MOVEMENTS WHERE reference_id = ? AND reason = 'ORDER_CONSUMPTION'",
+            arrayOf(orderId)
+        )
+        val alreadyConsumed = if (checkCursor.moveToFirst()) checkCursor.getInt(0) > 0 else false
+        checkCursor.close()
+        if (alreadyConsumed) return true
+
+        val invList = getAllInventoryItems()
+        if (invList.isEmpty()) return false
+
+        db.beginTransaction()
+        try {
+            // Deduct proportional portions for dishes ordered
+            for (line in lines) {
+                val qty = line.quantity.toDouble()
+                val targetItem = when {
+                    line.name.contains("Paneer", ignoreCase = true) -> invList.find { it.id == "inv-1" }
+                    line.name.contains("Biryani", ignoreCase = true) || line.name.contains("Rice", ignoreCase = true) -> invList.find { it.id == "inv-2" }
+                    line.name.contains("Butter", ignoreCase = true) || line.name.contains("Dal", ignoreCase = true) -> invList.find { it.id == "inv-3" }
+                    line.name.contains("Chicken", ignoreCase = true) -> invList.find { it.id == "inv-5" }
+                    else -> invList.firstOrNull()
+                }
+
+                if (targetItem != null) {
+                    val deduction = 0.25 * qty // 0.25 kg per portion
+                    recordStockMovement(
+                        itemId = targetItem.id,
+                        delta = -deduction,
+                        reason = "ORDER_CONSUMPTION",
+                        referenceId = orderId,
+                        actor = "Automated POS Engine"
+                    )
+                }
+            }
+            db.setTransactionSuccessful()
+            return true
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    // -------------------------------------------------------------
+    // AUDIT LOGS (SECURITY & ADMINISTRATIVE ACTIONS)
+    // -------------------------------------------------------------
+
+    fun createAuditLogsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_AUDIT_LOGS (
+                id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                actor_email TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON $TABLE_AUDIT_LOGS (actor_email);")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON $TABLE_AUDIT_LOGS (action);")
+    }
+
+    fun recordAuditLog(
+        action: String,
+        actorEmail: String,
+        actorRole: String,
+        targetId: String,
+        details: String
+    ) {
+        val db = writableDatabase
+        createAuditLogsTable(db)
+        val cv = ContentValues().apply {
+            put("id", "AUD-${UUID.randomUUID().toString().take(8).uppercase()}")
+            put("action", action)
+            put("actor_email", actorEmail)
+            put("actor_role", actorRole)
+            put("target_id", targetId)
+            put("details", details)
+            put("created_at", Instant.now().toString())
+        }
+        db.insert(TABLE_AUDIT_LOGS, null, cv)
+    }
+
+    fun getAllAuditLogs(limit: Int = 50): List<AuditLogEntry> {
+        val db = readableDatabase
+        createAuditLogsTable(db)
+        val list = mutableListOf<AuditLogEntry>()
+        val cursor = db.rawQuery("SELECT * FROM $TABLE_AUDIT_LOGS ORDER BY created_at DESC LIMIT ?", arrayOf(limit.toString()))
+        while (cursor.moveToNext()) {
+            list.add(
+                AuditLogEntry(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    action = cursor.getString(cursor.getColumnIndexOrThrow("action")),
+                    actorEmail = cursor.getString(cursor.getColumnIndexOrThrow("actor_email")),
+                    actorRole = cursor.getString(cursor.getColumnIndexOrThrow("actor_role")),
+                    targetId = cursor.getString(cursor.getColumnIndexOrThrow("target_id")),
+                    details = cursor.getString(cursor.getColumnIndexOrThrow("details")),
+                    createdAt = cursor.getString(cursor.getColumnIndexOrThrow("created_at"))
+                )
+            )
+        }
+        cursor.close()
+        return list
     }
 }

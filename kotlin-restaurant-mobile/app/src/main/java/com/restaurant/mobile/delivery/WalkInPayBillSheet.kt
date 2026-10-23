@@ -41,10 +41,11 @@ import androidx.compose.ui.unit.sp
 fun WalkInPayBillSheet(
     onTableSelected: (tableNumber: String) -> Unit,
     onDismiss: () -> Unit,
-    errorMessage: String? = null
+    errorMessage: String? = null,
+    availableTables: List<String> = emptyList()
 ) {
-    // Preset table labels
-    val presetTables = (1..12).map { "T$it" }
+    // Preset table labels matching restaurant inventory
+    val presetTables = if (availableTables.isNotEmpty()) availableTables else (1..12).map { "T$it" }
 
     // Selection state: either a preset or manually entered
     var selectedPreset by rememberSaveable { mutableStateOf<String?>(null) }

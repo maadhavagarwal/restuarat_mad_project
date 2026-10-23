@@ -1501,12 +1501,29 @@ fun TableBookingSuccessScreen(
         return
     }
 
+    val onCheckIn: () -> Unit = {
+        val (tab, _) = vm.sqlDb.seatTableAndOpenTab(
+            tableNumber = booking.tableNumber,
+            tableId = booking.tableNumber,
+            guestCount = booking.partySize,
+            bookingId = booking.id,
+            customerName = booking.userName,
+            customerPhone = booking.userPhone,
+            restaurantId = booking.restaurantId
+        )
+        vm.activeTableTab = tab
+        vm.confirmedBooking = null
+        vm.resetTableBookingDraft()
+        vm.route = "Home"
+    }
+
     TableBookingSuccessContent(
         booking = booking,
         restaurant = restaurant,
         onDone = onDone,
         onBookAnother = onBookAnother,
-        onViewMyBookings = onViewMyBookings
+        onViewMyBookings = onViewMyBookings,
+        onCheckIn = onCheckIn
     )
 }
 
@@ -1520,6 +1537,7 @@ fun TableBookingSuccessContent(
     onDone: () -> Unit,
     onBookAnother: () -> Unit,
     onViewMyBookings: () -> Unit = {},
+    onCheckIn: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -1763,6 +1781,31 @@ fun TableBookingSuccessContent(
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                if (onCheckIn != null) {
+                    Button(
+                        onClick = onCheckIn,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                    ) {
+                        Icon(
+                            Icons.Default.EventAvailable,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Check-In / Mark Seated (Open Live Bill)",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
+                }
+
                 Button(
                     onClick = onDone,
                     modifier = Modifier

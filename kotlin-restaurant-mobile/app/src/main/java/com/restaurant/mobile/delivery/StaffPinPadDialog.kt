@@ -225,14 +225,14 @@ fun StaffPinPadDialog(
                     }
                 }
 
-                // Shift PIN Hint Footer
+                // Shift PIN Security Footer
                 Surface(
                     color = Color.White.copy(alpha = 0.05f),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Shift PINs: 1234 (Waiter) • 5678 (Chef KDS) • 9999 (Admin)",
+                        text = "Secure Shift Authentication • Contact Manager for Assigned PIN",
                         color = Color(0xFFA8A29E),
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,

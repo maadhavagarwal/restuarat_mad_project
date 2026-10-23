@@ -1,4 +1,4 @@
-﻿package com.restaurant.mobile
+package com.restaurant.mobile
 import android.content.Intent
 
 import android.os.Bundle
@@ -58,6 +58,7 @@ import com.restaurant.mobile.delivery.TopDishStat
 class MainActivity : ComponentActivity() {
 
     private var onNewIntentCallback: ((Intent) -> Unit)? = null
+    private var deliveryVmRef: com.restaurant.mobile.delivery.DeliveryViewModel? = null
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -65,16 +66,41 @@ class MainActivity : ComponentActivity() {
         onNewIntentCallback?.invoke(intent)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101) {
+            deliveryVmRef?.detectAndApplyLiveGps(force = true)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val requiredPerms = mutableListOf(
+            android.Manifest.permission.ACCESS_FINE_LOCATION,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
+        )
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
-            }
+            requiredPerms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val missingPerms = requiredPerms.filter {
+            checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPerms.isNotEmpty()) {
+            requestPermissions(missingPerms.toTypedArray(), 101)
         }
         setContent {
             val deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel =
                 androidx.lifecycle.viewmodel.compose.viewModel()
+            deliveryVmRef = deliveryVm
+            deliveryVm.currentActivity = this
+
+            LaunchedEffect(Unit) {
+                deliveryVm.detectAndApplyLiveGps()
+            }
 
             // Handle notification tap navigation
             DisposableEffect(Unit) {
@@ -100,7 +126,10 @@ class MainActivity : ComponentActivity() {
             var lastStaffInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
 
             LaunchedEffect(deliveryVm.profile) {
-                if ((deliveryVm.profile == null || deliveryVm.profile?.role?.isStaff != true) && isStaffMode) {
+                val p = deliveryVm.profile
+                if (p != null && p.role.isStaff) {
+                    isStaffMode = true
+                } else if (p == null || !p.role.isStaff) {
                     isStaffMode = false
                 }
             }
@@ -180,6 +209,9 @@ enum class NavigationScreen(val title: String, val icon: ImageVector) {
     POS("POS Cashier", Icons.Default.ShoppingCart),
     KDS("Kitchen KDS", Icons.Default.SoupKitchen),
     TABLES("Tables", Icons.Default.TableBar),
+    MENU("Menu & Prices", Icons.Default.MenuBook),
+    INVENTORY("Inventory", Icons.Default.Inventory),
+    SALARY("Staff Payroll", Icons.Default.Payments),
     ANALYTICS("Analytics", Icons.Default.BarChart)
 }
 
@@ -205,7 +237,16 @@ fun RestaurantMobileApp(
         when (userRole) {
             com.restaurant.mobile.delivery.UserRole.WAITER -> listOf(NavigationScreen.POS, NavigationScreen.TABLES)
             com.restaurant.mobile.delivery.UserRole.CHEF_KDS -> listOf(NavigationScreen.KDS, NavigationScreen.TABLES)
-            com.restaurant.mobile.delivery.UserRole.ADMIN -> NavigationScreen.entries
+            com.restaurant.mobile.delivery.UserRole.ADMIN -> listOf(
+                NavigationScreen.POS,
+                NavigationScreen.KDS,
+                NavigationScreen.TABLES,
+                NavigationScreen.MENU,
+                NavigationScreen.INVENTORY,
+                NavigationScreen.SALARY,
+                NavigationScreen.ANALYTICS
+            )
+            com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN -> NavigationScreen.entries
             com.restaurant.mobile.delivery.UserRole.CUSTOMER -> emptyList()
         }
     }
@@ -246,23 +287,42 @@ fun RestaurantMobileApp(
     fun refreshAll() {
         onUserInteraction?.invoke()
         coroutineScope.launch {
-            categories = ApiClient.getCategories()
-            menuItems = ApiClient.getMenuItems()
-            tables = ApiClient.getTables()
-            val remoteAnalytics = try {
-                ApiClient.getAnalytics()
-            } catch (_: Exception) {
-                null
+            val allDishes = withContext(Dispatchers.IO) {
+                database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
+            }
+            val uniqueCats = allDishes.map { it.category }.distinct()
+            categories = uniqueCats.mapIndexed { idx, catName ->
+                Category((idx + 1).toLong(), catName)
+            }
+            menuItems = allDishes.mapIndexed { idx, dish ->
+                val catId = (uniqueCats.indexOf(dish.category) + 1).toLong()
+                MenuItem(
+                    id = (idx + 1).toLong(),
+                    categoryId = catId,
+                    name = dish.name,
+                    price = (dish.price / 100.0),
+                    taxRate = 5.0,
+                    isAvailable = true
+                )
+            }
+            val restTables = com.restaurant.mobile.delivery.RestaurantTableDefaults.getTablesForRestaurant("rest-1")
+            tables = restTables.mapIndexed { idx, t ->
+                DiningTable(
+                    id = (idx + 1).toLong(),
+                    tableNumber = t.tableNumber,
+                    seatingCapacity = t.capacity,
+                    status = database.getFloorTableStatus(t.tableNumber)
+                )
             }
             analytics = withContext(Dispatchers.IO) {
                 try {
-                    backend.getAnalyticsData(fallback = remoteAnalytics)
+                    backend.getAnalyticsData()
                 } catch (_: Exception) {
-                    remoteAnalytics ?: AnalyticsData()
+                    AnalyticsData()
                 }
             }
             val localKots = database.getAllKotTickets()
-            val remoteKots = ApiClient.getKOTs()
+            val remoteKots = emptyList<KOT>()
             kots = if (localKots.isNotEmpty()) {
                 val localIds = localKots.map { it.id }.toSet()
                 localKots + remoteKots.filter { it.id !in localIds }
@@ -552,7 +612,15 @@ fun RestaurantMobileApp(
                                 }
                                 coroutineScope.launch {
                                     ApiClient.updateTableStatus(table.id, nextStatus)
-                                    tables = ApiClient.getTables()
+                                    val restTables = com.restaurant.mobile.delivery.RestaurantTableDefaults.getTablesForRestaurant("rest-1")
+            tables = restTables.mapIndexed { idx, t ->
+                DiningTable(
+                    id = (idx + 1).toLong(),
+                    tableNumber = t.tableNumber,
+                    seatingCapacity = t.capacity,
+                    status = database.getFloorTableStatus(t.tableNumber)
+                )
+            }
                                     if (selectedTable?.id == table.id) {
                                         selectedTable = selectedTable?.copy(status = nextStatus)
                                     }
@@ -560,7 +628,22 @@ fun RestaurantMobileApp(
                                 }
                             }
                         )
-                        NavigationScreen.ANALYTICS -> AnalyticsScreenView(analytics = analytics)
+                        NavigationScreen.MENU -> AdminMenuManagementScreenView(
+                            database = database,
+                            onShowToast = onShowToast
+                        )
+                        NavigationScreen.INVENTORY -> InventoryAndAuditScreenView(
+                            database = database,
+                            onShowToast = onShowToast
+                        )
+                        NavigationScreen.SALARY -> StaffPayrollScreenView(
+                            database = database,
+                            onShowToast = onShowToast
+                        )
+                        NavigationScreen.ANALYTICS -> AnalyticsScreenView(
+                            analytics = analytics,
+                            isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN)
+                        )
                     }
 
                     // Slide Cart Bottom Sheet
@@ -634,7 +717,29 @@ fun RestaurantMobileApp(
                                             customerName = activeBooking?.userName
                                         )
 
-                                        // 3. Dispatch to kitchen workflow / API
+                                        // 3. Consume inventory and record audit event
+                                        database.consumeInventoryForOrderIdempotent(
+                                            "KOT-${tableNum}-R$roundNumber",
+                                            cart.map {
+                                                com.restaurant.mobile.delivery.QuoteLine(
+                                                    dishId = "dish-${it.menuItem.id}",
+                                                    name = it.menuItem.name,
+                                                    quantity = it.quantity,
+                                                    addons = emptyList(),
+                                                    unitPrice = (it.menuItem.price * 100).toLong(),
+                                                    total = (it.menuItem.price * it.quantity * 100).toLong()
+                                                )
+                                            }
+                                        )
+                                        database.recordAuditLog(
+                                            action = "KOT_ROUND_FIRED",
+                                            actorEmail = activeBooking?.userName ?: "waiter@restro.com",
+                                            actorRole = userRole.name,
+                                            targetId = savedTab.id,
+                                            details = "Round $roundNumber ($roundName) for Table $tableNum fired to Kitchen KDS (${kotItems.size} dishes)"
+                                        )
+
+                                        // 4. Dispatch to kitchen workflow / API
                                         ApiClient.checkoutOrder(
                                             paymentMethod = paymentMethod,
                                             items = cart,
@@ -1949,7 +2054,7 @@ fun StatusLegendChip(label: String, color: Color) {
 
 // 4. Analytics Screen Component — Unified Dine-In & Delivery Dashboard
 @Composable
-fun AnalyticsScreenView(analytics: AnalyticsData) {
+fun AnalyticsScreenView(analytics: AnalyticsData, isMasterAdmin: Boolean = false) {
     val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
@@ -1958,6 +2063,26 @@ fun AnalyticsScreenView(analytics: AnalyticsData) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
+        if (isMasterAdmin) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1B4B)),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Shield, null, tint = Color(0xFFA855F7), modifier = Modifier.size(28.dp))
+                    Column {
+                        Text("👑 MASTER ADMIN CONSOLE", color = Color(0xFFA855F7), fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                        Text("All-access privileges: Full multi-venue Mumbai telemetry, staff payroll, and system performance.", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
         // ── Section header ───────────────────────────────────────────────────
         Text(
             text = "Admin Analytics Dashboard",
@@ -2652,4 +2777,442 @@ fun TableSelectionDialog(
             }
         }
     )
+}
+
+@Composable
+fun StaffPayrollScreenView(
+    database: com.restaurant.mobile.delivery.RestroSqlDatabase,
+    onShowToast: (String) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var payrollList by remember { mutableStateOf<List<com.restaurant.mobile.delivery.StaffPayrollRecord>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    fun refreshPayroll() {
+        coroutineScope.launch(Dispatchers.IO) {
+            val list = database.getAllPayrollRecords()
+            withContext(Dispatchers.Main) {
+                payrollList = list
+                isLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshPayroll()
+    }
+
+    val totalPaid = payrollList.filter { it.status == "PAID" }.sumOf { it.netSalary }
+    val totalPending = payrollList.filter { it.status != "PAID" }.sumOf { it.netSalary }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Summary Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.AccountBalanceWallet, null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Staff Compensation & Payroll", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column {
+                        Text("Disbursed", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("₹$totalPaid", fontWeight = FontWeight.Bold, color = Color(0xFF10B981), fontSize = 16.sp)
+                    }
+                    Column {
+                        Text("Pending Payouts", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("₹$totalPending", fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), fontSize = 16.sp)
+                    }
+                    Column {
+                        Text("Total Staff", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${payrollList.size} Staff", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                }
+            }
+        }
+
+        // Employee Payroll List
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            items(payrollList, key = { it.id }) { record ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(record.staffName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text(record.staffRole, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Surface(
+                                color = if (record.status == "PAID") Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFF59E0B).copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    record.status,
+                                    color = if (record.status == "PAID") Color(0xFF10B981) else Color(0xFFF59E0B),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Divider(color = Color.White.copy(alpha = 0.08f))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Base: ₹${record.baseSalary}", fontSize = 12.sp)
+                            Text("Bonus: +₹${record.bonusTips}", fontSize = 12.sp, color = Color(0xFF10B981))
+                            Text("Deduct: -₹${record.deductions}", fontSize = 12.sp, color = Color(0xFFEF4444))
+                            Text("Net: ₹${record.netSalary}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+
+                        if (record.status != "PAID") {
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val tx = "SAL-UPI-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
+                                        database.disburseSalary(record.id, "UPI Instant Pay", tx)
+                                        withContext(Dispatchers.Main) {
+                                            refreshPayroll()
+                                            onShowToast("Salary of ₹${record.netSalary} disbursed to ${record.staffName} via UPI!")
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Payment, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Disburse ₹${record.netSalary} via UPI / Bank")
+                            }
+                        } else {
+                            Text(
+                                "Disbursed via ${record.paymentMethod} · Ref: ${record.transactionRef.ifBlank { "PAID_CONFIRMED" }}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminMenuManagementScreenView(
+    database: com.restaurant.mobile.delivery.RestroSqlDatabase,
+    onShowToast: (String) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var dishes by remember { mutableStateOf<List<com.restaurant.mobile.delivery.Dish>>(emptyList()) }
+    var editingDish by remember { mutableStateOf<com.restaurant.mobile.delivery.Dish?>(null) }
+    var editPriceStr by remember { mutableStateOf("") }
+    var editAvailable by remember { mutableStateOf(true) }
+
+    fun refreshMenu() {
+        coroutineScope.launch(Dispatchers.IO) {
+            val list = database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
+            withContext(Dispatchers.Main) {
+                dishes = list
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshMenu()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.MenuBook, null, tint = MaterialTheme.colorScheme.primary)
+                Column {
+                    Text("Menu & Pricing Control", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Update live menu prices and stock availability in real time", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(dishes, key = { it.id }) { dish ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(
+                                "₹${dish.price / 100} · ${dish.category}",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(
+                                color = if (dish.available) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFEF4444).copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    if (dish.available) "AVAILABLE" else "86'D (OUT)",
+                                    color = if (dish.available) Color(0xFF10B981) else Color(0xFFEF4444),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+
+                            IconButton(onClick = {
+                                editingDish = dish
+                                editPriceStr = (dish.price / 100).toString()
+                                editAvailable = dish.available
+                            }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Edit Dish", tint = Color(0xFFC2410C))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (editingDish != null) {
+        val target = editingDish!!
+        AlertDialog(
+            onDismissRequest = { editingDish = null },
+            title = { Text("Edit ${target.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = editPriceStr,
+                        onValueChange = { editPriceStr = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Price in ₹") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = editAvailable,
+                            onCheckedChange = { editAvailable = it }
+                        )
+                        Text("Available on Live Menu")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val newPricePaise = (editPriceStr.toLongOrNull() ?: (target.price / 100)) * 100
+                    coroutineScope.launch(Dispatchers.IO) {
+                        database.updateDishPriceAndAvailability(target.id, newPricePaise, editAvailable)
+                        database.recordAuditLog(
+                            "MENU_UPDATED",
+                            "admin@restro.app",
+                            "ADMIN",
+                            target.id,
+                            "Price changed to ₹${newPricePaise / 100}, available=$editAvailable"
+                        )
+                        withContext(Dispatchers.Main) {
+                            editingDish = null
+                            refreshMenu()
+                            onShowToast("${target.name} updated: ₹${newPricePaise / 100}")
+                        }
+                    }
+                }) {
+                    Text("Save Changes")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingDish = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun InventoryAndAuditScreenView(
+    database: com.restaurant.mobile.delivery.RestroSqlDatabase,
+    onShowToast: (String) -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var inventoryList by remember { mutableStateOf<List<com.restaurant.mobile.delivery.InventoryItem>>(emptyList()) }
+    var auditLogs by remember { mutableStateOf<List<com.restaurant.mobile.delivery.AuditLogEntry>>(emptyList()) }
+
+    fun refresh() {
+        coroutineScope.launch(Dispatchers.IO) {
+            val inv = database.getAllInventoryItems()
+            val logs = database.getAllAuditLogs(50)
+            withContext(Dispatchers.Main) {
+                inventoryList = inv
+                auditLogs = logs
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refresh()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = Color.White
+        ) {
+            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Default.Inventory, null, modifier = Modifier.size(18.dp))
+                    Text("Stock Levels")
+                }
+            }
+            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Default.History, null, modifier = Modifier.size(18.dp))
+                    Text("Audit Logs")
+                }
+            }
+        }
+
+        if (selectedTab == 0) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(inventoryList, key = { it.id }) { item ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(item.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("Category: ${item.category}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Surface(
+                                    color = if (item.isLowStock) Color(0xFFEF4444).copy(alpha = 0.2f) else Color(0xFF10B981).copy(alpha = 0.2f),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        if (item.isLowStock) "LOW STOCK" else "IN STOCK",
+                                        color = if (item.isLowStock) Color(0xFFEF4444) else Color(0xFF10B981),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Stock: ${item.currentStock} ${item.unit} (Reorder: ${item.reorderLevel} ${item.unit})",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            database.recordStockMovement(item.id, 10.0, "RESTOCK", actor = "Admin Manager")
+                                            withContext(Dispatchers.Main) {
+                                                refresh()
+                                                onShowToast("Restocked +10 ${item.unit} for ${item.name}")
+                                            }
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("+10 ${item.unit}", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(auditLogs, key = { it.id }) { log ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(log.action, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                                Text(log.createdAt.take(19).replace("T", " "), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(log.details, fontSize = 12.sp)
+                            Text("Actor: ${log.actorEmail} (${log.actorRole})", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

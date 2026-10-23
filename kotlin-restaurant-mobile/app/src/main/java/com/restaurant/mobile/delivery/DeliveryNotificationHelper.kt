@@ -422,6 +422,25 @@ open class DeliveryNotificationHelper(private val context: Context? = null) {
         showBillSettledReceipt(tableNumber, totalPaise, "TXN-DIN-PREV")
     }
 
+    fun notifyOtpDispatched(target: String, code: String) {
+        val ctx = context ?: return
+        val isPhone = !target.contains("@")
+        val title = if (isPhone) "Restro Security Verification" else "Restro Account Verification"
+        val message = if (isPhone) {
+            "Your login OTP is $code. Valid for 5 minutes. Do not share with anyone."
+        } else {
+            "Your verification code is $code. Enter it to activate your account."
+        }
+        val builder = androidx.core.app.NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_restro)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+        sendNotification(1005, builder)
+    }
+
     private fun recordDispatch(record: DineInNotificationRecord) {
         lastDispatchedRecord = record
         dispatchedRecords.add(record)

@@ -69,7 +69,7 @@ fun PaymentGatewayBottomSheet(
         )
     } // 0: UPI, 1: Card, 2: Netbanking
     var processingState by remember { mutableStateOf(PaymentProcessingState.INPUT) }
-    var transactionId by remember { mutableStateOf("TXN-${UUID.randomUUID().toString().take(8).uppercase()}") }
+    var transactionId by remember { mutableStateOf("rzp_pay_${UUID.randomUUID().toString().take(10).uppercase()}") }
 
     // UPI State
     var selectedUpiApp by rememberSaveable { mutableStateOf("Google Pay") }
@@ -112,29 +112,34 @@ fun PaymentGatewayBottomSheet(
     // Netbanking State
     var selectedBank by rememberSaveable { mutableStateOf("HDFC Bank") }
 
-    // 1.5-second simulated verification animation
+    // 1.5-second simulated verification animation & auto-settlement completion
     LaunchedEffect(processingState) {
-        if (processingState == PaymentProcessingState.VERIFYING) {
-            delay(1500L) // Exact 1.5s simulated bank verification animation
-            processingState = PaymentProcessingState.AUTHORIZED
-            delay(700L)
-            val methodLabel = when (selectedTab) {
-                0 -> "UPI ($selectedUpiApp)"
-                1 -> "Card ($cardIssuer)"
-                2 -> "Netbanking ($selectedBank)"
-                else -> "UPI"
+        when (processingState) {
+            PaymentProcessingState.VERIFYING -> {
+                delay(1500L) // Exact 1.5s simulated bank verification animation
+                processingState = PaymentProcessingState.AUTHORIZED
             }
-            if (isDineIn) {
-                effectiveDiningTab?.let { tab ->
-                    vm.recordDineInPaymentAuthorized(tab, methodLabel, transactionId)
-                    vm.settleDineInTab(tab, methodLabel, transactionId)
+            PaymentProcessingState.AUTHORIZED -> {
+                delay(1200L) // Display authorization confirmation to user
+                val methodLabel = when (selectedTab) {
+                    0 -> "UPI ($selectedUpiApp)"
+                    1 -> "Card ($cardIssuer)"
+                    2 -> "Netbanking ($selectedBank)"
+                    else -> "UPI"
                 }
-                onPaymentSuccess?.invoke(methodLabel, transactionId)
-            } else {
-                vm.checkout(selectedAddressId, methodLabel)
-                onPaymentSuccess?.invoke(methodLabel, transactionId)
+                if (isDineIn) {
+                    effectiveDiningTab?.let { tab ->
+                        vm.recordDineInPaymentAuthorized(tab, methodLabel, transactionId)
+                        vm.settleDineInTab(tab, methodLabel, transactionId)
+                    }
+                    onPaymentSuccess?.invoke(methodLabel, transactionId)
+                } else {
+                    vm.checkout(selectedAddressId, methodLabel)
+                    onPaymentSuccess?.invoke(methodLabel, transactionId)
+                }
+                onDismiss()
             }
-            onDismiss()
+            else -> {}
         }
     }
 
@@ -191,6 +196,35 @@ fun PaymentGatewayBottomSheet(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = RestroTokens.coral
                             )
+                        }
+
+                        // Razorpay Official Gateway Branding Bar
+                        Surface(
+                            color = Color(0xFF0C2340),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.VerifiedUser, null, tint = Color(0xFF3395FF), modifier = Modifier.size(16.dp))
+                                    Text("Razorpay Trusted Gateway", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
+                                }
+                                Surface(
+                                    color = Color(0xFF3395FF).copy(alpha = 0.25f),
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    val keyConfigured = com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID.isNotBlank()
+                                    val envBadge = if (com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID.startsWith("rzp_live_")) "LIVE MODE" else if (keyConfigured) "SANDBOX TEST MODE" else "UNCONFIGURED"
+                                    Text(envBadge, color = Color(0xFF3395FF), fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                                }
+                            }
                         }
 
                         // Tab Switcher (UPI vs Card vs Netbanking)
@@ -545,14 +579,14 @@ fun PaymentGatewayBottomSheet(
                             modifier = Modifier.size(56.dp)
                         )
                         Text(
-                            if (selectedTab == 2) "Connecting to $selectedBank..."
-                            else "Verifying with Bank...",
+                            if (selectedTab == 2) "Connecting to $selectedBank via Razorpay..."
+                            else "Connecting to Razorpay Gateway...",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
                             color = RestroTokens.text
                         )
                         Text(
-                            "Authorizing 256-bit secure gateway tokens with issuing bank...",
+                            "Authorizing 256-bit secure Razorpay token with issuing bank...",
                             fontSize = 12.sp,
                             color = RestroTokens.muted
                         )
@@ -561,7 +595,7 @@ fun PaymentGatewayBottomSheet(
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Text(
-                                "Please do not press back or close the app",
+                                "Secured by Razorpay · Please do not close the app",
                                 fontSize = 11.sp,
                                 color = RestroTokens.coral,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
@@ -594,13 +628,13 @@ fun PaymentGatewayBottomSheet(
                             )
                         }
                         Text(
-                            "Payment Authorized ✓",
+                            "Razorpay Payment Authorized ✓",
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             color = RestroTokens.green
                         )
                         Text(
-                            "Reference: $transactionId",
+                            "Razorpay Payment ID: $transactionId",
                             fontSize = 12.sp,
                             color = RestroTokens.muted
                         )

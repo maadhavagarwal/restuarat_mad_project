@@ -9,6 +9,7 @@ import com.google.gson.reflect.TypeToken
 import com.restaurant.mobile.BuildConfig
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -130,6 +131,8 @@ class DeliveryApi {
     var engine: RestroFirebaseBackendEngine? = null
     var onSessionRevoked: ((String) -> Unit)? = null
     val gson = Gson()
+    var inMemoryCart: Cart = Cart()
+    val inMemoryFavorites: MutableSet<String> = mutableSetOf()
 
     suspend inline fun <reified T> call(
         path: String,
@@ -137,11 +140,21 @@ class DeliveryApi {
         body: Any? = null,
     ): T {
         // Pure Kotlin Firebase & SQL Backend execution
-        engine?.let { eng ->
+        val eng = engine
+        if (eng != null) {
             val localResult = dispatchToKotlinEngine(eng, path, method, body)
             if (localResult != null) {
+                if (T::class == Unit::class) {
+                    @Suppress("UNCHECKED_CAST")
+                    return Unit as T
+                }
                 return gson.fromJson(gson.toJson(localResult), object : TypeToken<T>() {}.type)
             }
+        }
+
+        if (T::class == Unit::class) {
+            @Suppress("UNCHECKED_CAST")
+            return Unit as T
         }
 
         return gson.fromJson(request(path, method, body), object : TypeToken<T>() {}.type)
@@ -157,38 +170,127 @@ class DeliveryApi {
             }
             cleanPath == "/auth/otp/verify" -> {
                 val req = if (body is OtpVerifyRequest) body else gson.fromJson(gson.toJson(body), OtpVerifyRequest::class.java)
-                eng.verifyOtp(req)
+                val res = eng.verifyOtp(req)
+                this.token = res.token
+                res
+            }
+            cleanPath == "/auth/login" -> {
+                val creds = if (body is Credentials) body else gson.fromJson(gson.toJson(body), Credentials::class.java)
+                val res = eng.login(creds)
+                this.token = res.token
+                res
+            }
+            cleanPath == "/auth/register" -> {
+                val creds = if (body is Credentials) body else gson.fromJson(gson.toJson(body), Credentials::class.java)
+                val res = eng.register(creds)
+                this.token = res.token
+                res
             }
             cleanPath == "/orders" && method == "GET" -> eng.sqlDb.getAllOrders()
+            cleanPath == "/orders" && method == "POST" -> {
+                val req = if (body is Checkout) body else gson.fromJson(gson.toJson(body), Checkout::class.java)
+                val addr = eng.sqlDb.getAllAddresses().find { it.id == req.addressId }
+                    ?: Address("addr-default", "Home", "Goregaon West, Link Road", "Mumbai", "400062", "+91 98765 43210", 19.1663, 72.8480)
+                eng.placeOrder(req, inMemoryCart, addr)
+            }
+            cleanPath.startsWith("/orders/") && cleanPath.endsWith("/cancel") && method == "POST" -> {
+                val orderId = cleanPath.removePrefix("/orders/").removeSuffix("/cancel")
+                eng.sqlDb.updateOrderStatus(orderId, "Cancelled")
+                eng.sqlDb.recordAuditLog("ORDER_CANCELLED", "Customer", "CUSTOMER", orderId, "Delivery order cancelled")
+                mapOf("success" to true, "status" to "Cancelled")
+            }
+            cleanPath.startsWith("/orders/") && cleanPath.endsWith("/tracking") -> {
+                val orderId = cleanPath.removePrefix("/orders/").removeSuffix("/tracking")
+                val orders = eng.sqlDb.getAllOrders()
+                val order = orders.find { it.id == orderId } ?: orders.firstOrNull()
+                val rest = order?.restaurantId?.let { eng.sqlDb.getRestaurantById(it) }
+                val restLat = rest?.latitude ?: 19.1663
+                val restLng = rest?.longitude ?: 72.8480
+                val destLat = order?.address?.latitude ?: 19.1600
+                val destLng = order?.address?.longitude ?: 72.8550
+                val dist = eng.haversineDistance(restLat, restLng, destLat, destLng)
+                val isNearby = dist < 0.5
+                TrackingResponse(
+                    orderId = orderId,
+                    restaurantName = order?.restaurantName ?: rest?.name ?: "Spice Route Mumbai",
+                    status = if (isNearby) "Ramesh is at your gate" else (order?.status ?: "Out for delivery"),
+                    etaMinutes = Math.max(1, (dist * 3.5).toInt()),
+                    distanceRemainingKm = (dist * 10.0).let { Math.round(it) / 10.0 },
+                    isNearby = isNearby,
+                    rider = RiderTracking(
+                        name = "Ramesh Kumar",
+                        phone = "+91 98112 34567",
+                        vehicleNumber = "MH-02-EM-8821",
+                        currentLocation = LocationPoint(restLat, restLng)
+                    )
+                )
+            }
+            cleanPath.startsWith("/orders/") && method == "GET" -> {
+                val orderId = cleanPath.substringAfterLast("/")
+                val orders = eng.sqlDb.getAllOrders()
+                orders.find { it.id == orderId } ?: orders.firstOrNull()
+            }
             cleanPath == "/addresses" && method == "GET" -> eng.sqlDb.getAllAddresses()
             cleanPath == "/addresses" && method == "POST" -> {
                 val addr = if (body is Address) body else gson.fromJson(gson.toJson(body), Address::class.java)
                 eng.sqlDb.saveAddress(addr)
                 addr
             }
-            cleanPath.startsWith("/orders/") && cleanPath.endsWith("/tracking") -> {
-                val orderId = cleanPath.removePrefix("/orders/").removeSuffix("/tracking")
-                val orders = eng.sqlDb.getAllOrders()
-                val order = orders.find { it.id == orderId } ?: orders.firstOrNull()
-                TrackingResponse(
-                    orderId = orderId,
-                    restaurantName = order?.restaurantName ?: "Restaurant",
-                    status = "On the way",
-                    etaMinutes = 18,
-                    distanceRemainingKm = 2.4,
-                    isNearby = false,
-                    rider = RiderTracking("Vikram Kumar", "+91 98112 34567", "KA-01-EQ-9872", LocationPoint(12.9716, 77.5946))
+            cleanPath == "/addresses" && method == "PUT" -> {
+                val addr = if (body is Address) body else gson.fromJson(gson.toJson(body), Address::class.java)
+                eng.sqlDb.saveAddress(addr)
+                addr
+            }
+            cleanPath.startsWith("/addresses/") && method == "DELETE" -> {
+                val id = cleanPath.substringAfterLast("/")
+                eng.sqlDb.deleteAddress(id)
+                mapOf("success" to true)
+            }
+            cleanPath == "/profile" && method == "GET" -> {
+                eng.sqlDb.getAllUsers().firstOrNull() ?: Profile(
+                    id = "usr-1",
+                    name = "Aarav Sharma",
+                    email = "aarav@example.com",
+                    phone = "+91 98765 43210",
+                    role = UserRole.CUSTOMER
                 )
             }
-            cleanPath == "/cart" -> Cart()
-            cleanPath == "/favorites" -> emptyList<String>()
+            cleanPath == "/profile" && method == "PUT" -> {
+                val p = if (body is Profile) body else gson.fromJson(gson.toJson(body), Profile::class.java)
+                eng.sqlDb.saveUser(p)
+                p
+            }
+            cleanPath == "/cart" && method == "PUT" -> {
+                val c = if (body is Cart) body else gson.fromJson(gson.toJson(body), Cart::class.java)
+                inMemoryCart = c
+                c
+            }
+            cleanPath == "/cart" && method == "GET" -> inMemoryCart
+            cleanPath == "/quote" -> {
+                eng.calculateQuote(inMemoryCart)
+            }
+            cleanPath == "/favorites" && method == "GET" -> inMemoryFavorites.toList()
+            cleanPath.startsWith("/favorites/") && method == "PUT" -> {
+                val id = cleanPath.substringAfterLast("/")
+                if (inMemoryFavorites.contains(id)) inMemoryFavorites.remove(id) else inMemoryFavorites.add(id)
+                inMemoryFavorites.toList()
+            }
+            cleanPath == "/reviews" && method == "POST" -> {
+                val rev = if (body is Review) body else gson.fromJson(gson.toJson(body), Review::class.java)
+                eng.sqlDb.saveReview(rev)
+                rev
+            }
+            cleanPath.startsWith("/reviews") && method == "GET" -> {
+                val restaurantId = cleanPath.substringAfterLast("/")
+                eng.sqlDb.getReviewsForRestaurant(restaurantId)
+            }
             cleanPath == "/analytics" -> eng.getAnalyticsData()
             (cleanPath == "/dine-in/pay" || cleanPath == "/api/dine-in/pay" || cleanPath == "/api/delivery/dine-in/pay") && method == "POST" -> {
                 val req = if (body is DineInPaymentRequest) body else gson.fromJson(gson.toJson(body), DineInPaymentRequest::class.java)
                 eng.settleDineInTabSecurely(req)
             }
             (cleanPath == "/dine-in/tabs" || cleanPath == "/api/dine-in/tabs" || cleanPath == "/api/delivery/dine-in/tabs") && method == "GET" -> eng.sqlDb.getAllDiningTabs()
-            (cleanPath.startsWith("/dine-in/tabs/") || cleanPath.startsWith("/api/dine-in/tabs/") || cleanPath.startsWith("/api/delivery/dine-in/tabs/")) && method == "GET" -> {
+            cleanPath.startsWith("/dine-in/tabs/") || cleanPath.startsWith("/api/dine-in/tabs/") || cleanPath.startsWith("/api/delivery/dine-in/tabs/") -> {
                 val id = cleanPath.substringAfterLast("/")
                 eng.sqlDb.getDiningTab(id) ?: eng.sqlDb.getOpenTabForTable(id)
             }
@@ -196,8 +298,20 @@ class DeliveryApi {
         }
     }
 
+    private fun isEmulator(): Boolean {
+        return android.os.Build.FINGERPRINT.startsWith("generic") ||
+                android.os.Build.HARDWARE.contains("goldfish") ||
+                android.os.Build.HARDWARE.contains("ranchu") ||
+                android.os.Build.MODEL.contains("google_sdk") ||
+                android.os.Build.MODEL.contains("Emulator")
+    }
+
     suspend fun request(path: String, method: String, body: Any?): String =
         withContext(Dispatchers.IO) {
+            val isLocalHost = BuildConfig.API_URL.contains("10.0.2.2") || BuildConfig.API_URL.contains("localhost")
+            if (isLocalHost && !isEmulator()) {
+                throw ApiFailure(503, "Physical device operating in native offline/cloud mode")
+            }
             val connection = URL(BuildConfig.API_URL + path).openConnection() as HttpURLConnection
             connection.requestMethod = method
             connection.connectTimeout = 2000

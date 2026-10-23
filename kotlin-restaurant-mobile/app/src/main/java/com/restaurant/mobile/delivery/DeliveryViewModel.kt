@@ -1,14 +1,27 @@
 package com.restaurant.mobile.delivery
 
 import android.app.Application
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Bundle
+import android.os.Looper
+import androidx.core.content.ContextCompat
+import java.util.Locale
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class AuthResult(val token: String, val profile: Profile)
 
@@ -21,12 +34,19 @@ object MockCatalog {
                 cuisine = "Awadhi · Mughlai · Biryani",
                 description = "Artisanal dum cooked biryanis and royal kebabs with slow-cooked aromatic spices.",
                 image = "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=800&auto=format&fit=crop",
-                address = "12/4 Indiranagar 100ft Road, Bengaluru",
-                latitude = 12.9716,
-                longitude = 77.5946,
+                address = "SV Road, Near Station, Goregaon West, Mumbai",
+                latitude = 19.1663,
+                longitude = 72.8480,
                 deliveryMinutes = 25,
                 deliveryFee = 3500,
-                open = true
+                open = true,
+                rating = 4.9,
+                reviewCount = 2340,
+                costForTwo = 950,
+                vibes = listOf("Fine Dining & Luxury", "Royal & Heritage", "Family & Kids Friendly", "Romantic Candlelight"),
+                amenities = listOf("AC Dining", "Valet Parking", "Live Sufi Music", "Private Dining Booths"),
+                tableBookingAvailable = true,
+                maxPartySize = 16
             ),
             Restaurant(
                 id = "rest-2",
@@ -34,12 +54,19 @@ object MockCatalog {
                 cuisine = "Italian · Woodfired Pizza · Pasta",
                 description = "Authentic Neapolitan hand-stretched sourdough pizzas and homemade fettuccine.",
                 image = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&auto=format&fit=crop",
-                address = "45 Lavelle Road, Shanthala Nagar, Bengaluru",
-                latitude = 12.9698,
-                longitude = 77.5986,
+                address = "Lokhandwala Complex, Andheri West, Mumbai",
+                latitude = 19.1412,
+                longitude = 72.8290,
                 deliveryMinutes = 30,
                 deliveryFee = 4500,
-                open = true
+                open = true,
+                rating = 4.8,
+                reviewCount = 1650,
+                costForTwo = 1200,
+                vibes = listOf("Rooftop & City View", "Romantic Candlelight", "Fine Dining & Luxury", "Outdoor Garden Seating"),
+                amenities = listOf("AC Dining", "Woodfired Oven", "Wine Bar", "Valet Parking"),
+                tableBookingAvailable = true,
+                maxPartySize = 12
             ),
             Restaurant(
                 id = "rest-3",
@@ -47,12 +74,19 @@ object MockCatalog {
                 cuisine = "South Indian · Chettinad · Dosa",
                 description = "Crispy ghee roast dosas, flaky Malabar parottas, and traditional filter coffee.",
                 image = "https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=800&auto=format&fit=crop",
-                address = "88 Koramangala 5th Block, Bengaluru",
-                latitude = 12.9352,
-                longitude = 77.6245,
+                address = "Linking Road, Bandra West, Mumbai",
+                latitude = 19.0596,
+                longitude = 72.8295,
                 deliveryMinutes = 20,
                 deliveryFee = 2500,
-                open = true
+                open = true,
+                rating = 4.7,
+                reviewCount = 3100,
+                costForTwo = 500,
+                vibes = listOf("Family & Kids Friendly", "Casual Bistro & Cafe", "Quick Bite"),
+                amenities = listOf("Pure Vegetarian Available", "Fast Service", "AC Seating", "High Chairs"),
+                tableBookingAvailable = true,
+                maxPartySize = 20
             ),
             Restaurant(
                 id = "rest-4",
@@ -60,12 +94,19 @@ object MockCatalog {
                 cuisine = "Pan-Asian · Ramen · Dim Sum",
                 description = "Silky broth ramen bowls, handmade bao buns, and freshly rolled sushi.",
                 image = "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=800&auto=format&fit=crop",
-                address = "22 100ft Road, HAL 2nd Stage, Indiranagar, Bengaluru",
-                latitude = 12.9784,
-                longitude = 77.6408,
+                address = "Juhu Tara Road, Juhu Beach, Mumbai",
+                latitude = 19.0988,
+                longitude = 72.8267,
                 deliveryMinutes = 35,
                 deliveryFee = 4000,
-                open = true
+                open = true,
+                rating = 4.8,
+                reviewCount = 1420,
+                costForTwo = 1100,
+                vibes = listOf("Modern & Trendy", "Casual Bistro & Cafe", "Live Music & Bar", "Romantic Candlelight"),
+                amenities = listOf("AC Dining", "Craft Cocktails", "Sushi Counter", "Live Teppanyaki"),
+                tableBookingAvailable = true,
+                maxPartySize = 10
             ),
             Restaurant(
                 id = "rest-5",
@@ -73,12 +114,19 @@ object MockCatalog {
                 cuisine = "Healthy Bowls · Salads · Sourdough",
                 description = "Nutrient-packed grain bowls, crisp salads, organic smoothies and fresh sourdough.",
                 image = "https://images.unsplash.com/photo-1540420773420-3366772f4999?w=800&auto=format&fit=crop",
-                address = "14 Vittal Mallya Road, Bengaluru",
-                latitude = 12.9719,
-                longitude = 77.5973,
+                address = "Central Avenue, Hiranandani Gardens, Powai, Mumbai",
+                latitude = 19.1176,
+                longitude = 72.9060,
                 deliveryMinutes = 20,
                 deliveryFee = 3000,
-                open = true
+                open = true,
+                rating = 4.9,
+                reviewCount = 1890,
+                costForTwo = 650,
+                vibes = listOf("Outdoor Garden Seating", "Casual Bistro & Cafe", "Health & Wellness", "Pet Friendly"),
+                amenities = listOf("Outdoor Garden Seating", "Artisanal Bakery", "High Speed Wi-Fi", "Pure Vegetarian Available"),
+                tableBookingAvailable = true,
+                maxPartySize = 8
             )
         ),
         dishes = listOf(
@@ -270,7 +318,7 @@ object MockCatalog {
                 restaurantId = "rest-3",
                 category = "Tiffin",
                 name = "Steamed Thatte Idli with Podi",
-                description = "Fluffy giant Bangalore-style steamed rice cake drenched in hot spiced ghee and gunpowder.",
+                description = "Fluffy giant Mumbai Matunga-style steamed rice cake drenched in hot spiced ghee and gunpowder.",
                 price = 12000,
                 image = "https://images.unsplash.com/photo-1589301760014-d929f3979dbc?w=800&auto=format&fit=crop",
                 vegetarian = true
@@ -397,6 +445,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     private val session = SessionStore(app)
     val backend = RestroFirebaseBackendEngine(app)
     val sqlDb get() = backend.sqlDb
+    val cloudEngine = FirebaseCloudEngine(app, backend.sqlDb)
     val api = DeliveryApi().apply { engine = backend }
     var starting by mutableStateOf(true)
         private set
@@ -453,6 +502,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var editingAddress by mutableStateOf<Address?>(null)
 
     // OTP Authentication State
+    var currentActivity: android.app.Activity? = null
     var otpSent by mutableStateOf(false)
     var otpTarget by mutableStateOf("")
     var otpPreviewCode by mutableStateOf<String?>(null)
@@ -460,10 +510,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var sessionExpiredBanner by mutableStateOf<String?>(null)
 
     // Proximity & Landmark Feed State
-    var currentLandmark by mutableStateOf("Indiranagar, Bengaluru")
-    var currentLatitude by mutableDoubleStateOf(12.9784)
-    var currentLongitude by mutableDoubleStateOf(77.6408)
-    val maxDeliveryRadiusKm = 6.5
+    var currentLandmark by mutableStateOf("Goregaon West, Mumbai")
+    var currentLatitude by mutableDoubleStateOf(19.1663)
+    var currentLongitude by mutableDoubleStateOf(72.8480)
+    val maxDeliveryRadiusKm = 15.0
 
     // In-Menu Multi-Restaurant Guard State
     var showMultiRestaurantDialog by mutableStateOf(false)
@@ -582,6 +632,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                         bookingConfirmationError = null
                         isConfirmingBooking = false
                         userTableBookings = listOf(result.booking) + userTableBookings.filterNot { it.id == result.booking.id }
+                        cloudEngine.saveBookingToCloud(result.booking)
                         observeActiveTableTab(result.booking.tableNumber)
                         try {
                             notificationHelper.showReservationConfirmed(
@@ -991,40 +1042,65 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-        run {
-            if (session.isSessionExpired()) {
-                revokeSession("Your session has expired. Please sign in again.")
+        viewModelScope.launch(Dispatchers.IO) {
+            val isExpired = session.isSessionExpired()
+            if (isExpired) {
+                withContext(Dispatchers.Main) {
+                    revokeSession("Your session has expired. Please sign in again.")
+                }
             } else {
                 api.token = session.load()
                 val savedProfile = session.loadProfile()
                 if (savedProfile != null) {
-                    profile = savedProfile
+                    withContext(Dispatchers.Main) {
+                        profile = savedProfile
+                    }
                 }
             }
-            try {
+
+            val loadedCatalog = try {
                 val remoteCatalog: Catalog = api.call("/catalog")
-                if (remoteCatalog.restaurants.isNotEmpty()) {
-                    catalog = remoteCatalog
-                }
+                if (remoteCatalog.restaurants.isNotEmpty()) remoteCatalog else backend.getCatalog()
             } catch (_: Exception) {
-                catalog = backend.getCatalog()
+                backend.getCatalog()
             }
+
             val storedAddresses = sqlDb.getAllAddresses()
-            if (storedAddresses.isNotEmpty()) {
-                addresses = storedAddresses
-            }
             val storedOrders = sqlDb.getAllOrders()
-            if (storedOrders.isNotEmpty()) {
-                orders = storedOrders
+            val currentUserId = profile?.id ?: "guest"
+            val storedBookings = sqlDb.getTableBookingsForUser(currentUserId)
+            val openTab = profile?.id?.let { sqlDb.getOpenTabForUser(it) }
+
+            withContext(Dispatchers.Main) {
+                catalog = loadedCatalog
+                relocateRestaurantsAround(currentLatitude, currentLongitude, currentLandmark)
+                if (storedAddresses.isNotEmpty()) addresses = storedAddresses
+                if (storedOrders.isNotEmpty()) orders = storedOrders
+                if (storedBookings.isNotEmpty()) userTableBookings = storedBookings
+                activeTableTab = openTab
+                observeActiveTableTab()
+                starting = false
             }
-            val storedBookings = sqlDb.getTableBookingsForUser(profile?.id ?: "guest")
-            if (storedBookings.isNotEmpty()) {
-                userTableBookings = storedBookings
+
+            detectAndApplyLiveGps()
+
+            // Real-time Cloud Firestore synchronization listeners
+            cloudEngine.observeOrdersRealTime(currentUserId) { cloudOrders ->
+                viewModelScope.launch(Dispatchers.Main) {
+                    if (cloudOrders.isNotEmpty()) {
+                        orders = cloudOrders
+                    }
+                }
             }
-            profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
-            observeActiveTableTab()
+            cloudEngine.observeTableBookingsRealTime(currentUserId) { cloudBookings ->
+                viewModelScope.launch(Dispatchers.Main) {
+                    if (cloudBookings.isNotEmpty()) {
+                        userTableBookings = cloudBookings
+                    }
+                }
+            }
+
             if (api.token != null) refreshAccount()
-            starting = false
         }
     }
 
@@ -1100,64 +1176,99 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         if (api.token != null) refreshAccount()
     }
 
+    var payrollRecords by mutableStateOf<List<StaffPayrollRecord>>(emptyList())
+    var forgotPasswordSuccessMessage by mutableStateOf<String?>(null)
+
+    fun loadPayroll() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = sqlDb.getAllPayrollRecords()
+            withContext(Dispatchers.Main) {
+                payrollRecords = list
+            }
+        }
+    }
+
+    fun disburseSalary(payrollId: String, method: String = "UPI / Bank Transfer") {
+        viewModelScope.launch(Dispatchers.IO) {
+            val txRef = "SAL-TXN-" + UUID.randomUUID().toString().take(8).uppercase()
+            sqlDb.disburseSalary(payrollId, method, txRef)
+            loadPayroll()
+        }
+    }
+
+    fun requestPasswordReset(target: String) {
+        val clean = target.trim()
+        if (clean.isBlank()) {
+            error = "Please enter your registered email or phone"
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val tempPass = sqlDb.generateAndSetTemporaryPassword(clean)
+            withContext(Dispatchers.Main) {
+                forgotPasswordSuccessMessage = "Temporary password dispatched to $clean: $tempPass. Please log in and update your password in Profile."
+                notificationHelper.notifyOtpDispatched(clean, tempPass)
+            }
+        }
+    }
+
+    fun changePassword(oldPass: String, newPass: String, onResult: (Boolean, String) -> Unit) {
+        val p = profile
+        if (p == null) {
+            onResult(false, "Please log in to change your password")
+            return
+        }
+        val target = p.email.ifBlank { p.phone }
+        if (newPass.length < 6) {
+            onResult(false, "New password must be at least 6 characters")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val isOldValid = sqlDb.verifyUserPassword(target, oldPass)
+            if (!isOldValid) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Current password does not match")
+                }
+                return@launch
+            }
+            val ok = sqlDb.updateUserPassword(target, newPass)
+            withContext(Dispatchers.Main) {
+                if (ok) onResult(true, "Password updated successfully!")
+                else onResult(false, "Failed to update password")
+            }
+        }
+    }
+
     fun auth(
         email: String,
         password: String,
         name: String,
         register: Boolean,
         role: UserRole = UserRole.CUSTOMER,
+        phone: String = "",
     ) = run {
+        val target = email.trim()
+        val isEmailTarget = target.contains("@")
+        val cleanEmail = if (isEmailTarget) target else if (target.isNotBlank()) "${target}@phone.restro.app" else "user@restro.app"
+        val cleanPhone = if (!isEmailTarget && target.isNotBlank()) {
+            if (target.startsWith("+91")) target else "+91 $target"
+        } else if (phone.isNotBlank()) {
+            if (phone.startsWith("+91")) phone.trim() else "+91 ${phone.trim()}"
+        } else "+91 98765 43210"
+
         try {
-            val response: AuthResult =
-                api.call(
-                    if (register) "/auth/register" else "/auth/login",
-                    "POST",
-                    Credentials(email, password, name, role.name),
-                )
-            val resolvedProfile = response.profile.copy(role = role)
+            val response: AuthResult = api.call(
+                if (register) "/auth/register" else "/auth/login",
+                "POST",
+                Credentials(target, password, name, role.name, phone = cleanPhone),
+            )
             api.token = response.token
             session.save(response.token)
-            profile = resolvedProfile
-            session.saveProfile(resolvedProfile)
-            sqlDb.saveUser(resolvedProfile)
+            profile = response.profile
+            session.saveProfile(response.profile)
             sessionExpiredBanner = null
             refreshAccount()
-        } catch (_: Exception) {
-            // Local SQLite / RBAC fallback login
-            val existing = sqlDb.getUserByTarget(email.trim())
-            val resolvedRole = when {
-                email.lowercase().startsWith("admin@") -> UserRole.ADMIN
-                email.lowercase().startsWith("waiter@") -> UserRole.WAITER
-                email.lowercase().startsWith("chef@") -> UserRole.CHEF_KDS
-                existing != null && role == UserRole.CUSTOMER -> existing.role
-                else -> role
-            }
-            val userProfile = Profile(
-                id = existing?.id ?: UUID.randomUUID().toString(),
-                name = name.ifBlank { existing?.name ?: email.substringBefore("@") },
-                email = email.trim(),
-                phone = existing?.phone ?: "+91 98765 43210",
-                role = resolvedRole
-            )
-            val fallbackToken = "local_jwt_${resolvedRole.name}_${UUID.randomUUID()}"
-            api.token = fallbackToken
-            session.save(fallbackToken)
-            profile = userProfile
-            session.saveProfile(userProfile)
-            sqlDb.saveUser(userProfile)
-            sessionExpiredBanner = null
-            if (addresses.isEmpty()) {
-                addresses = listOf(
-                    Address(
-                        id = "addr-1",
-                        label = "Home",
-                        line = "12 Main Street, Indiranagar",
-                        city = "Bengaluru",
-                        postcode = "560038",
-                        phone = "+91 98765 43210"
-                    )
-                )
-            }
+        } catch (e: Exception) {
+            error = e.message ?: "Authentication failed. Please verify credentials."
         }
     }
 
@@ -1168,6 +1279,38 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             return@run
         }
         otpTarget = cleanTarget
+
+        if (isPhone && currentActivity != null) {
+            val act = currentActivity!!
+            FirebasePhoneAuthManager.sendPhoneOtp(
+                activity = act,
+                phoneNumber = cleanTarget,
+                onCodeSent = { _ ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        otpSent = true
+                        otpNotificationBanner = "Real SMS dispatched via Firebase Auth to $cleanTarget"
+                        notificationHelper.notifyOtpDispatched(cleanTarget, "SMS sent to phone")
+                    }
+                },
+                onAutoVerified = { cred ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        cred.smsCode?.let { verifyOtp(it) }
+                    }
+                },
+                onFailure = { errorMsg ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        val localCode = (100000..999999).random().toString()
+                        sqlDb.storeOtp(cleanTarget, localCode, 300_000L)
+                        otpSent = true
+                        otpPreviewCode = localCode
+                        otpNotificationBanner = "OTP: $localCode (Notice: $errorMsg)"
+                        notificationHelper.notifyOtpDispatched(cleanTarget, localCode)
+                    }
+                }
+            )
+            return@run
+        }
+
         try {
             val response: OtpSendResponse = api.call(
                 "/auth/otp/send",
@@ -1176,13 +1319,12 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             )
             otpSent = true
             otpPreviewCode = response.previewOtp
-            otpNotificationBanner = response.message + (if (response.previewOtp != null) " • Code: ${response.previewOtp}" else "")
-        } catch (_: Exception) {
-            // Offline / local fallback OTP generator
-            val localCode = (100000..999999).random().toString()
-            otpSent = true
-            otpPreviewCode = localCode
-            otpNotificationBanner = "OTP sent to $cleanTarget • Code: $localCode (Demo / Offline)"
+            otpNotificationBanner = "Verification code dispatched to $cleanTarget"
+            response.previewOtp?.let { code ->
+                notificationHelper.notifyOtpDispatched(cleanTarget, code)
+            }
+        } catch (e: Exception) {
+            error = e.message ?: "Failed to send verification code"
         }
     }
 
@@ -1209,42 +1351,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             refreshAccount()
             route = "Home"
         } catch (e: Exception) {
-            // Check if matches local offline preview code or accepted in mock mode
-            if (otpPreviewCode == null || otpPreviewCode == cleanCode || cleanCode == "123456") {
-                val isEmail = otpTarget.contains("@")
-                val fallbackProfile = Profile(
-                    id = "user-" + UUID.randomUUID().toString().take(8),
-                    name = name.ifBlank { if (isEmail) otpTarget.substringBefore("@") else "Foodie" },
-                    email = if (isEmail) otpTarget else "user_${otpTarget.takeLast(4)}@restaurant.app",
-                    phone = if (!isEmail) otpTarget else "+91 98765 43210",
-                    role = role
-                )
-                val fallbackToken = "local_jwt_${role.name}_${UUID.randomUUID()}"
-                api.token = fallbackToken
-                session.save(fallbackToken)
-                profile = fallbackProfile
-                session.saveProfile(fallbackProfile)
-                sqlDb.saveUser(fallbackProfile)
-                sessionExpiredBanner = null
-                if (addresses.isEmpty()) {
-                    addresses = listOf(
-                        Address(
-                            id = "addr-1",
-                            label = "Home",
-                            line = "12 Main Street, Indiranagar",
-                            city = "Bengaluru",
-                            postcode = "560038",
-                            phone = fallbackProfile.phone
-                        )
-                    )
-                }
-                otpSent = false
-                otpPreviewCode = null
-                otpNotificationBanner = null
-                route = "Home"
-            } else {
-                error = e.message ?: "Invalid OTP verification code. Please try again."
-            }
+            error = e.message ?: "Invalid verification code. Please try again."
         }
     }
 
@@ -1272,7 +1379,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun logout() = run {
         try {
-            api.request("/auth/logout", "POST", null)
+            api.call<Unit>("/auth/logout", "POST", null)
         } catch (_: Exception) {}
         session.save(null)
         session.saveProfile(null)
@@ -1308,7 +1415,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 restaurantId = id,
                 author = "Karthik R.",
                 rating = 5,
-                text = "Generous portions, mouth-watering aroma. One of the best in Bengaluru!"
+                text = "Generous portions, mouth-watering aroma. One of the best in Mumbai!"
             ),
             Review(
                 orderId = "ord-3",
@@ -1440,6 +1547,168 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         currentLandmark = landmark
         currentLatitude = lat
         currentLongitude = lng
+        relocateRestaurantsAround(lat, lng, landmark)
+
+        // Ensure the active delivery address automatically matches the live location to guarantee in-range delivery
+        val liveAddr = Address(
+            id = "addr-live-location",
+            label = "Current Location (Live GPS)",
+            line = landmark,
+            city = landmark.split(",").getOrNull(1)?.trim() ?: "Local Area",
+            postcode = "400062",
+            phone = profile?.phone?.ifBlank { "+91 98765 43210" } ?: "+91 98765 43210",
+            latitude = lat,
+            longitude = lng
+        )
+        addresses = listOf(liveAddr) + addresses.filterNot { it.id == "addr-live-location" }
+        sqlDb.saveAddress(liveAddr)
+    }
+
+    fun relocateRestaurantsAround(lat: Double, lng: Double, landmark: String) {
+        val cleanLandmark = landmark.split(",").firstOrNull()?.trim() ?: landmark
+        val cityOrArea = landmark.split(",").getOrNull(1)?.trim() ?: ""
+        val areaLabel = if (cityOrArea.isNotBlank()) "$cleanLandmark, $cityOrArea" else cleanLandmark
+
+        val offsets = listOf(
+            Triple(0.0075, 0.0055, "100ft Road, $areaLabel"),
+            Triple(-0.0090, 0.0080, "Main Avenue, $areaLabel"),
+            Triple(0.0130, -0.0070, "Heritage Circle, $areaLabel"),
+            Triple(-0.0150, -0.0110, "Civic Center Road, $areaLabel"),
+            Triple(0.0040, -0.0035, "Green Garden Arcade, $areaLabel")
+        )
+        val updated = catalog.restaurants.mapIndexed { idx, rest ->
+            val offset = offsets.getOrElse(idx) { Triple(0.005 * (idx + 1), 0.005 * (idx + 1), "Near $areaLabel") }
+            val restLat = Math.round((lat + offset.first) * 10000.0) / 10000.0
+            val restLng = Math.round((lng + offset.second) * 10000.0) / 10000.0
+            val dist = calculateDistanceKmExplicit(lat, lng, restLat, restLng)
+            val mins = (dist * 5.0 + 12).toInt().coerceIn(15, 40)
+            rest.copy(
+                latitude = restLat,
+                longitude = restLng,
+                address = offset.third,
+                deliveryMinutes = mins,
+                open = true
+            )
+        }
+        catalog = catalog.copy(restaurants = updated)
+        try {
+            updated.forEach { r ->
+                sqlDb?.updateRestaurantLocation(r.id, r.address, r.latitude, r.longitude, r.deliveryMinutes)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun calculateDistanceKmExplicit(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+        val earthRadius = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLng = Math.toRadians(lng2 - lng1)
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2)
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return Math.round(earthRadius * c * 10.0) / 10.0
+    }
+
+    fun detectAndApplyLiveGps(force: Boolean = false) {
+        val app = getApplication<Application>()
+        val hasFine = ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val locationManager = app.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return@launch
+                val providers = listOf(
+                    LocationManager.GPS_PROVIDER,
+                    LocationManager.NETWORK_PROVIDER,
+                    LocationManager.PASSIVE_PROVIDER
+                )
+                var bestLoc: Location? = null
+                for (provider in providers) {
+                    try {
+                        val loc = locationManager.getLastKnownLocation(provider) ?: continue
+                        if (bestLoc == null || loc.time > bestLoc.time || (loc.hasAccuracy() && loc.accuracy < bestLoc.accuracy)) {
+                            bestLoc = loc
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (bestLoc != null) {
+                    resolveAndApplyLocation(bestLoc, app)
+                }
+
+                withContext(Dispatchers.Main) {
+                    // Register single update listener for freshest live fix
+                    for (provider in providers) {
+                        try {
+                            if (locationManager.isProviderEnabled(provider)) {
+                                locationManager.requestSingleUpdate(
+                                    provider,
+                                    object : LocationListener {
+                                        override fun onLocationChanged(location: Location) {
+                                            viewModelScope.launch(Dispatchers.IO) {
+                                                resolveAndApplyLocation(location, app)
+                                            }
+                                        }
+                                        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                                        override fun onProviderEnabled(provider: String) {}
+                                        override fun onProviderDisabled(provider: String) {}
+                                    },
+                                    Looper.getMainLooper()
+                                )
+                                break
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private suspend fun resolveAndApplyLocation(loc: Location, context: Context) = withContext(Dispatchers.IO) {
+        val lat = Math.round(loc.latitude * 10000.0) / 10000.0
+        val lng = Math.round(loc.longitude * 10000.0) / 10000.0
+        val accuracyM = if (loc.hasAccuracy()) " (±${loc.accuracy.toInt()}m)" else ""
+        var addressName = "Live Hardware Location$accuracyM"
+        try {
+            val geocoder = Geocoder(context, Locale.getDefault())
+            val addresses = geocoder.getFromLocation(lat, lng, 1)
+            if (!addresses.isNullOrEmpty()) {
+                val addr = addresses[0]
+                val subLoc = addr.subLocality ?: addr.locality ?: addr.featureName ?: "Local Area"
+                val thoroughfare = addr.thoroughfare ?: ""
+                val adminArea = addr.adminArea ?: ""
+                addressName = when {
+                    thoroughfare.isNotBlank() && subLoc.isNotBlank() -> "$thoroughfare, $subLoc"
+                    subLoc.isNotBlank() && adminArea.isNotBlank() -> "$subLoc, $adminArea"
+                    subLoc.isNotBlank() -> subLoc
+                    else -> "Live Location$accuracyM"
+                }
+            }
+        } catch (_: Exception) {}
+
+        withContext(Dispatchers.Main) {
+            setDeliveryLandmark(addressName, lat, lng)
+        }
+    }
+
+    fun getDineInRestaurants(
+        partySizeFilter: Int? = null,
+        vibeFilter: String = "All Vibes",
+        cuisineFilter: String = "All Cuisines",
+        searchQuery: String = ""
+    ): List<Restaurant> {
+        return catalog.restaurants.filter { rest ->
+            val matchesPartySize = partySizeFilter == null || rest.maxPartySize >= partySizeFilter
+            val matchesVibe = vibeFilter == "All Vibes" || rest.vibes.any { it.contains(vibeFilter, ignoreCase = true) }
+            val matchesCuisine = cuisineFilter == "All Cuisines" || rest.cuisine.contains(cuisineFilter, ignoreCase = true)
+            val matchesQuery = searchQuery.isBlank() ||
+                    rest.name.contains(searchQuery, ignoreCase = true) ||
+                    rest.cuisine.contains(searchQuery, ignoreCase = true) ||
+                    rest.vibes.any { it.contains(searchQuery, ignoreCase = true) } ||
+                    rest.amenities.any { it.contains(searchQuery, ignoreCase = true) }
+            matchesPartySize && matchesVibe && matchesCuisine && matchesQuery
+        }.sortedBy { getRestaurantDistanceKm(it) }
     }
 
     fun calculateDistanceKm(destLat: Double, destLng: Double): Double {
@@ -1504,16 +1773,59 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         return (sum % 10 == 0)
     }
 
-    fun notifyProximityAlert(orderId: String, riderName: String = "Ramesh") {
+    var liveRiderStatus by mutableStateOf("Preparing your food")
+    var liveRiderEtaMins by mutableIntStateOf(18)
+    var liveRiderDistanceKm by mutableDoubleStateOf(3.6)
+
+    fun syncLiveRiderProgress(orderId: String, distanceKm: Double, etaMinutes: Int, progress: Float) {
+        liveRiderDistanceKm = distanceKm
+        liveRiderEtaMins = etaMinutes
+
+        val statusText = when {
+            progress >= 1.0f -> "Delivered"
+            distanceKm <= 0.5 -> "Ramesh is at your gate"
+            progress > 0.6f -> "Out for delivery"
+            progress > 0.2f -> "Ramesh picked up order"
+            else -> "Preparing"
+        }
+        liveRiderStatus = statusText
+
+        orders = orders.map {
+            if (it.id == orderId) it.copy(status = if (statusText.contains("Delivered")) "Delivered" else "Out for delivery") else it
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.updateOrderStatus(orderId, if (statusText.contains("Delivered")) "Delivered" else "Out for delivery")
+        }
+    }
+
+    fun notifyProximityAlert(orderId: String, riderName: String = "Ramesh Kumar") {
         notificationHelper.notifyRiderNearby(orderId, riderName)
+        liveRiderStatus = "$riderName is at your gate"
+        orders = orders.map {
+            if (it.id == orderId) it.copy(status = "Out for delivery") else it
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.updateOrderStatus(orderId, "Out for delivery")
+            sqlDb.recordAuditLog("PROXIMITY_ALERT", riderName, "RIDER", orderId, "Rider is within 500m of customer gate")
+        }
     }
 
     fun notifyOrderDelivered(orderId: String) {
         notificationHelper.notifyOrderDelivered(orderId)
+        liveRiderStatus = "Delivered"
+        orders = orders.map { if (it.id == orderId) it.copy(status = "Delivered") else it }
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.updateOrderStatus(orderId, "Delivered")
+            sqlDb.recordAuditLog("ORDER_DELIVERED", "Ramesh Kumar", "RIDER", orderId, "Order successfully delivered to customer")
+        }
     }
 
     fun markOrderDelivered(orderId: String) {
         orders = orders.map { if (it.id == orderId) it.copy(status = "Delivered") else it }
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.updateOrderStatus(orderId, "Delivered")
+        }
     }
 
     private fun computeQuote(): Quote {
@@ -1562,26 +1874,33 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     fun loadQuote() = run {
         computeQuote()
 
-        if (addresses.isEmpty()) {
-            val defaultAddr = Address(
-                id = "addr-default",
-                label = "Home",
-                line = "Flat 402, Green Glen Layout, Bellandur",
-                city = "Bengaluru",
-                postcode = "560103",
-                phone = profile?.phone?.ifBlank { "+91 98765 43210" } ?: "+91 98765 43210",
-                latitude = 12.9352,
-                longitude = 77.6245
-            )
-            addresses = listOf(defaultAddr)
-            sqlDb.saveAddress(defaultAddr)
+        val liveAddr = Address(
+            id = "addr-live-location",
+            label = "Current Location (Live GPS)",
+            line = currentLandmark,
+            city = currentLandmark.split(",").getOrNull(1)?.trim() ?: "Local Area",
+            postcode = "400062",
+            phone = profile?.phone?.ifBlank { "+91 98765 43210" } ?: "+91 98765 43210",
+            latitude = currentLatitude,
+            longitude = currentLongitude
+        )
+        val hasNearbyAddress = addresses.any {
+            val aLat = it.latitude ?: 0.0
+            val aLng = it.longitude ?: 0.0
+            calculateDistanceKmExplicit(currentLatitude, currentLongitude, aLat, aLng) <= 15.0
+        }
+        if (addresses.isEmpty() || !hasNearbyAddress) {
+            addresses = listOf(liveAddr) + addresses.filterNot { it.id == "addr-live-location" }
+            sqlDb.saveAddress(liveAddr)
         }
 
         if (api.token != null) {
             try {
                 quote = api.call("/quote")
                 val remoteAddresses: List<Address> = api.call("/addresses")
-                if (remoteAddresses.isNotEmpty()) addresses = remoteAddresses
+                if (remoteAddresses.isNotEmpty()) {
+                    addresses = remoteAddresses
+                }
             } catch (_: Exception) {}
         }
         route = "Checkout"
@@ -1590,25 +1909,32 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     fun checkout(addressId: String, paymentMethod: String = "Cash on delivery") = run {
         val currentQuote: Quote = quote ?: computeQuote()
         val total = currentQuote.total
+        val liveFallbackAddr = Address(
+            id = "addr-live-location",
+            label = "Current Location (Live GPS)",
+            line = currentLandmark,
+            city = currentLandmark.split(",").getOrNull(1)?.trim() ?: "Local Area",
+            postcode = "400062",
+            phone = profile?.phone?.ifBlank { "+91 98765 43210" } ?: "+91 98765 43210",
+            latitude = currentLatitude,
+            longitude = currentLongitude
+        )
         val selectedAddr = addresses.find { it.id == addressId }
-            ?: addresses.firstOrNull()
-            ?: Address(
-                id = "addr-default",
-                label = "Home",
-                line = "Flat 402, Green Glen Layout, Bellandur",
-                city = "Bengaluru",
-                postcode = "560103",
-                phone = profile?.phone?.ifBlank { "+91 98765 43210" } ?: "+91 98765 43210",
-                latitude = 12.9352,
-                longitude = 77.6245
-            ).also {
-                addresses = listOf(it)
+            ?: addresses.firstOrNull {
+                val aLat = it.latitude ?: 0.0
+                val aLng = it.longitude ?: 0.0
+                calculateDistanceKmExplicit(currentLatitude, currentLongitude, aLat, aLng) <= 15.0
+            }
+            ?: liveFallbackAddr.also {
+                addresses = listOf(it) + addresses.filterNot { a -> a.id == it.id }
                 sqlDb.saveAddress(it)
             }
 
         val checkoutObj = Checkout(selectedAddr.id, paymentMethod, checkoutKey, total)
         try {
             val confirmedOrder = backend.placeOrder(checkoutObj, cart, selectedAddr)
+            // Real-time Cloud Firestore sync
+            cloudEngine.saveOrderToCloud(confirmedOrder)
             orders = listOf(confirmedOrder) + orders.filterNot { it.id == confirmedOrder.id }
             orderId = confirmedOrder.id
             cart = Cart()
@@ -1627,6 +1953,49 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cancelOrder(id: String) {
         orders = orders.map { if (it.id == id) it.copy(status = "Cancelled") else it }
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.updateOrderStatus(id, "Cancelled")
+            sqlDb.recordAuditLog("ORDER_CANCELLED", profile?.email ?: "Customer", profile?.role?.name ?: "CUSTOMER", id, "Delivery order cancelled by customer")
+        }
+    }
+
+    var inventoryItems by mutableStateOf<List<InventoryItem>>(emptyList())
+    var auditLogs by mutableStateOf<List<AuditLogEntry>>(emptyList())
+
+    fun loadInventory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val items = sqlDb.getAllInventoryItems()
+            withContext(Dispatchers.Main) {
+                inventoryItems = items
+            }
+        }
+    }
+
+    fun updateStock(itemId: String, delta: Double, reason: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.recordStockMovement(itemId, delta, reason, actor = profile?.name ?: "Manager")
+            loadInventory()
+        }
+    }
+
+    fun loadAuditLogs() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val logs = sqlDb.getAllAuditLogs()
+            withContext(Dispatchers.Main) {
+                auditLogs = logs
+            }
+        }
+    }
+
+    fun updateDishPriceAndAvailability(dishId: String, newPrice: Long, isAvailable: Boolean, onDone: () -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            sqlDb.updateDishPriceAndAvailability(dishId, newPrice, isAvailable)
+            sqlDb.recordAuditLog("MENU_UPDATED", profile?.email ?: "admin@restro.app", "ADMIN", dishId, "Price changed to ₹${newPrice / 100}, available=$isAvailable")
+            refresh()
+            withContext(Dispatchers.Main) {
+                onDone()
+            }
+        }
     }
 
     fun reorder(order: DeliveryOrder) {
@@ -1665,7 +2034,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteAddress(id: String) = run {
         try {
-            api.request("/addresses/$id", "DELETE", null)
+            api.call<Unit>("/addresses/$id", "DELETE", null)
             addresses = api.call("/addresses")
         } catch (_: Exception) {
             addresses = addresses.filterNot { it.id == id }
@@ -1714,8 +2083,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             when (route) {
                 "Map" -> "Home"
                 "Food",
-                "Reviews",
-                "BookTable" -> if (restaurantId.isNotBlank()) "Restaurant" else "Home"
+                "Reviews" -> if (restaurantId.isNotBlank()) "Restaurant" else "Home"
+                "BookTable" -> "DineIn"
                 "BookTableReview" -> "BookTable"
                 "BookTableSuccess" -> {
                     confirmedBooking = null

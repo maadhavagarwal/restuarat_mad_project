@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.gms.google-services")
 }
 
 val restroLocalProperties = Properties().apply {
@@ -28,6 +29,24 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "API_URL", "\"" + (providers.gradleProperty("restroApiUrl").orNull ?: "https://localhost/api/delivery") + "\"" )
+        val mapsKey = providers.gradleProperty("MAPS_API_KEY").orNull ?: restroLocalProperties.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
+        val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: ""
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
+        buildConfigField("String", "RAZORPAY_KEY_ID", "\"$rzpKey\"")
+        // Firebase is only treated as configured when google-services.json exists and does not
+        // contain the known placeholder OAuth client IDs. A placeholder config makes every Firebase
+        // call fail at runtime, so the app must not pretend phone auth / Firestore are available.
+        val googleServicesFile = file("google-services.json")
+        val googleServicesText = if (googleServicesFile.isFile) googleServicesFile.readText() else ""
+        val firebaseConfigured = googleServicesText.isNotBlank() &&
+            !googleServicesText.contains("abcdef1234567890") &&
+            !googleServicesText.contains("webclient1234567890")
+        buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
+        // Online payments need a provider SDK plus a server holding the secret key that verifies
+        // signatures/webhooks. Neither exists yet, so online prepaid checkout is disabled by default.
+        val onlinePaymentsVerified = (providers.gradleProperty("restroOnlinePaymentsVerified").orNull ?: "false").toBoolean()
+        buildConfigField("boolean", "ONLINE_PAYMENTS_VERIFIED", onlinePaymentsVerified.toString())
+        manifestPlaceholders["MAPS_API_KEY"] = mapsKey
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -91,6 +110,12 @@ dependencies {
     // Coroutines & Lifecycle
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+
+    // Firebase BoM & SDKs
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
+    implementation("com.google.firebase:firebase-messaging-ktx")
 }
 
 
