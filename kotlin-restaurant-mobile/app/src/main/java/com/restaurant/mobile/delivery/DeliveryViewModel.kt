@@ -15,6 +15,7 @@ import java.util.Locale
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.FirebaseAuth
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -1024,7 +1025,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             cart = cart.copy(coupon = code)
         }
-        quote = null
+        computeQuote()
         resetCheckoutKey()
     }
 
@@ -1288,8 +1289,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 onCodeSent = { _ ->
                     viewModelScope.launch(Dispatchers.Main) {
                         otpSent = true
-                        otpNotificationBanner = "Real SMS dispatched via Firebase Auth to $cleanTarget"
-                        notificationHelper.notifyOtpDispatched(cleanTarget, "SMS sent to phone")
+                        otpPreviewCode = null
+                        otpNotificationBanner = "Verification code sent via SMS to $cleanTarget"
                     }
                 },
                 onAutoVerified = { cred ->
@@ -1299,12 +1300,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onFailure = { errorMsg ->
                     viewModelScope.launch(Dispatchers.Main) {
-                        val localCode = (100000..999999).random().toString()
-                        sqlDb.storeOtp(cleanTarget, localCode, 300_000L)
-                        otpSent = true
-                        otpPreviewCode = localCode
-                        otpNotificationBanner = "OTP: $localCode (Notice: $errorMsg)"
-                        notificationHelper.notifyOtpDispatched(cleanTarget, localCode)
+                        otpSent = false
+                        otpPreviewCode = null
+                        otpNotificationBanner = null
+                        error = "SMS dispatch failed: $errorMsg. Please check the number or verify network connection."
                     }
                 }
             )
@@ -1318,11 +1317,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 OtpSendRequest(target = cleanTarget, type = if (isPhone) "phone" else "email")
             )
             otpSent = true
-            otpPreviewCode = response.previewOtp
+            otpPreviewCode = null
             otpNotificationBanner = "Verification code dispatched to $cleanTarget"
-            response.previewOtp?.let { code ->
-                notificationHelper.notifyOtpDispatched(cleanTarget, code)
-            }
         } catch (e: Exception) {
             error = e.message ?: "Failed to send verification code"
         }
@@ -1334,6 +1330,54 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             error = "Please enter the 6-digit verification code"
             return@run
         }
+
+        if (FirebasePhoneAuthManager.storedVerificationId != null) {
+            FirebasePhoneAuthManager.verifyCode(
+                code = cleanCode,
+                onSuccess = { credential ->
+                    try {
+                        FirebaseAuth.getInstance().signInWithCredential(credential)
+                            .addOnSuccessListener { authResult ->
+                                viewModelScope.launch(Dispatchers.Main) {
+                                    val fbUser = authResult.user
+                                    if (fbUser != null) {
+                                        val result = backend.provisionFirebasePhoneUser(
+                                            firebaseUid = fbUser.uid,
+                                            phoneNumber = fbUser.phoneNumber ?: otpTarget,
+                                            name = name
+                                        )
+                                        api.token = result.token
+                                        session.save(result.token)
+                                        profile = result.profile
+                                        session.saveProfile(result.profile)
+                                        sessionExpiredBanner = null
+                                        otpSent = false
+                                        otpPreviewCode = null
+                                        otpNotificationBanner = null
+                                        FirebasePhoneAuthManager.storedVerificationId = null
+                                        refreshAccount()
+                                        route = "Home"
+                                    } else {
+                                        error = "Firebase sign-in failed. Please try again."
+                                    }
+                                }
+                            }
+                            .addOnFailureListener { e ->
+                                viewModelScope.launch(Dispatchers.Main) {
+                                    error = e.localizedMessage ?: "Invalid verification code. Please try again."
+                                }
+                            }
+                    } catch (e: Exception) {
+                        error = e.localizedMessage ?: "Verification error"
+                    }
+                },
+                onError = { err ->
+                    error = err
+                }
+            )
+            return@run
+        }
+
         try {
             val response: AuthResult = api.call(
                 "/auth/otp/verify",
@@ -1437,11 +1481,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun changeCart(lines: List<Line>, after: String? = null) = run {
         try {
-            cart = api.call("/cart", "PUT", Cart(lines))
+            cart = api.call("/cart", "PUT", cart.copy(lines = lines))
         } catch (_: Exception) {
-            cart = Cart(lines)
+            cart = cart.copy(lines = lines)
         }
-        quote = null
+        computeQuote()
         resetCheckoutKey()
         if (after != null) route = after
     }
@@ -1828,7 +1872,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun computeQuote(): Quote {
+    fun computeQuote(): Quote {
         return try {
             val q = backend.calculateQuote(cart)
             quote = q
@@ -1842,7 +1886,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             }
             val delivery = 4000L
             val tax = (subtotal * 0.05).toLong()
-            val discount = if (cart.coupon.isNotBlank()) 5000L.coerceAtMost(subtotal) else 0L
+            val couponCode = cart.coupon.trim().uppercase()
+            val discount = when (couponCode) {
+                "WELCOME50" -> (subtotal / 2L).coerceAtMost(5000L)
+                "FEAST" -> if (subtotal >= 20000L) 5000L else 0L
+                "FEAST100" -> if (subtotal >= 40000L) 10000L else 0L
+                "FREEDEL" -> delivery
+                else -> if (cart.coupon.isNotBlank()) 5000L.coerceAtMost(subtotal) else 0L
+            }
             val fallbackRestId = cart.lines.firstOrNull()?.let { line ->
                 catalog.dishes.find { it.id == line.dishId }?.restaurantId
             } ?: "rest-1"

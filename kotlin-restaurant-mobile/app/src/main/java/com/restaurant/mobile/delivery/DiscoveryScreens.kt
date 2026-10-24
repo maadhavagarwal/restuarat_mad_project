@@ -253,14 +253,6 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                         fontSize = 12.sp,
                                         modifier = Modifier.weight(1f)
                                     )
-                                    if (vm.otpPreviewCode != null) {
-                                        TextButton(
-                                            onClick = { otpCode = vm.otpPreviewCode ?: "" },
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                                        ) {
-                                            Text("Autofill", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RestroTokens.coral)
-                                        }
-                                    }
                                 }
                             }
                         }

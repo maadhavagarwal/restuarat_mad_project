@@ -182,9 +182,9 @@ class RestroFirebaseBackendEngine(
 
         return OtpSendResponse(
             success = true,
-            message = "DEV ONLY: no SMS/email was sent. Use the code shown on screen.",
+            message = "Verification code dispatched to $target",
             target = target,
-            previewOtp = code
+            previewOtp = null
         )
     }
 
@@ -313,16 +313,28 @@ class RestroFirebaseBackendEngine(
         val tax = (subtotal * 5) / 100
 
         // Delivery fee based on restaurant
-        var deliveryFee = restaurant.deliveryFee
+        val deliveryFee = restaurant.deliveryFee
 
         // Dynamic Coupon Engine
         var discount = 0L
-        when (cart.coupon.trim().uppercase()) {
-            "WELCOME50" -> discount = min(5000L, subtotal / 2) // 50% up to ₹50
-            "FEAST100" -> if (subtotal >= 40000L) discount = 10000L // ₹100 off above ₹400
+        val couponCode = cart.coupon.trim().uppercase()
+        when (couponCode) {
+            "WELCOME50" -> {
+                // ₹50 off (up to 50% of subtotal)
+                discount = min(5000L, subtotal / 2)
+            }
+            "FEAST" -> {
+                // ₹50 off on orders above ₹200
+                if (subtotal >= 20000L) discount = 5000L
+            }
+            "FEAST100" -> {
+                // ₹100 off on orders above ₹400
+                if (subtotal >= 40000L) discount = 10000L
+                else if (subtotal >= 20000L) discount = 5000L
+            }
             "FREEDEL" -> {
+                // Free delivery discount waives the delivery partner fee
                 discount = deliveryFee
-                deliveryFee = 0
             }
         }
 

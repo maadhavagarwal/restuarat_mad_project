@@ -209,6 +209,41 @@ fun CartScreen(vm: DeliveryViewModel) {
             }
         }
 
+        // Applied Coupon Indicator
+        if (vm.cart.coupon.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(RestroTokens.coral.copy(alpha = 0.12f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                    Text(
+                        "Coupon '${vm.cart.coupon}' applied",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RestroTokens.coral
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        couponInput = ""
+                        vm.applyCoupon("")
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text("Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+
         // Available Coupons
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -220,13 +255,28 @@ fun CartScreen(vm: DeliveryViewModel) {
                 "FREEDEL" to "Free delivery on orders"
             )
             coupons.forEach { (code, desc) ->
+                val isSelected = vm.cart.coupon.equals(code, ignoreCase = true)
                 SuggestionChip(
                     onClick = {
                         couponInput = code
                         vm.applyCoupon(code)
                     },
-                    label = { Text("$code · $desc", fontSize = 11.sp) },
-                    icon = { Icon(Icons.Default.LocalOffer, null, modifier = Modifier.size(14.dp), tint = RestroTokens.coral) }
+                    label = {
+                        Text(
+                            "$code · $desc",
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) RestroTokens.coral else Color.Unspecified
+                        )
+                    },
+                    icon = {
+                        Icon(
+                            if (isSelected) Icons.Default.CheckCircle else Icons.Default.LocalOffer,
+                            null,
+                            modifier = Modifier.size(14.dp),
+                            tint = RestroTokens.coral
+                        )
+                    }
                 )
             }
         }
@@ -236,23 +286,17 @@ fun CartScreen(vm: DeliveryViewModel) {
         // Bill Breakdown
         Text("Bill Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
-        val subtotal = vm.cart.lines.sumOf { line ->
-            val dishPrice = vm.catalog.dishes.find { it.id == line.dishId }?.price ?: 0L
-            dishPrice * line.quantity
-        }
-        val deliveryFee = 4000L // Rs 40.00
-        val tax = (subtotal * 0.05).toLong()
-        val discount = if (vm.cart.coupon.isNotBlank()) 5000L.coerceAtMost(subtotal) else 0L
-        val total = (subtotal + deliveryFee + tax - discount).coerceAtLeast(0L)
+        val q = vm.quote ?: vm.computeQuote()
 
-        BillRow("Item Subtotal", subtotal)
-        BillRow("Delivery Partner Fee", deliveryFee)
-        BillRow("Taxes & Charges (5% GST)", tax)
-        if (vm.cart.coupon.isNotBlank()) {
-            BillRow("Coupon Discount", -discount)
+        BillRow("Item Subtotal", q.subtotal)
+        BillRow("Delivery Partner Fee", q.delivery)
+        BillRow("Taxes & Charges (5% GST)", q.tax)
+        if (q.discount > 0L) {
+            val couponName = if (vm.cart.coupon.isNotBlank()) " (${vm.cart.coupon})" else ""
+            BillRow("Coupon Discount$couponName", -q.discount)
         }
         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-        BillRow("To Pay", vm.quote?.total ?: total)
+        BillRow("To Pay", q.total)
 
         Spacer(Modifier.height(8.dp))
 
@@ -382,7 +426,8 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
 
         HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
-        val quoteTotal = vm.quote?.total ?: 0L
+        val effectiveQuote = vm.quote ?: vm.computeQuote()
+        val quoteTotal = effectiveQuote.total
         BillRow("Grand Total", quoteTotal)
 
         val isOnlinePayment = selectedPaymentMethod in listOf("UPI", "Card", "Netbanking")
@@ -404,7 +449,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
         val addrId = selectedAddressId.ifBlank { vm.addresses.firstOrNull()?.id ?: "addr-default" }
         PaymentGatewayBottomSheet(
             vm = vm,
-            totalAmount = vm.quote?.total ?: 0L,
+            totalAmount = (vm.quote ?: vm.computeQuote()).total,
             selectedAddressId = addrId,
             initialMethod = selectedPaymentMethod,
             onDismiss = { showPaymentSheet = false }
