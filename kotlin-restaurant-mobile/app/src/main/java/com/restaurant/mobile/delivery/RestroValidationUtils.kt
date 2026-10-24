@@ -17,6 +17,8 @@ object RestroValidationUtils {
         var digits = input.filter { it.isDigit() }
         if (digits.length > 10 && digits.startsWith("91")) {
             digits = digits.substring(2)
+        } else if (digits.length == 11 && digits.startsWith("0")) {
+            digits = digits.substring(1)
         }
         return digits.take(10)
     }

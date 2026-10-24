@@ -96,6 +96,32 @@ fun AuthScreen(vm: DeliveryViewModel) {
             }
         }
 
+        // Inline Authentication Error Banner
+        vm.error?.let { err ->
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    Text(
+                        err,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { vm.error = null }, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Close, null, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+
         Heading(
             if (authMode == 0) "Fast & Secure\nSign In."
             else if (register) "Your next favourite\nstarts here."
@@ -170,6 +196,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                 }
 
                 if (otpType == 0) {
+                    val phoneMsg = RestroValidationUtils.getPhoneValidationMessage(phoneInput)
                     OutlinedTextField(
                         value = phoneInput,
                         onValueChange = { phoneInput = it },
@@ -179,9 +206,16 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         leadingIcon = { Icon(Icons.Default.Call, null, tint = RestroTokens.coral) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         singleLine = true,
+                        isError = phoneInput.isNotBlank() && !RestroValidationUtils.isValidPhone(phoneInput),
+                        supportingText = {
+                            if (phoneMsg != null) {
+                                Text(phoneMsg, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                            }
+                        },
                         shape = RoundedCornerShape(14.dp)
                     )
                 } else {
+                    val emailMsg = RestroValidationUtils.getEmailValidationMessage(emailOtpInput)
                     OutlinedTextField(
                         value = emailOtpInput,
                         onValueChange = { emailOtpInput = it },
@@ -191,6 +225,12 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         leadingIcon = { Icon(Icons.Default.Email, null, tint = RestroTokens.coral) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
+                        isError = emailOtpInput.isNotBlank() && !RestroValidationUtils.isValidEmail(emailOtpInput),
+                        supportingText = {
+                            if (emailMsg != null) {
+                                Text(emailMsg, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                            }
+                        },
                         shape = RoundedCornerShape(14.dp)
                     )
                 }
@@ -206,11 +246,12 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     shape = RoundedCornerShape(14.dp)
                 )
 
+                val isTargetValid = if (otpType == 0) RestroValidationUtils.isValidPhone(phoneInput) else RestroValidationUtils.isValidEmail(emailOtpInput)
                 Action(
                     label = "Send Verification OTP",
-                    enabled = !vm.busy && if (otpType == 0) phoneInput.trim().length >= 8 else emailOtpInput.contains("@")
+                    enabled = !vm.busy && isTargetValid
                 ) {
-                    val target = if (otpType == 0) phoneInput else emailOtpInput
+                    val target = if (otpType == 0) RestroValidationUtils.sanitizePhone(phoneInput) else emailOtpInput.trim()
                     vm.sendOtp(target, isPhone = (otpType == 0))
                 }
             } else {

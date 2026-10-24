@@ -975,36 +975,6 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
         Row(
             Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
-                .clickable {
-                    if (p?.role?.isStaff == true && onOpenStaffPortal != null) {
-                        onOpenStaffPortal()
-                    } else {
-                        vm.route = "ForbiddenStaff"
-                    }
-                }
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Storefront, null, tint = RestroTokens.coral)
-                Column {
-                    Text("Staff Operations Portal (POS / KDS / Admin)", fontWeight = FontWeight.Medium)
-                    Text(
-                        if (p?.role?.isStaff == true) "Authorized as ${p.role.label}"
-                        else "Requires Waiter, Kitchen Chef, or Admin role",
-                        fontSize = 11.sp,
-                        color = RestroTokens.muted
-                    )
-                }
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-        }
-
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
                 .clickable { vm.route = "Addresses" }
                 .background(RestroTokens.surface)
                 .padding(16.dp),

@@ -1324,18 +1324,32 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             error = "Please enter a valid phone number or email"
             return@run
         }
-        otpTarget = cleanTarget
+        if (isPhone) {
+            if (!RestroValidationUtils.isValidPhone(cleanTarget)) {
+                error = RestroValidationUtils.getPhoneValidationMessage(cleanTarget) ?: "Please enter a valid 10-digit mobile number"
+                return@run
+            }
+        } else {
+            if (!RestroValidationUtils.isValidEmail(cleanTarget)) {
+                error = RestroValidationUtils.getEmailValidationMessage(cleanTarget) ?: "Please enter a valid email address (e.g. you@example.com)"
+                return@run
+            }
+            FirebasePhoneAuthManager.storedVerificationId = null
+        }
+        error = null
+        val resolvedTarget = if (isPhone) RestroValidationUtils.sanitizePhone(cleanTarget) else cleanTarget
+        otpTarget = resolvedTarget
 
         if (isPhone && currentActivity != null) {
             val act = currentActivity!!
             FirebasePhoneAuthManager.sendPhoneOtp(
                 activity = act,
-                phoneNumber = cleanTarget,
+                phoneNumber = resolvedTarget,
                 onCodeSent = { _ ->
                     viewModelScope.launch(Dispatchers.Main) {
                         otpSent = true
                         otpPreviewCode = null
-                        otpNotificationBanner = "Verification code sent via SMS to $cleanTarget"
+                        otpNotificationBanner = "Verification code sent via SMS to $resolvedTarget"
                     }
                 },
                 onAutoVerified = { cred ->
@@ -1359,11 +1373,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             val response: OtpSendResponse = api.call(
                 "/auth/otp/send",
                 "POST",
-                OtpSendRequest(target = cleanTarget, type = if (isPhone) "phone" else "email")
+                OtpSendRequest(target = resolvedTarget, type = if (isPhone) "phone" else "email")
             )
             otpSent = true
             otpPreviewCode = null
-            otpNotificationBanner = "Verification code dispatched to $cleanTarget"
+            otpNotificationBanner = "Verification code dispatched to $resolvedTarget"
         } catch (e: Exception) {
             error = e.message ?: "Failed to send verification code"
         }
@@ -1452,6 +1466,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         otpSent = false
         otpPreviewCode = null
         otpNotificationBanner = null
+        FirebasePhoneAuthManager.storedVerificationId = null
+        error = null
     }
 
     fun verifyStaffPinAndPromoteRole(pin: String): UserRole? {
@@ -1478,6 +1494,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         otpTarget = ""
         otpPreviewCode = null
         otpNotificationBanner = null
+        FirebasePhoneAuthManager.storedVerificationId = null
+        try { FirebaseAuth.getInstance().signOut() } catch (_: Exception) {}
         cart = Cart()
         quote = null
         addresses = emptyList()

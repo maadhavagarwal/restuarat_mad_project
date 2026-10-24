@@ -122,7 +122,6 @@ class MainActivity : ComponentActivity() {
             }
 
             var isStaffMode by rememberSaveable { mutableStateOf(false) }
-            var showStaffPinPad by rememberSaveable { mutableStateOf(false) }
             var lastStaffInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
 
             LaunchedEffect(deliveryVm.profile) {
@@ -149,30 +148,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            if (showStaffPinPad && deliveryVm.profile != null) {
-                com.restaurant.mobile.delivery.StaffPinPadDialog(
-                    onVerifyPin = { pin -> deliveryVm.verifyStaffPinAndPromoteRole(pin) },
-                    onSuccess = { verifiedRole ->
-                        showStaffPinPad = false
-                        lastStaffInteractionMs = System.currentTimeMillis()
-                        isStaffMode = true
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Vault Unlocked: ${verifiedRole.label}",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    },
-                    onDismiss = { showStaffPinPad = false }
-                )
-            }
-
             if (isStaffMode && deliveryVm.profile?.role?.isStaff == true) {
                 RestaurantMobileApp(
                     userRole = deliveryVm.profile?.role ?: com.restaurant.mobile.delivery.UserRole.WAITER,
                     onBackToCustomer = { isStaffMode = false },
-                    onSwitchStaffPin = {
-                        lastStaffInteractionMs = System.currentTimeMillis()
-                        showStaffPinPad = true
+                    onSignOut = {
+                        deliveryVm.logout()
+                        isStaffMode = false
+                        Toast.makeText(this@MainActivity, "Signed out of Staff Portal", Toast.LENGTH_SHORT).show()
                     },
                     onUserInteraction = {
                         lastStaffInteractionMs = System.currentTimeMillis()
@@ -186,19 +169,7 @@ class MainActivity : ComponentActivity() {
                 )
             } else {
                 com.restaurant.mobile.delivery.DeliveryApp(
-                    vm = deliveryVm,
-                    onOpenStaffPortal = {
-                        val profile = deliveryVm.profile
-                        if (profile == null) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Please sign in first to access the Staff Portal",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        } else {
-                            showStaffPinPad = true
-                        }
-                    }
+                    vm = deliveryVm
                 )
             }
         }
@@ -220,7 +191,7 @@ enum class NavigationScreen(val title: String, val icon: ImageVector) {
 fun RestaurantMobileApp(
     userRole: com.restaurant.mobile.delivery.UserRole = com.restaurant.mobile.delivery.UserRole.ADMIN,
     onBackToCustomer: (() -> Unit)? = null,
-    onSwitchStaffPin: (() -> Unit)? = null,
+    onSignOut: (() -> Unit)? = null,
     onUserInteraction: (() -> Unit)? = null,
     onShowToast: (String) -> Unit,
     sqlDb: com.restaurant.mobile.delivery.RestroSqlDatabase? = null,
@@ -374,11 +345,11 @@ fun RestaurantMobileApp(
                         }
                     },
                     actions = {
-                        if (onSwitchStaffPin != null) {
-                            IconButton(onClick = onSwitchStaffPin) {
+                        if (onSignOut != null) {
+                            IconButton(onClick = onSignOut) {
                                 Icon(
-                                    Icons.Default.Pin,
-                                    contentDescription = "Switch Staff PIN Role",
+                                    Icons.Default.Logout,
+                                    contentDescription = "Log Out Staff Account",
                                     tint = Color(0xFFC2410C)
                                 )
                             }
@@ -2788,6 +2759,13 @@ fun StaffPayrollScreenView(
     var payrollList by remember { mutableStateOf<List<com.restaurant.mobile.delivery.StaffPayrollRecord>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
 
+    var showAddStaffDialog by remember { mutableStateOf(false) }
+    var newStaffName by remember { mutableStateOf("") }
+    var newStaffLogin by remember { mutableStateOf("") }
+    var newStaffPassword by remember { mutableStateOf("") }
+    var newStaffRole by remember { mutableStateOf(com.restaurant.mobile.delivery.UserRole.WAITER) }
+    var newStaffSalary by remember { mutableStateOf("25000") }
+
     fun refreshPayroll() {
         coroutineScope.launch(Dispatchers.IO) {
             val list = database.getAllPayrollRecords()
@@ -2837,6 +2815,18 @@ fun StaffPayrollScreenView(
                     }
                 }
             }
+        }
+
+        // Action: Add Staff Member
+        Button(
+            onClick = { showAddStaffDialog = true },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+        ) {
+            Icon(Icons.Default.PersonAdd, null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Add Staff Member (Waiter, Kitchen, Manager)", fontWeight = FontWeight.Bold)
         }
 
         // Employee Payroll List
@@ -2913,6 +2903,134 @@ fun StaffPayrollScreenView(
                 }
             }
         }
+    }
+
+    if (showAddStaffDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddStaffDialog = false },
+            title = { Text("Add Staff Member", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Create staff credentials. The staff member will log in directly using these credentials with NO PIN required.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = newStaffName,
+                        onValueChange = { newStaffName = it },
+                        label = { Text("Staff Full Name") },
+                        placeholder = { Text("e.g. Ramesh Kumar") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newStaffLogin,
+                        onValueChange = { newStaffLogin = it },
+                        label = { Text("Login Email or Mobile") },
+                        placeholder = { Text("e.g. ramesh@restro.app") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newStaffPassword,
+                        onValueChange = { newStaffPassword = it },
+                        label = { Text("Login Password (min 6 chars)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("Select Role:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val roles = listOf(
+                            com.restaurant.mobile.delivery.UserRole.WAITER to "Waiter",
+                            com.restaurant.mobile.delivery.UserRole.CHEF_KDS to "Kitchen",
+                            com.restaurant.mobile.delivery.UserRole.ADMIN to "Manager"
+                        )
+                        roles.forEach { (role, label) ->
+                            FilterChip(
+                                selected = newStaffRole == role,
+                                onClick = { newStaffRole = role },
+                                label = { Text(label, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = newStaffSalary,
+                        onValueChange = { newStaffSalary = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Base Monthly Salary (₹)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val cleanName = newStaffName.trim()
+                        val cleanLogin = newStaffLogin.trim()
+                        val cleanPass = newStaffPassword.trim()
+                        if (cleanName.length < 2) {
+                            onShowToast("Enter a valid staff name")
+                            return@Button
+                        }
+                        if (cleanLogin.length < 5) {
+                            onShowToast("Enter a valid email or phone")
+                            return@Button
+                        }
+                        if (cleanPass.length < 6) {
+                            onShowToast("Password must be at least 6 characters")
+                            return@Button
+                        }
+                        val salaryVal = newStaffSalary.toLongOrNull() ?: 25000L
+                        val staffId = "staff-" + java.util.UUID.randomUUID().toString().take(8)
+                        val isEmail = cleanLogin.contains("@")
+                        val profile = com.restaurant.mobile.delivery.Profile(
+                            id = staffId,
+                            name = cleanName,
+                            email = if (isEmail) cleanLogin else "",
+                            phone = if (!isEmail) cleanLogin else "",
+                            role = newStaffRole
+                        )
+                        coroutineScope.launch(Dispatchers.IO) {
+                            database.saveUser(profile)
+                            database.saveUserPassword(cleanLogin, cleanPass)
+                            val payrollRec = com.restaurant.mobile.delivery.StaffPayrollRecord(
+                                id = "pay-" + java.util.UUID.randomUUID().toString().take(8),
+                                staffId = staffId,
+                                staffName = cleanName,
+                                staffRole = newStaffRole.label,
+                                monthYear = "October 2026",
+                                baseSalary = salaryVal,
+                                bonusTips = 0L,
+                                deductions = 0L,
+                                netSalary = salaryVal,
+                                status = "PENDING"
+                            )
+                            database.insertStaffPayrollRecord(payrollRec)
+                            withContext(Dispatchers.Main) {
+                                showAddStaffDialog = false
+                                newStaffName = ""
+                                newStaffLogin = ""
+                                newStaffPassword = ""
+                                refreshPayroll()
+                                onShowToast("Staff account created for ${cleanName} as ${newStaffRole.label}!")
+                            }
+                        }
+                    },
+                    enabled = newStaffName.isNotBlank() && newStaffLogin.isNotBlank() && newStaffPassword.length >= 6
+                ) {
+                    Text("Create Account")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddStaffDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

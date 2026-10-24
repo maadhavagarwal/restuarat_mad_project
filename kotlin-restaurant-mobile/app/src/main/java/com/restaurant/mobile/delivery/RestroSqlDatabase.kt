@@ -841,6 +841,25 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return affected > 0
     }
 
+    fun insertStaffPayrollRecord(record: StaffPayrollRecord): Boolean {
+        val db = writableDatabase
+        createStaffPayrollTable(db)
+        val cv = ContentValues().apply {
+            put("id", record.id)
+            put("staff_id", record.staffId)
+            put("staff_name", record.staffName)
+            put("staff_role", record.staffRole)
+            put("month_year", record.monthYear)
+            put("base_salary", record.baseSalary)
+            put("bonus_tips", record.bonusTips)
+            put("deductions", record.deductions)
+            put("net_salary", record.netSalary)
+            put("status", record.status)
+        }
+        val res = db.insertWithOnConflict("staff_payroll", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        return res != -1L
+    }
+
     private fun saveUserPasswordIfMissing(target: String, rawPassword: String) {
         val db = writableDatabase
         createUserCredentialsTable(db)
