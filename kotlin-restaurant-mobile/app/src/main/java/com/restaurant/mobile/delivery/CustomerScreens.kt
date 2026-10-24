@@ -1,6 +1,8 @@
 package com.restaurant.mobile.delivery
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -17,6 +19,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -501,55 +504,153 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
     }
 }
 
-// 4. Orders, Confirmation & Tracking Screen
+// 4. Orders, Confirmation & Tracking Screen (Scoped to Assigned Customer & Enhanced Post-Order Experience)
 @Composable
 fun OrdersScreen(vm: DeliveryViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+
     when (vm.route) {
         "Confirmation" -> {
+            val confirmedOrder = vm.orders.find { it.id == vm.orderId }
+                ?: vm.orders.firstOrNull { vm.profile == null || it.userId.isBlank() || it.userId == vm.profile?.id }
+
             Page {
                 Column(
-                    Modifier.fillMaxWidth().padding(top = 16.dp),
+                    Modifier.fillMaxWidth().padding(top = 10.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Box(
-                        Modifier.size(76.dp).clip(CircleShape).background(RestroTokens.green.copy(alpha = 0.2f)),
+                        Modifier.size(80.dp).clip(CircleShape).background(RestroTokens.green.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(44.dp), tint = RestroTokens.green)
+                        Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(52.dp), tint = RestroTokens.green)
                     }
-                    Heading("Order Confirmed!", "Thank you for ordering with Restro.")
-                    Text("Order ID: #${vm.orderId}", fontWeight = FontWeight.Bold, color = RestroTokens.coral, fontSize = 17.sp)
+                    Heading("Order Confirmed!", "Your order is confirmed & sent to the kitchen.")
 
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(RestroTokens.coral.copy(alpha = 0.12f))
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("Order ID: #${confirmedOrder?.id ?: vm.orderId}", fontWeight = FontWeight.Bold, color = RestroTokens.coral, fontSize = 15.sp)
+                    }
+
+                    // ETA & Restaurant Header
                     Card(
                         colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
                         shape = RoundedCornerShape(18.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(
                                 Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Estimated Arrival", color = RestroTokens.muted, fontSize = 13.sp)
-                                Text("25 - 35 mins", fontWeight = FontWeight.Bold, color = RestroTokens.green)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.Restaurant, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
+                                    Text(confirmedOrder?.restaurantName ?: "Spice Route Mumbai", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                }
+                                Surface(
+                                    color = RestroTokens.green.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        "25 - 35 mins",
+                                        fontWeight = FontWeight.Bold,
+                                        color = RestroTokens.green,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
                             }
+
+                            HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
+
+                            // Delivery Address Preview
                             Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("Email Confirmation", color = RestroTokens.muted, fontSize = 13.sp)
-                                Text(vm.profile?.email ?: "aarav@example.com", fontSize = 12.sp, color = RestroTokens.coral)
+                                Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
+                                Column {
+                                    Text(
+                                        "Deliver to: ${confirmedOrder?.address?.label ?: "Delivery Address"}",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 13.sp
+                                    )
+                                    Text(
+                                        "${confirmedOrder?.address?.line ?: "Goregaon West"}, ${confirmedOrder?.address?.city ?: "Mumbai"}",
+                                        color = RestroTokens.muted,
+                                        fontSize = 12.sp
+                                    )
+                                }
                             }
-                            Text(
-                                "An itemized bill and invoice notification has been dispatched to your email address.",
-                                fontSize = 12.sp,
-                                color = RestroTokens.muted
-                            )
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    // Itemized Order Summary Card
+                    if (confirmedOrder?.quote != null) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Order Summary", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                confirmedOrder.quote.lines.forEach { line ->
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("${line.quantity}x ${line.name}", fontSize = 13.sp, color = RestroTokens.text)
+                                        Text("₹${line.total / 100}", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                }
+                                HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
+
+                                // Price Breakdown
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Item Subtotal", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text("₹${confirmedOrder.quote.subtotal / 100}", fontSize = 12.sp)
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Delivery Partner Fee", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text(
+                                        if (confirmedOrder.quote.delivery == 0L) "FREE" else "₹${confirmedOrder.quote.delivery / 100}",
+                                        fontSize = 12.sp,
+                                        color = if (confirmedOrder.quote.delivery == 0L) RestroTokens.green else RestroTokens.text
+                                    )
+                                }
+                                if (confirmedOrder.quote.discount > 0L) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Coupon Savings", fontSize = 12.sp, color = RestroTokens.green)
+                                        Text("-₹${confirmedOrder.quote.discount / 100}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
+                                    }
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Taxes & Packaging (5%)", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text("₹${confirmedOrder.quote.tax / 100}", fontSize = 12.sp)
+                                }
+                                HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Grand Total Paid", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text("₹${confirmedOrder.quote.total / 100}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = RestroTokens.coral)
+                                }
+                                Text(
+                                    "Payment Method: ${confirmedOrder.paymentMethod} (${confirmedOrder.paymentStatus})",
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
                     Action("Track Live Order on Map") {
                         vm.route = "Tracking"
                         vm.track()
@@ -561,126 +662,439 @@ fun OrdersScreen(vm: DeliveryViewModel) {
             }
         }
         "Tracking" -> {
-            val order = vm.orders.find { it.id == vm.orderId } ?: vm.orders.firstOrNull()
-            Page {
-                Heading("Live Order Tracking", "Order #${order?.id ?: vm.orderId}")
+            // Strictly scope live tracking to the currently logged in user's assigned orders
+            val activeOrder = vm.orders.find {
+                it.id == vm.orderId && (vm.profile == null || it.userId.isBlank() || it.userId == vm.profile?.id)
+            } ?: vm.orders.firstOrNull {
+                vm.profile == null || it.userId.isBlank() || it.userId == vm.profile?.id
+            }
 
-                // Interactive Animated Route Map with 10s Heartbeat & OSM integration
-                OrderTrackingRouteMap(order = order, vm = vm)
+            var showBillDetails by rememberSaveable { mutableStateOf(false) }
+            var showSupportDialog by rememberSaveable { mutableStateOf(false) }
+            var reviewSubmitted by rememberSaveable(activeOrder?.id) { mutableStateOf(false) }
+            var selectedRating by rememberSaveable(activeOrder?.id) { mutableIntStateOf(5) }
+            var selectedTip by rememberSaveable(activeOrder?.id) { mutableLongStateOf(30L) }
+            var reviewComment by rememberSaveable(activeOrder?.id) { mutableStateOf("") }
 
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+            if (activeOrder == null) {
+                Page {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Icon(Icons.Default.ReceiptLong, null, modifier = Modifier.size(56.dp), tint = RestroTokens.muted)
+                        Heading("No Active Order to Track", "All your live and completed deliveries appear here.")
+                        Action("Explore Restaurants & Dishes") { vm.route = "Home" }
+                        TextButton(onClick = { vm.route = "Orders" }) {
+                            Text("View Past Orders History")
+                        }
+                    }
+                }
+            } else {
+                Page {
+                    Heading("Live Order Tracking", "Order #${activeOrder.id} · ${activeOrder.restaurantName}")
+
+                    // Proximity Alert Banner (Triggers when rider is under 500m or at gate)
+                    if (activeOrder.status != "Delivered" && (vm.liveRiderDistanceKm <= 0.5 || vm.liveRiderStatus.contains("gate"))) {
+                        Surface(
+                            color = Color(0xFF10B981).copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(order?.restaurantName ?: "Restaurant", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Surface(
-                                color = RestroTokens.coral.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(8.dp)
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Text(
-                                    order?.status ?: "In Progress",
-                                    color = RestroTokens.coral,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-
-                        // Status Steps
-                        val statuses = listOf("Confirmed", "Preparing", "Out for delivery", "Delivered")
-                        val currentStatusIndex = statuses.indexOf(order?.status).coerceAtLeast(0)
-
-                        statuses.forEachIndexed { i, s ->
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Icon(
-                                    if (i <= currentStatusIndex) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                    null,
-                                    tint = if (i <= currentStatusIndex) RestroTokens.green else RestroTokens.muted,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    s,
-                                    fontWeight = if (i == currentStatusIndex) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (i <= currentStatusIndex) RestroTokens.text else RestroTokens.muted,
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Delivery Partner Card
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Box(
-                            Modifier.size(46.dp).clip(CircleShape).background(RestroTokens.coral.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.TwoWheeler, null, tint = RestroTokens.coral)
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text("Ramesh Kumar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Delivery Partner · KA-03-EM-8821", fontSize = 12.sp, color = RestroTokens.muted)
-                            Text("Vaccinated & temperature verified", fontSize = 11.sp, color = RestroTokens.green)
-                        }
-                        val context = androidx.compose.ui.platform.LocalContext.current
-                        IconButton(onClick = {
-                            try {
-                                val dialIntent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
-                                    data = android.net.Uri.parse("tel:+919811234567")
+                                Box(
+                                    modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFF10B981)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.TwoWheeler, null, tint = Color.White, modifier = Modifier.size(22.dp))
                                 }
-                                context.startActivity(dialIntent)
-                            } catch (_: Exception) {}
-                        }) {
-                            Icon(Icons.Default.Phone, "Call Rider", tint = RestroTokens.green)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Rider is at Your Gate!", fontWeight = FontWeight.Bold, color = Color(0xFF047857), fontSize = 14.sp)
+                                    Text("Ramesh Kumar is within 500m. Please meet your delivery partner at the gate.", fontSize = 12.sp, color = Color(0xFF065F46))
+                                }
+                                IconButton(onClick = {
+                                    try {
+                                        val dialIntent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                                            data = android.net.Uri.parse("tel:+919811234567")
+                                        }
+                                        context.startActivity(dialIntent)
+                                    } catch (_: Exception) {}
+                                }) {
+                                    Icon(Icons.Default.Phone, "Call Rider", tint = Color(0xFF047857))
+                                }
+                            }
                         }
                     }
-                }
 
-                if (order != null) {
-                    Text("Delivery Destination", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("${order.address.label}: ${order.address.line}, ${order.address.city}", color = RestroTokens.muted, fontSize = 13.sp)
-                }
+                    // Interactive Animated Route Map with 10s Heartbeat & OSM integration
+                    OrderTrackingRouteMap(order = activeOrder, vm = vm)
 
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { vm.track() },
-                        enabled = !vm.busy,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp)
+                    // Vertical Order Lifecycle Stepper
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Refresh ETA")
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Delivery Progress", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Surface(
+                                    color = if (activeOrder.status == "Delivered") RestroTokens.green.copy(alpha = 0.15f)
+                                           else RestroTokens.coral.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        activeOrder.status,
+                                        color = if (activeOrder.status == "Delivered") RestroTokens.green else RestroTokens.coral,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+
+                            val stages = listOf(
+                                Triple("Confirmed", "Order Placed & Confirmed", "Restaurant accepted and preparing ingredients"),
+                                Triple("Preparing", "Kitchen Preparing", "Chef Marco is cooking your fresh dishes"),
+                                Triple("Out for delivery", "Out for Delivery", "Ramesh Kumar is on the way with hot food"),
+                                Triple("Delivered", "Order Delivered", "Delivered at doorstep. Bon Appétit!")
+                            )
+                            val stageNames = stages.map { it.first }
+                            val activeIdx = stageNames.indexOf(activeOrder.status).coerceAtLeast(0)
+
+                            stages.forEachIndexed { idx, (_, title, subtitle) ->
+                                val isDone = idx <= activeIdx
+                                val isCurrent = idx == activeIdx
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(26.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isDone) RestroTokens.green else RestroTokens.muted.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            if (isDone) Icons.Default.Check else Icons.Default.RadioButtonUnchecked,
+                                            null,
+                                            tint = if (isDone) Color.White else RestroTokens.muted,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            title,
+                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isDone) RestroTokens.text else RestroTokens.muted,
+                                            fontSize = 13.sp
+                                        )
+                                        Text(
+                                            subtitle,
+                                            fontSize = 11.sp,
+                                            color = if (isCurrent) RestroTokens.coral else RestroTokens.muted
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-                    if (order?.status != "Delivered" && order?.status != "Cancelled") {
-                        OutlinedButton(
-                            onClick = { if (order != null) vm.cancelOrder(order.id) },
+
+                    // Delivery Partner Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                Modifier.size(46.dp).clip(CircleShape).background(RestroTokens.coral.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.TwoWheeler, null, tint = RestroTokens.coral)
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text("Ramesh Kumar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Delivery Partner · KA-03-EM-8821 (Hero Splendor)", fontSize = 12.sp, color = RestroTokens.muted)
+                                Text("Vaccinated · Contactless delivery verified", fontSize = 11.sp, color = RestroTokens.green)
+                            }
+                            IconButton(onClick = {
+                                try {
+                                    val dialIntent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                                        data = android.net.Uri.parse("tel:+919811234567")
+                                    }
+                                    context.startActivity(dialIntent)
+                                } catch (_: Exception) {}
+                            }) {
+                                Icon(Icons.Default.Phone, "Call Rider", tint = RestroTokens.green)
+                            }
+                        }
+                    }
+
+                    // Delivery Destination Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
+                            Column {
+                                Text(activeOrder.address.label, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text("${activeOrder.address.line}, ${activeOrder.address.city}", color = RestroTokens.muted, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    // Expandable Itemized Bill & Receipt Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clickable { showBillDetails = !showBillDetails },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(Icons.Default.Receipt, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                                    Text("Order Bill & Receipt Details", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                                Text(
+                                    if (showBillDetails) "Hide ▲" else "View (₹${activeOrder.quote.total / 100}) ▼",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = RestroTokens.coral
+                                )
+                            }
+
+                            if (showBillDetails) {
+                                HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
+                                activeOrder.quote.lines.forEach { line ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("${line.quantity}x ${line.name}", fontSize = 12.sp)
+                                        Text("₹${line.total / 100}", fontSize = 12.sp)
+                                    }
+                                }
+                                HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Subtotal", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text("₹${activeOrder.quote.subtotal / 100}", fontSize = 12.sp)
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Delivery Partner Fee", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text(if (activeOrder.quote.delivery == 0L) "FREE" else "₹${activeOrder.quote.delivery / 100}", fontSize = 12.sp)
+                                }
+                                if (activeOrder.quote.discount > 0L) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Coupon Savings", fontSize = 12.sp, color = RestroTokens.green)
+                                        Text("-₹${activeOrder.quote.discount / 100}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
+                                    }
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Taxes (5%)", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text("₹${activeOrder.quote.tax / 100}", fontSize = 12.sp)
+                                }
+                                HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Total Amount Paid", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("₹${activeOrder.quote.total / 100}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = RestroTokens.coral)
+                                }
+                            }
+                        }
+                    }
+
+                    // Post-Delivery Experience: Rating & Reorder (Active once order is Delivered)
+                    if (activeOrder.status == "Delivered") {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.ThumbUp, null, tint = RestroTokens.green, modifier = Modifier.size(20.dp))
+                                    Text("Rate Your Dining Experience", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+
+                                if (!reviewSubmitted) {
+                                    Text("How was the food taste and delivery speed?", fontSize = 12.sp, color = RestroTokens.muted)
+
+                                    // Star Rating Row
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        for (star in 1..5) {
+                                            IconButton(
+                                                onClick = { selectedRating = star },
+                                                modifier = Modifier.size(36.dp)
+                                            ) {
+                                                Icon(
+                                                    if (star <= selectedRating) Icons.Default.Star else Icons.Default.StarBorder,
+                                                    contentDescription = "$star Stars",
+                                                    tint = Color(0xFFFFB800),
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Quick Tip Rider Selection
+                                    Text("Add Tip for Delivery Partner Ramesh:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        listOf(0L to "No Tip", 20L to "₹20", 30L to "₹30", 50L to "₹50").forEach { (tipAmt, tipLabel) ->
+                                            FilterChip(
+                                                selected = selectedTip == tipAmt,
+                                                onClick = { selectedTip = tipAmt },
+                                                label = { Text(tipLabel, fontSize = 11.sp) }
+                                            )
+                                        }
+                                    }
+
+                                    OutlinedTextField(
+                                        value = reviewComment,
+                                        onValueChange = { reviewComment = it },
+                                        placeholder = { Text("Write a quick review (optional)", fontSize = 12.sp) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+
+                                    Button(
+                                        onClick = {
+                                            reviewSubmitted = true
+                                            vm.submitOrderReview(activeOrder.id, selectedRating, reviewComment, selectedTip)
+                                            android.widget.Toast.makeText(context, "Thank you for your feedback! ⭐", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.green)
+                                    ) {
+                                        Text("Submit Feedback & Rating", fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    Surface(
+                                        color = RestroTokens.green.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            "Feedback recorded (${selectedRating}★). Thank you for helping us improve!",
+                                            fontSize = 12.sp,
+                                            color = RestroTokens.green,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(12.dp)
+                                        )
+                                    }
+                                }
+
+                                // Quick One-Click Reorder Button
+                                OutlinedButton(
+                                    onClick = {
+                                        vm.reorder(activeOrder)
+                                        android.widget.Toast.makeText(context, "Items added to cart!", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Reorder These Dishes Again", fontWeight = FontWeight.Bold, color = RestroTokens.coral)
+                                }
+                            }
+                        }
+                    }
+
+                    // Action Controls
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { vm.track() },
+                            enabled = !vm.busy,
+                            modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(14.dp)
                         ) {
-                            Text("Cancel", color = Color.Red.copy(alpha = 0.8f))
+                            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Refresh ETA")
+                        }
+
+                        if (activeOrder.status != "Delivered" && activeOrder.status != "Cancelled") {
+                            OutlinedButton(
+                                onClick = {
+                                    if (activeOrder.status == "Confirmed") {
+                                        vm.cancelOrder(activeOrder.id)
+                                    } else {
+                                        showSupportDialog = true
+                                    }
+                                },
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text("Cancel", color = Color.Red.copy(alpha = 0.8f))
+                            }
                         }
                     }
-                }
 
-                TextButton(onClick = { vm.route = "Orders" }) {
-                    Text("View All Past Orders")
+                    TextButton(onClick = { vm.route = "Orders" }) {
+                        Text("View All Past Orders")
+                    }
+
+                    // Cancellation Support Guard Modal Dialog
+                    if (showSupportDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showSupportDialog = false },
+                            icon = { Icon(Icons.Default.SupportAgent, null, tint = RestroTokens.coral, modifier = Modifier.size(36.dp)) },
+                            title = { Text("Cancellation Policy", fontWeight = FontWeight.Bold) },
+                            text = {
+                                Text(
+                                    "Your order is already ${activeOrder.status.lowercase()}. Fresh ingredients have been prepared by the kitchen.\n\nTo cancel or modify, please contact restaurant support directly.",
+                                    fontSize = 13.sp,
+                                    color = RestroTokens.muted
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showSupportDialog = false
+                                        try {
+                                            val dialIntent = android.content.Intent(android.content.Intent.ACTION_DIAL).apply {
+                                                data = android.net.Uri.parse("tel:+919811234567")
+                                            }
+                                            context.startActivity(dialIntent)
+                                        } catch (_: Exception) {}
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral)
+                                ) {
+                                    Icon(Icons.Default.Phone, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Call Support")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showSupportDialog = false }) {
+                                    Text("Close")
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -923,10 +1337,14 @@ fun ReviewsScreen(vm: DeliveryViewModel) {
     }
 }
 
-// 7. Profile Screen
+// 7. Profile Screen (Revamped Modern Account Experience)
 @Composable
 fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null) {
     val p = vm.profile
+    var showEditProfileDialog by rememberSaveable { mutableStateOf(false) }
+    var editName by rememberSaveable { mutableStateOf(p?.name ?: "") }
+    var editPhone by rememberSaveable { mutableStateOf(p?.phone ?: "") }
+
     var showChangePasswordDialog by rememberSaveable { mutableStateOf(false) }
     var oldPassword by rememberSaveable { mutableStateOf("") }
     var newPassword by rememberSaveable { mutableStateOf("") }
@@ -934,182 +1352,643 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
     var passwordChangeMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isPasswordChangeSuccess by rememberSaveable { mutableStateOf(false) }
 
+    var showLogoutConfirmDialog by rememberSaveable { mutableStateOf(false) }
+    var showHelpSupportDialog by rememberSaveable { mutableStateOf(false) }
+    var showAboutDialog by rememberSaveable { mutableStateOf(false) }
+
+    val isDark = RestroTokens.isDark
+
     Page {
-        Heading("Your Profile", "Manage preferences, addresses and RBAC role")
+        // 1. Top Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    "My Account",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = RestroTokens.text,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Manage profile, theme & preferences",
+                    fontSize = 13.sp,
+                    color = RestroTokens.muted
+                )
+            }
+
+            IconButton(
+                onClick = {
+                    val nextDark = !RestroTokens.isDark
+                    RestroTokens.isDark = nextDark
+                    if (p != null) {
+                        vm.saveProfile(p.copy(isDarkMode = nextDark))
+                    }
+                },
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(RestroTokens.surfaceElevated)
+            ) {
+                Icon(
+                    if (isDark) Icons.Default.WbSunny else Icons.Default.Nightlight,
+                    contentDescription = "Toggle Theme",
+                    tint = if (isDark) Color(0xFFFBBF24) else RestroTokens.coral
+                )
+            }
+        }
+
+        // 2. User Hero Profile Card
+        Card(
+            colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, RestroTokens.border, RoundedCornerShape(24.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Profile Avatar Circle with Gradient & Initials
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(RestroTokens.coral, Color(0xFFE11D48))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val initial = (p?.name?.firstOrNull() ?: 'U').uppercaseChar()
+                        Text(
+                            text = initial.toString(),
+                            color = Color.White,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = p?.name?.ifBlank { "Valued Diner" } ?: "Valued Diner",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 19.sp,
+                            color = RestroTokens.text,
+                            maxLines = 1
+                        )
+
+                        Spacer(Modifier.height(4.dp))
+
+                        Surface(
+                            color = if (p?.role?.isStaff == true) RestroTokens.green.copy(alpha = 0.2f)
+                            else RestroTokens.coral.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(
+                                text = (p?.role?.label ?: "CUSTOMER").uppercase(),
+                                color = if (p?.role?.isStaff == true) RestroTokens.green else RestroTokens.coral,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = {
+                            editName = p?.name ?: ""
+                            editPhone = p?.phone ?: ""
+                            showEditProfileDialog = true
+                        },
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(RestroTokens.surfaceElevated)
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Profile",
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = RestroTokens.border)
+
+                // Contact Details
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!p?.email.isNullOrBlank()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Email,
+                                contentDescription = null,
+                                tint = RestroTokens.muted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = p?.email ?: "",
+                                fontSize = 13.sp,
+                                color = RestroTokens.text
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = RestroTokens.muted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (!p?.phone.isNullOrBlank()) p?.phone ?: "" else "Add mobile number for delivery tracking",
+                            fontSize = 13.sp,
+                            color = if (!p?.phone.isNullOrBlank()) RestroTokens.text else RestroTokens.muted
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Quick Account Stats Bar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .border(1.dp, RestroTokens.border, RoundedCornerShape(16.dp))
+                    .clickable { vm.route = "Orders" }
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "${vm.orders.size}",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RestroTokens.coral
+                    )
+                    Text(
+                        "Orders",
+                        fontSize = 11.sp,
+                        color = RestroTokens.muted
+                    )
+                }
+            }
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .border(1.dp, RestroTokens.border, RoundedCornerShape(16.dp))
+                    .clickable {
+                        vm.loadUserTableBookings()
+                        vm.route = "MyBookings"
+                    }
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "${vm.userTableBookings.size}",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF3B82F6)
+                    )
+                    Text(
+                        "Bookings",
+                        fontSize = 11.sp,
+                        color = RestroTokens.muted
+                    )
+                }
+            }
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .border(1.dp, RestroTokens.border, RoundedCornerShape(16.dp))
+                    .clickable { vm.route = "Addresses" }
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "${vm.addresses.size}",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RestroTokens.green
+                    )
+                    Text(
+                        "Addresses",
+                        fontSize = 11.sp,
+                        color = RestroTokens.muted
+                    )
+                }
+            }
+        }
+
+        // 4. APPEARANCE & THEME (Light & Dark Mode)
+        Text(
+            "Appearance & Display",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = RestroTokens.text
+        )
 
         Card(
             colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
             shape = RoundedCornerShape(20.dp),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, RestroTokens.border, RoundedCornerShape(20.dp))
         ) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(p?.name ?: "Valued Diner", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    Surface(
-                        color = if (p?.role?.isStaff == true) RestroTokens.green.copy(alpha = 0.2f)
-                        else RestroTokens.coral.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = p?.role?.label?.uppercase() ?: "CUSTOMER",
-                            color = if (p?.role?.isStaff == true) RestroTokens.green else RestroTokens.coral,
-                            fontSize = 10.sp,
+                            "Theme Mode",
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            fontSize = 15.sp,
+                            color = RestroTokens.text
+                        )
+                        Text(
+                            if (isDark) "Dark mode active (gentle on eyes)" else "Light mode active (high contrast & bright)",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
                         )
                     }
+
+                    Switch(
+                        checked = isDark,
+                        onCheckedChange = { checked ->
+                            RestroTokens.isDark = checked
+                            if (p != null) {
+                                vm.saveProfile(p.copy(isDarkMode = checked))
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = RestroTokens.coral,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = Color(0xFFCBD5E1)
+                        )
+                    )
                 }
-                Text(p?.email ?: "", color = RestroTokens.muted, fontSize = 14.sp)
-                if (!p?.phone.isNullOrBlank()) {
-                    Text("Phone: ${p?.phone}", color = RestroTokens.muted, fontSize = 13.sp)
-                }
-            }
-        }
 
-        Text("Shortcuts", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Light Mode Tile
+                    Surface(
+                        onClick = {
+                            RestroTokens.isDark = false
+                            if (p != null) {
+                                vm.saveProfile(p.copy(isDarkMode = false))
+                            }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (!isDark) RestroTokens.coral.copy(alpha = 0.12f) else RestroTokens.surfaceElevated,
+                        border = BorderStroke(
+                            1.5.dp,
+                            if (!isDark) RestroTokens.coral else Color.Transparent
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.WbSunny,
+                                contentDescription = "Light Theme",
+                                tint = if (!isDark) RestroTokens.coral else RestroTokens.muted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    "Light Mode",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (!isDark) RestroTokens.coral else RestroTokens.text
+                                )
+                                Text("Crisp & Clean", fontSize = 10.sp, color = RestroTokens.muted)
+                            }
+                        }
+                    }
 
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { vm.route = "Addresses" }
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral)
-                Text("Saved Delivery Addresses", fontWeight = FontWeight.Medium)
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-        }
-
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { vm.route = "Orders" }
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.ReceiptLong, null, tint = RestroTokens.coral)
-                Text("Past Orders & Invoices", fontWeight = FontWeight.Medium)
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-        }
-
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable {
-                    vm.loadUserTableBookings()
-                    vm.route = "MyBookings"
-                }
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.EventSeat, null, tint = RestroTokens.coral)
-                Column {
-                    Text("My Table Bookings", fontWeight = FontWeight.Medium)
-                    Text("View, inspect and cancel dine-in reservations", fontSize = 11.sp, color = RestroTokens.muted)
-                }
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-        }
-
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable {
-                    oldPassword = ""
-                    newPassword = ""
-                    confirmPassword = ""
-                    passwordChangeMessage = null
-                    showChangePasswordDialog = true
-                }
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.LockReset, null, tint = RestroTokens.coral)
-                Column {
-                    Text("Change & Update Password", fontWeight = FontWeight.Medium)
-                    Text("Update your account security password", fontSize = 11.sp, color = RestroTokens.muted)
-                }
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-        }
-
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { vm.route = "Favorites" }
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Favorite, null, tint = RestroTokens.coral)
-                Text("Saved Favourite Restaurants", fontWeight = FontWeight.Medium)
-            }
-            Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-        }
-
-        // Accessibility setting
-        Row(
-            Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(RestroTokens.surface)
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("High Contrast UI", fontWeight = FontWeight.Medium)
-                Text("Reduces transparent glass effects", fontSize = 12.sp, color = RestroTokens.muted)
-            }
-            Switch(
-                checked = p?.reducedGlass == true,
-                onCheckedChange = { checked ->
-                    if (p != null) {
-                        vm.saveProfile(p.copy(reducedGlass = checked))
+                    // Dark Mode Tile
+                    Surface(
+                        onClick = {
+                            RestroTokens.isDark = true
+                            if (p != null) {
+                                vm.saveProfile(p.copy(isDarkMode = true))
+                            }
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isDark) RestroTokens.coral.copy(alpha = 0.12f) else RestroTokens.surfaceElevated,
+                        border = BorderStroke(
+                            1.5.dp,
+                            if (isDark) RestroTokens.coral else Color.Transparent
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Nightlight,
+                                contentDescription = "Dark Theme",
+                                tint = if (isDark) RestroTokens.coral else RestroTokens.muted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    "Dark Mode",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (isDark) RestroTokens.coral else RestroTokens.text
+                                )
+                                Text("Sleek & Deep", fontSize = 10.sp, color = RestroTokens.muted)
+                            }
+                        }
                     }
                 }
+            }
+        }
+
+        // 5. Orders & Dining Section
+        Text(
+            "Orders & Reservations",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = RestroTokens.text
+        )
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, RestroTokens.border, RoundedCornerShape(20.dp))
+        ) {
+            Column {
+                AccountOptionRow(
+                    icon = Icons.Default.ReceiptLong,
+                    title = "Past Orders & Invoices",
+                    subtitle = "View itemized receipts, live tracking and 1-click reorder",
+                    onClick = { vm.route = "Orders" }
+                )
+                HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
+                AccountOptionRow(
+                    icon = Icons.Default.EventSeat,
+                    title = "Dine-In Table Bookings",
+                    subtitle = "Inspect reservation dates, guests and QR check-in status",
+                    onClick = {
+                        vm.loadUserTableBookings()
+                        vm.route = "MyBookings"
+                    }
+                )
+                HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
+                AccountOptionRow(
+                    icon = Icons.Default.Favorite,
+                    title = "Favorite Restaurants",
+                    subtitle = "Quick access to your saved dining spots",
+                    onClick = { vm.route = "Favorites" }
+                )
+            }
+        }
+
+        // 6. Security & Addresses Section
+        Text(
+            "Security & Preferences",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = RestroTokens.text
+        )
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, RestroTokens.border, RoundedCornerShape(20.dp))
+        ) {
+            Column {
+                AccountOptionRow(
+                    icon = Icons.Default.LocationOn,
+                    title = "Saved Delivery Addresses",
+                    subtitle = "Manage Home, Work and GPS drop coordinates",
+                    onClick = { vm.route = "Addresses" }
+                )
+                HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
+                AccountOptionRow(
+                    icon = Icons.Default.LockReset,
+                    title = "Change & Update Password",
+                    subtitle = "Manage your login credentials & account protection",
+                    onClick = {
+                        oldPassword = ""
+                        newPassword = ""
+                        confirmPassword = ""
+                        passwordChangeMessage = null
+                        showChangePasswordDialog = true
+                    }
+                )
+            }
+        }
+
+        // 7. Support & About
+        Text(
+            "Help & Information",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = RestroTokens.text
+        )
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, RestroTokens.border, RoundedCornerShape(20.dp))
+        ) {
+            Column {
+                AccountOptionRow(
+                    icon = Icons.Default.SupportAgent,
+                    title = "24x7 Customer Support",
+                    subtitle = "Speak to our care team or report order issues",
+                    onClick = { showHelpSupportDialog = true }
+                )
+                HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
+                AccountOptionRow(
+                    icon = Icons.Default.Info,
+                    title = "About Restro Enterprise",
+                    subtitle = "v2.4.0 Production Build • Terms & Privacy",
+                    onClick = { showAboutDialog = true }
+                )
+            }
+        }
+
+        // 8. Staff Portal Link (if staff or staff portal available)
+        if (p?.role?.isStaff == true || onOpenStaffPortal != null) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = RestroTokens.green.copy(alpha = 0.1f)),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, RestroTokens.green.copy(alpha = 0.3f), RoundedCornerShape(18.dp))
+                    .clickable { onOpenStaffPortal?.invoke() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Icon(
+                        Icons.Default.RestaurantMenu,
+                        contentDescription = null,
+                        tint = RestroTokens.green,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Staff Management Portal",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = RestroTokens.text
+                        )
+                        Text(
+                            "Access Waiter POS, KDS Kitchen Display and Admin Analytics",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.green)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // 9. Sign Out Button
+        OutlinedButton(
+            onClick = { showLogoutConfirmDialog = true },
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = Color(0xFFEF4444)
+            ),
+            border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+        ) {
+            Icon(Icons.Default.Logout, null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Sign Out of Restro", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+
+        // Space for floating bottom navigation bar
+        Spacer(Modifier.height(84.dp))
+
+        // --- Dialogs ---
+
+        // Edit Profile Dialog
+        if (showEditProfileDialog) {
+            AlertDialog(
+                onDismissRequest = { showEditProfileDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.Edit, null, tint = RestroTokens.coral)
+                        Text("Edit Profile Details", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = editName,
+                            onValueChange = { editName = it },
+                            label = { Text("Full Name") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = editPhone,
+                            onValueChange = { editPhone = it },
+                            label = { Text("Mobile Phone Number") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (p != null) {
+                                vm.saveProfile(p.copy(name = editName.trim(), phone = editPhone.trim()))
+                            }
+                            showEditProfileDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Save Changes", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEditProfileDialog = false }) {
+                        Text("Cancel", color = RestroTokens.muted)
+                    }
+                },
+                containerColor = RestroTokens.surface,
+                shape = RoundedCornerShape(20.dp)
             )
         }
 
-        Spacer(Modifier.height(12.dp))
-
-        Button(
-            onClick = vm::logout,
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f)),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth().height(50.dp)
-        ) {
-            Icon(Icons.Default.Logout, null)
-            Spacer(Modifier.width(8.dp))
-            Text("Sign Out", fontWeight = FontWeight.Bold)
-        }
-
+        // Change Password Dialog
         if (showChangePasswordDialog) {
             AlertDialog(
                 onDismissRequest = { showChangePasswordDialog = false },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.LockReset, null, tint = RestroTokens.coral)
-                        Text("Change Password", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Change Password", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = RestroTokens.text)
                     }
                 },
                 text = {
@@ -1175,18 +2054,177 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Update Password")
+                        Text("Update Password", color = Color.White)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showChangePasswordDialog = false }) {
-                        Text("Cancel")
+                        Text("Cancel", color = RestroTokens.muted)
                     }
                 },
                 containerColor = RestroTokens.surface,
                 shape = RoundedCornerShape(16.dp)
             )
         }
+
+        // Logout Confirmation Dialog
+        if (showLogoutConfirmDialog) {
+            AlertDialog(
+                onDismissRequest = { showLogoutConfirmDialog = false },
+                title = {
+                    Text("Sign Out", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
+                },
+                text = {
+                    Text(
+                        "Are you sure you want to sign out from your Restro account? Your active cart and orders will be preserved upon re-login.",
+                        fontSize = 13.sp,
+                        color = RestroTokens.muted
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showLogoutConfirmDialog = false
+                            vm.logout()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Sign Out", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLogoutConfirmDialog = false }) {
+                        Text("Stay Signed In", color = RestroTokens.text)
+                    }
+                },
+                containerColor = RestroTokens.surface,
+                shape = RoundedCornerShape(20.dp)
+            )
+        }
+
+        // Customer Support Dialog
+        if (showHelpSupportDialog) {
+            AlertDialog(
+                onDismissRequest = { showHelpSupportDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.SupportAgent, null, tint = RestroTokens.coral)
+                        Text("24x7 Customer Care", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "Our customer concierge team is available round-the-clock for real-time delivery tracking help, meal quality inquiries, and reservation assistance.",
+                            fontSize = 13.sp,
+                            color = RestroTokens.text
+                        )
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = RestroTokens.surfaceElevated),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("📞 Toll-Free Helpline: 1800-RESTRO-CARE", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = RestroTokens.coral)
+                                Text("✉️ Email Support: care@restro.app", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = RestroTokens.text)
+                                Text("⚡ Instant Response: < 3 mins avg. wait time", fontSize = 11.sp, color = RestroTokens.green)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showHelpSupportDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Done", color = Color.White)
+                    }
+                },
+                containerColor = RestroTokens.surface,
+                shape = RoundedCornerShape(20.dp)
+            )
+        }
+
+        // About Dialog
+        if (showAboutDialog) {
+            AlertDialog(
+                onDismissRequest = { showAboutDialog = false },
+                title = {
+                    Text("About Restro", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Restro Enterprise Restaurant Management Suite", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = RestroTokens.text)
+                        Text("Version: 2.4.0 (Production Rescue Release)", fontSize = 12.sp, color = RestroTokens.muted)
+                        Text("Crafted with Jetpack Compose & Express Backend with zero-simulation security and real-time live order dispatching.", fontSize = 12.sp, color = RestroTokens.muted)
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { showAboutDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Close", color = Color.White)
+                    }
+                },
+                containerColor = RestroTokens.surface,
+                shape = RoundedCornerShape(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccountOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(RestroTokens.coral.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = RestroTokens.coral,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                color = RestroTokens.text
+            )
+            Text(
+                subtitle,
+                fontSize = 11.sp,
+                color = RestroTokens.muted,
+                maxLines = 1
+            )
+        }
+        Icon(
+            Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = RestroTokens.muted,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 

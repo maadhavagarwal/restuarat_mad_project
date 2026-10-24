@@ -221,13 +221,29 @@ async function runTestSuite() {
       'Anti-Hacking Defense: Idempotency Key prevents duplicate double-billing on replay'
     );
 
-    // 7. Live 10-Second Rider Tracking & Proximity Trigger
-    const trackingRes = await request(`/orders/${placedOrderId}/tracking`);
+    // 7. Live 10-Second Rider Tracking & Proximity Trigger (Assigned Customer Authorized)
+    const trackingRes = await request(`/orders/${placedOrderId}/tracking`, { headers: authHeaders });
     assert(
       trackingRes.status === 200 && trackingRes.data.rider.currentLocation.latitude && typeof trackingRes.data.isNearby === 'boolean',
-      'Live Stream: 10s coordinate stream returns rider live location & ETA'
+      'Live Stream: 10s coordinate stream returns rider live location & ETA for assigned user'
     );
 
+    // 7b. Privacy Defense: Unassigned User Blocked from Tracking Another User's Order
+    const unauthorizedTracking = await request(`/orders/${placedOrderId}/tracking`);
+    assert(
+      unauthorizedTracking.status === 403 && unauthorizedTracking.data.error === 'FORBIDDEN',
+      'Privacy Defense: Unassigned user is blocked from viewing another customer\'s live rider GPS (403)'
+    );
+
+    // 7c. Live Rider Location Update (Rider pushing coordinates for assigned order)
+    const riderUpdate = await request(`/orders/${placedOrderId}/rider-location`, {
+      method: 'POST',
+      body: { latitude: 12.9500, longitude: 77.6200, status: 'Out for delivery' }
+    });
+    assert(
+      riderUpdate.status === 200 && riderUpdate.data.assignedUserId === validOtp.data.profile.id,
+      'Rider Live Update: Rider coordinate push updates assigned order successfully'
+    );
     // -----------------------------------------------------------------
     // DINE-IN PAYMENT SECURITY PENETRATION SUITE
     // -----------------------------------------------------------------

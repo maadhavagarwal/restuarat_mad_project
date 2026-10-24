@@ -28,7 +28,7 @@ fun Page(content: @Composable ColumnScope.() -> Unit) =
 
 @Composable
 fun Heading(title: String, subtitle: String? = null) {
-    Text(title, style = MaterialTheme.typography.headlineLarge)
+    Text(title, style = MaterialTheme.typography.headlineLarge, color = RestroTokens.text)
     subtitle?.let { Text(it, color = RestroTokens.muted) }
 }
 

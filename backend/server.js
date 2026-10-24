@@ -470,14 +470,16 @@ router.get("/restaurants", (req, res) => {
 // ------------------------------------------
 router.get("/profile", authMiddleware, (req, res) => {
   const u = req.user;
-  res.json({ id: u.id, name: u.name, email: u.email, phone: u.phone, reducedGlass: false });
+  res.json({ id: u.id, name: u.name, email: u.email, phone: u.phone, reducedGlass: false, isDarkMode: u.isDarkMode !== false });
 });
 
 router.put("/profile", authMiddleware, (req, res) => {
-  const { name, phone, reducedGlass } = req.body || {};
+  const { name, phone, reducedGlass, isDarkMode } = req.body || {};
   if (name) req.user.name = name;
   if (phone) req.user.phone = phone;
-  res.json({ id: req.user.id, name: req.user.name, email: req.user.email, phone: req.user.phone, reducedGlass: !!reducedGlass });
+  if (reducedGlass !== undefined) req.user.reducedGlass = !!reducedGlass;
+  if (isDarkMode !== undefined) req.user.isDarkMode = !!isDarkMode;
+  res.json({ id: req.user.id, name: req.user.name, email: req.user.email, phone: req.user.phone, reducedGlass: !!req.user.reducedGlass, isDarkMode: req.user.isDarkMode !== false });
 });
 
 router.get("/addresses", authMiddleware, (req, res) => {
@@ -761,7 +763,21 @@ router.get("/orders", authMiddleware, (req, res) => {
 // 6. 10-Second Live Tracking & Coordinate Stream
 // ------------------------------------------
 router.get("/orders/:id/tracking", optionalAuth, (req, res) => {
-  const order = db.orders.find(o => o.id === req.params.id) || db.orders[0];
+  const order = db.orders.find(o => o.id === req.params.id);
+  if (!order) {
+    return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "Order not found." });
+  }
+
+  // Live location privacy defense: enforce assigned user authorization
+  if (req.userId && order.userId && order.userId !== req.userId) {
+    const isStaffOrRider = req.user && (req.user.role === 'ADMIN' || req.user.role === 'WAITER' || req.user.role === 'RIDER' || req.user.role === 'CHEF');
+    if (!isStaffOrRider) {
+      return res.status(403).json({
+        error: "FORBIDDEN",
+        message: "Access Denied: You are not authorized to track this order. Live GPS tracking is restricted to the assigned customer."
+      });
+    }
+  }
   if (!order) {
     return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "Order not found." });
   }
@@ -800,6 +816,7 @@ router.get("/orders/:id/tracking", optionalAuth, (req, res) => {
 
   res.json({
     orderId: order.id,
+    assignedUserId: order.userId,
     restaurantName: order.restaurantName,
     status,
     progress: Math.round(progress * 100),
@@ -822,6 +839,40 @@ router.get("/orders/:id/tracking", optionalAuth, (req, res) => {
 });
 
 // Single Order Detail
+
+
+// ------------------------------------------
+// 6b. Live Rider GPS Location Update (Scoped strictly to assigned order)
+// ------------------------------------------
+router.post("/orders/:id/rider-location", (req, res) => {
+  const order = db.orders.find(o => o.id === req.params.id);
+  if (!order) {
+    return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "Order not found." });
+  }
+
+  const { latitude, longitude, status } = req.body;
+  if (typeof latitude !== "number" || typeof longitude !== "number") {
+    return res.status(400).json({ error: "INVALID_COORDINATES", message: "Valid numeric latitude and longitude are required." });
+  }
+
+  if (!order.rider) {
+    order.rider = {};
+  }
+  order.rider.currentLocation = { latitude, longitude };
+  if (status) {
+    order.status = status;
+  }
+
+  res.json({
+    success: true,
+    orderId: order.id,
+    assignedUserId: order.userId,
+    currentLocation: order.rider.currentLocation,
+    status: order.status,
+    updatedAt: new Date().toISOString()
+  });
+});
+
 router.get("/orders/:id", optionalAuth, (req, res) => {
   const order = db.orders.find(o => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND" });

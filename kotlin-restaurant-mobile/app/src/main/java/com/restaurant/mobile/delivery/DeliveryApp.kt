@@ -28,6 +28,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> Unit)? = null) {
     var showLandmarkPicker by remember { mutableStateOf(false) }
 
+    LaunchedEffect(vm.profile?.isDarkMode) {
+        vm.profile?.let {
+            RestroTokens.isDark = it.isDarkMode
+        }
+    }
+
     RestroTheme {
         val layer = rememberGraphicsLayer()
         val backdrop = remember(layer) { Backdrop(layer) }

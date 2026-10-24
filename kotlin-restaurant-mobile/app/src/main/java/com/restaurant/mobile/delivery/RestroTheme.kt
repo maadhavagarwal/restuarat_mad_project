@@ -25,12 +25,24 @@ import java.text.NumberFormat
 import java.util.Locale
 
 object RestroTokens {
-    val canvas = Color(0xFF101113)
-    val surface = Color(0xFF252629)
-    val text = Color(0xFFF8F6F2)
-    val muted = Color(0xFFB8B7B3)
-    val coral = Color(0xFFFF946C)
-    val green = Color(0xFFA7D8AB)
+    var isDark by mutableStateOf(true)
+
+    val canvas: Color
+        get() = if (isDark) Color(0xFF101113) else Color(0xFFF8F7F4)
+    val surface: Color
+        get() = if (isDark) Color(0xFF222327) else Color(0xFFFFFFFF)
+    val surfaceElevated: Color
+        get() = if (isDark) Color(0xFF2B2C32) else Color(0xFFF1EFEB)
+    val text: Color
+        get() = if (isDark) Color(0xFFF8F6F2) else Color(0xFF18181B)
+    val muted: Color
+        get() = if (isDark) Color(0xFF9E9D99) else Color(0xFF71717A)
+    val coral = Color(0xFFFF6D3B)
+    val coralLight = Color(0xFFFFECE5)
+    val green = Color(0xFF10B981)
+    val greenLight = Color(0xFFE6F4EA)
+    val border: Color
+        get() = if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
     val shape = RoundedCornerShape(24.dp)
 }
 
@@ -39,17 +51,35 @@ fun money(paise: Long): String =
 
 @Composable
 fun RestroTheme(content: @Composable () -> Unit) {
+    val isDark = RestroTokens.isDark
+    val colors = if (isDark) {
+        darkColorScheme(
+            primary = RestroTokens.coral,
+            onPrimary = Color.White,
+            background = RestroTokens.canvas,
+            surface = RestroTokens.surface,
+            onSurface = RestroTokens.text,
+            onBackground = RestroTokens.text,
+            secondary = RestroTokens.green,
+            surfaceVariant = RestroTokens.surfaceElevated,
+            onSurfaceVariant = RestroTokens.muted,
+        )
+    } else {
+        lightColorScheme(
+            primary = RestroTokens.coral,
+            onPrimary = Color.White,
+            background = RestroTokens.canvas,
+            surface = RestroTokens.surface,
+            onSurface = RestroTokens.text,
+            onBackground = RestroTokens.text,
+            secondary = RestroTokens.green,
+            surfaceVariant = RestroTokens.surfaceElevated,
+            onSurfaceVariant = RestroTokens.muted,
+        )
+    }
+
     MaterialTheme(
-        colorScheme =
-            darkColorScheme(
-                primary = RestroTokens.coral,
-                onPrimary = RestroTokens.canvas,
-                background = RestroTokens.canvas,
-                surface = RestroTokens.surface,
-                onSurface = RestroTokens.text,
-                onBackground = RestroTokens.text,
-                secondary = RestroTokens.green,
-            ),
+        colorScheme = colors,
         typography =
             Typography(
                 headlineLarge =
@@ -87,7 +117,11 @@ fun Glass(
     Box(
         modifier
             .clip(RestroTokens.shape)
-            .border(1.dp, Color.White.copy(alpha = .16f), RestroTokens.shape)
+            .border(
+                1.dp,
+                if (RestroTokens.isDark) Color.White.copy(alpha = .16f) else Color.Black.copy(alpha = .08f),
+                RestroTokens.shape
+            )
             .onGloballyPositioned { position = it.positionInRoot() }
     ) {
         if (backdrop != null && !reduced && Build.VERSION.SDK_INT >= 31) {
@@ -113,7 +147,13 @@ fun Glass(
         }
         Box(
             Modifier.matchParentSize()
-                .background(RestroTokens.surface.copy(alpha = if (reduced) .98f else .76f))
+                .background(
+                    if (RestroTokens.isDark) {
+                        RestroTokens.surface.copy(alpha = if (reduced) .98f else .76f)
+                    } else {
+                        RestroTokens.surface.copy(alpha = if (reduced) .98f else .88f)
+                    }
+                )
         )
         content()
     }

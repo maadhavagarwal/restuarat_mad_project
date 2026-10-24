@@ -335,7 +335,7 @@ class RestroFirebaseBackendEngine(
     // 4. ANTI-HACKING SECURE ORDER PLACEMENT
     // -------------------------------------------------------------
 
-    fun placeOrder(checkout: Checkout, cart: Cart, address: Address): DeliveryOrder {
+    fun placeOrder(checkout: Checkout, cart: Cart, address: Address, userId: String = ""): DeliveryOrder {
         // Replay Protection via Idempotency Key
         processedIdempotencyKeys[checkout.idempotencyKey]?.let { existingOrder ->
             return existingOrder
@@ -376,7 +376,7 @@ class RestroFirebaseBackendEngine(
             )
         }
 
-        // Build Confirmed Order
+        // Build Confirmed Order (Scoped strictly to authenticated user)
         val order = DeliveryOrder(
             id = "ORD-${(1000..9999).random()}",
             restaurantId = restaurant.id,
@@ -386,6 +386,7 @@ class RestroFirebaseBackendEngine(
             paymentMethod = checkout.paymentMethod,
             paymentStatus = "Paid via ${checkout.paymentMethod}",
             status = "Confirmed",
+            userId = userId,
             events = listOf(
                 Event("Order Placed & Payment Verified", Instant.now().toString()),
                 Event("Sent to Kitchen", Instant.now().plusSeconds(30).toString())
@@ -433,10 +434,16 @@ class RestroFirebaseBackendEngine(
     // 5. 10-SECOND LIVE TRACKING COORDINATES STREAM (MUMBAI)
     // -------------------------------------------------------------
 
-    fun getTrackingStream(orderId: String, totalUpdates: Int = 12): Flow<TrackingResponse> = flow {
+    fun getTrackingStream(orderId: String, currentUserId: String? = null, totalUpdates: Int = 12): Flow<TrackingResponse> = flow {
         val orders = sqlDb.getAllOrders()
-        val order = orders.find { it.id == orderId } ?: orders.firstOrNull()
-        val rest = order?.restaurantId?.let { sqlDb.getRestaurantById(it) }
+        val order = orders.find { it.id == orderId }
+            ?: throw IllegalArgumentException("Order #$orderId not found")
+
+        // Strictly verify assigned customer authorization
+        if (currentUserId != null && order.userId.isNotBlank() && order.userId != currentUserId) {
+            throw IllegalStateException("Access Denied: Live GPS tracking is restricted to the assigned customer.")
+        }
+        val rest = sqlDb.getRestaurantById(order.restaurantId)
 
         // Authoritative Mumbai Restaurant Coordinates (Goregaon West fallback)
         val restLat = rest?.latitude ?: 19.1663

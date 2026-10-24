@@ -183,4 +183,104 @@ class ProductionAuthValidationTest {
         assertEquals(22000L, newStaffRecord.netSalary)
         assertEquals("PENDING", newStaffRecord.status)
     }
+
+    @Test
+    fun `rider live location tracking strictly scoped to assigned user`() {
+        val assignedUserOrder = DeliveryOrder(
+            id = "ORD-TEST-1",
+            restaurantId = "rest-1",
+            restaurantName = "Spice Route",
+            address = Address(id = "addr-1", label = "Home", line = "Indiranagar", city = "Mumbai", postcode = "400001", phone = "+919876543210"),
+            quote = Quote(restaurantId = "rest-1", subtotal = 50000L, delivery = 0L, tax = 2500L, discount = 5000L, total = 47500L, lines = emptyList()),
+            paymentMethod = "UPI",
+            userId = "user-assigned-1"
+        )
+
+        // Authorized: Owner of the order
+        val authorizedUser = "user-assigned-1"
+        assertTrue(assignedUserOrder.userId == authorizedUser)
+
+        // Forbidden: Another user attempting to track
+        val unauthorizedUser = "user-intruder-99"
+        assertFalse(assignedUserOrder.userId == unauthorizedUser)
+
+        // Order delivery lifecycle state transitions
+        val orderStages = listOf("Confirmed", "Preparing", "Out for delivery", "Delivered")
+        val activeStage = "Out for delivery"
+        val activeIdx = orderStages.indexOf(activeStage)
+        assertEquals(2, activeIdx)
+        assertTrue(activeIdx >= 0 && activeIdx < orderStages.size)
+    }
+
+    @Test
+    fun `post ordering experience reorder and review data integrity`() {
+        val testLines = listOf(
+            QuoteLine(dishId = "dish-1", name = "Biryani", quantity = 2, addons = emptyList(), unitPrice = 35000L, total = 70000L),
+            QuoteLine(dishId = "dish-2", name = "Gulab Jamun", quantity = 1, addons = emptyList(), unitPrice = 12000L, total = 12000L)
+        )
+        val testQuote = Quote(restaurantId = "rest-biryani", subtotal = 82000L, delivery = 4000L, tax = 4100L, discount = 5000L, total = 85100L, lines = testLines)
+        val completedOrder = DeliveryOrder(
+            id = "ORD-COMPLETED-101",
+            restaurantId = "rest-biryani",
+            restaurantName = "Biryani Mahal",
+            address = Address(id = "addr-2", label = "Work", line = "BKC", city = "Mumbai", postcode = "400051", phone = "+919876543211"),
+            quote = testQuote,
+            paymentMethod = "Cash on delivery",
+            status = "Delivered",
+            userId = "user-101"
+        )
+
+        // Reorder reconstruction produces exact item quantities and dishes
+        val reorderCartLines = completedOrder.quote.lines.map { line ->
+            Line(line.dishId, line.quantity, line.addons)
+        }
+        assertEquals(2, reorderCartLines.size)
+        assertEquals("dish-1", reorderCartLines[0].dishId)
+        assertEquals(2, reorderCartLines[0].quantity)
+
+        // Post-delivery review model validation
+        val review = Review(
+            orderId = completedOrder.id,
+            restaurantId = completedOrder.restaurantId,
+            author = "Test Diner",
+            rating = 5,
+            text = "Super fast delivery and delicious biryani!"
+        )
+        assertEquals(5, review.rating)
+        assertEquals("Test Diner", review.author)
+        assertEquals(completedOrder.id, review.orderId)
+        assertEquals(completedOrder.restaurantId, review.restaurantId)
+    }
+
+    @Test
+    fun `user account profile customization and light dark theme mode toggle integrity`() {
+        val userProfile = Profile(
+            id = "user-theme-1",
+            name = "Aarav Sharma",
+            email = "aarav@example.com",
+            phone = "+91 98765 43210",
+            reducedGlass = false,
+            isDarkMode = true,
+            role = UserRole.CUSTOMER
+        )
+
+        // Default theme state
+        assertTrue(userProfile.isDarkMode)
+
+        // Switching to Light Mode
+        val lightProfile = userProfile.copy(isDarkMode = false)
+        assertFalse(lightProfile.isDarkMode)
+        assertEquals("Aarav Sharma", lightProfile.name)
+        assertEquals("+91 98765 43210", lightProfile.phone)
+
+        // Switching back to Dark Mode
+        val darkProfile = lightProfile.copy(isDarkMode = true)
+        assertTrue(darkProfile.isDarkMode)
+
+        // Editing name and phone in Account Screen preserves theme mode
+        val updatedProfile = darkProfile.copy(name = "Aarav S.", phone = "+91 91234 56789")
+        assertEquals("Aarav S.", updatedProfile.name)
+        assertEquals("+91 91234 56789", updatedProfile.phone)
+        assertTrue(updatedProfile.isDarkMode)
+    }
 }

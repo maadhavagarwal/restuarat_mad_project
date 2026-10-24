@@ -103,6 +103,7 @@ data class Profile(
     val email: String,
     val phone: String = "",
     val reducedGlass: Boolean = false,
+    val isDarkMode: Boolean = true,
     val role: UserRole = UserRole.CUSTOMER,
 )
 

@@ -2057,7 +2057,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
         val checkoutObj = Checkout(selectedAddr.id, paymentMethod, checkoutKey, total)
         try {
-            val confirmedOrder = backend.placeOrder(checkoutObj, cart, selectedAddr)
+            val confirmedOrder = backend.placeOrder(checkoutObj, cart, selectedAddr, profile?.id ?: "")
             // Real-time Cloud Firestore sync
             cloudEngine.saveOrderToCloud(confirmedOrder)
             orders = listOf(confirmedOrder) + orders.filterNot { it.id == confirmedOrder.id }
@@ -2073,6 +2073,19 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             )
         } catch (e: Exception) {
             error = e.message ?: "Failed to place order."
+        }
+    }
+
+    fun submitOrderReview(orderId: String, rating: Int, reviewText: String, tipAmount: Long = 0L) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val user = profile?.name?.ifBlank { "Happy Diner" } ?: "Happy Diner"
+            sqlDb.recordAuditLog(
+                "ORDER_REVIEW_SUBMITTED",
+                user,
+                "CUSTOMER",
+                orderId,
+                "Customer rated $rating stars. Tip: Rs.$tipAmount. Note: ${reviewText.ifBlank { "Tasty food & great delivery" }}"
+            )
         }
     }
 
