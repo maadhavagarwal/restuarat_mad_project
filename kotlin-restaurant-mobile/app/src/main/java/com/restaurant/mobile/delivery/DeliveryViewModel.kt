@@ -1,4 +1,7 @@
-package com.restaurant.mobile.delivery
+﻿package com.restaurant.mobile.delivery
+
+import com.restaurant.mobile.firebase.FirebaseAuthRepository
+import com.restaurant.mobile.firebase.FirebaseMenuRepository
 
 import android.app.Application
 import android.Manifest
@@ -447,6 +450,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     val sqlDb get() = backend.sqlDb
     val cloudEngine = FirebaseCloudEngine(app, backend.sqlDb)
     val api = DeliveryApi().apply { engine = backend }
+    val menuRepository = FirebaseMenuRepository()
+    val authRepository = FirebaseAuthRepository()
+    var unavailableCartDishNotice by mutableStateOf<String?>(null)
+    private var dishesJob: Job? = null
+    private var restaurantsJob: Job? = null
     var starting by mutableStateOf(true)
         private set
 
@@ -1100,6 +1108,22 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            // Authoritative Cloud Firestore real-time restaurant list synchronization.
+            // Dishes are loaded per-restaurant via observeDishesForRestaurant().
+            restaurantsJob = viewModelScope.launch {
+                try {
+                    menuRepository.seedIfEmpty()
+                } catch (_: Exception) {}
+                menuRepository.observeRestaurants().collect { rList ->
+                    if (rList.isNotEmpty()) {
+                        catalog = catalog.copy(restaurants = rList)
+                        // Auto-select first restaurant on cold start if none is selected yet
+                        if (restaurantId.isBlank()) {
+                            restaurantId = rList.first().id
+                        }
+                    }
+                }
+            }
             if (api.token != null) refreshAccount()
         }
     }
@@ -1143,7 +1167,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshAccount() {
         try {
             profile = api.call("/profile")
-            cart = api.call("/cart")
+            // NOTE: cart is NOT re-fetched here — doing so would overwrite the user's
+            // in-progress local cart with a stale server snapshot (cart-erasure bug).
             addresses = api.call("/addresses")
             favorites = api.call("/favorites")
             orders = api.call("/orders")
@@ -1402,6 +1427,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         category = ""
         query = ""
         route = "Restaurant"
+        // Start real-time Firestore listener for this restaurant's dishes
+        observeDishesForRestaurant(id)
         reviews = listOf(
             Review(
                 orderId = "ord-1",
@@ -1431,6 +1458,37 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                     val remoteReviews: List<Review> = api.call("/reviews/$id")
                     if (remoteReviews.isNotEmpty()) reviews = remoteReviews
                 } catch (_: Exception) {}
+            }
+        }
+    }
+
+
+    /**
+     * Cancels any previous dish listener and starts a new Firestore snapshot listener
+     * for the given restaurant's dishes collection. Updates [catalog] in real-time.
+     * Also checks cart validity — removes unavailable dishes and surfaces a notice.
+     */
+    fun observeDishesForRestaurant(restId: String) {
+        dishesJob?.cancel()
+        dishesJob = viewModelScope.launch {
+            menuRepository.observeDishes(restId).collect { dishList ->
+                catalog = catalog.copy(
+                    dishes = catalog.dishes.filter { it.restaurantId != restId } + dishList
+                )
+                // Cart unavailability check
+                val unavailableInCart = cart.lines.filter { line ->
+                    val dish = catalog.dishes.find { it.id == line.dishId }
+                    dish != null && !dish.available
+                }
+                if (unavailableInCart.isNotEmpty()) {
+                    unavailableCartDishNotice =
+                        "Some items in your cart are no longer available and have been removed."
+                    cart = cart.copy(
+                        lines = cart.lines.filterNot { line ->
+                            unavailableInCart.any { it.dishId == line.dishId }
+                        }
+                    )
+                }
             }
         }
     }

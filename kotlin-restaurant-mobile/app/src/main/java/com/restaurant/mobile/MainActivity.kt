@@ -1,4 +1,4 @@
-package com.restaurant.mobile
+﻿package com.restaurant.mobile
 import android.content.Intent
 
 import android.os.Bundle
@@ -33,6 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.restaurant.mobile.api.ApiClient
+import com.restaurant.mobile.delivery.AdminMenuManagementDialog
+import com.restaurant.mobile.delivery.Dish
+import com.restaurant.mobile.firebase.FirebaseMenuRepository
 import com.restaurant.mobile.delivery.BillSplitResult
 import com.restaurant.mobile.delivery.BillSplittingRules
 import com.restaurant.mobile.delivery.DerivedTableState
@@ -264,6 +267,9 @@ fun RestaurantMobileApp(
     var activeBooking by remember { mutableStateOf<com.restaurant.mobile.delivery.TableBooking?>(null) }
     var activeDiningTab by remember { mutableStateOf<com.restaurant.mobile.delivery.DiningTab?>(null) }
     var showTableSelectDialog by remember { mutableStateOf(false) }
+    val menuRepo = remember { FirebaseMenuRepository() }
+    var showMenuManagementDialog by remember { mutableStateOf(false) }
+    var firestoreDishes by remember { mutableStateOf<List<Dish>>(emptyList()) }
 
     var readyNotificationBanner by rememberSaveable { mutableStateOf<String?>(null) }
     var notifiedReadyKotIds by rememberSaveable { mutableStateOf(setOf<Long>()) }
@@ -287,23 +293,63 @@ fun RestaurantMobileApp(
     fun refreshAll() {
         onUserInteraction?.invoke()
         coroutineScope.launch {
-            val allDishes = withContext(Dispatchers.IO) {
-                database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
-            }
-            val uniqueCats = allDishes.map { it.category }.distinct()
-            categories = uniqueCats.mapIndexed { idx, catName ->
-                Category((idx + 1).toLong(), catName)
-            }
-            menuItems = allDishes.mapIndexed { idx, dish ->
-                val catId = (uniqueCats.indexOf(dish.category) + 1).toLong()
-                MenuItem(
-                    id = (idx + 1).toLong(),
-                    categoryId = catId,
-                    name = dish.name,
-                    price = (dish.price / 100.0),
-                    taxRate = 5.0,
-                    isAvailable = true
-                )
+            // Load authoritative dishes from Cloud Firestore with local database fallback
+            try {
+                val dishes = menuRepo.getAllDishesOnce()
+                if (dishes.isNotEmpty()) {
+                    firestoreDishes = dishes
+                    val catNames = dishes.map { it.category }.distinct()
+                    categories = catNames.mapIndexed { idx, name -> Category(idx.toLong() + 1, name) }
+                    menuItems = dishes.map { d ->
+                        val cId = categories.find { it.name == d.category }?.id ?: 1L
+                        MenuItem(
+                            id = d.id.hashCode().toLong(),
+                            categoryId = cId,
+                            name = d.name,
+                            price = d.price / 100.0,
+                            taxRate = 5.0,
+                            isAvailable = d.available
+                        )
+                    }
+                } else {
+                    val allDishes = withContext(Dispatchers.IO) {
+                        database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
+                    }
+                    val uniqueCats = allDishes.map { it.category }.distinct()
+                    categories = uniqueCats.mapIndexed { idx, catName ->
+                        Category((idx + 1).toLong(), catName)
+                    }
+                    menuItems = allDishes.mapIndexed { idx, dish ->
+                        val catId = (uniqueCats.indexOf(dish.category) + 1).toLong()
+                        MenuItem(
+                            id = (idx + 1).toLong(),
+                            categoryId = catId,
+                            name = dish.name,
+                            price = (dish.price / 100.0),
+                            taxRate = 5.0,
+                            isAvailable = true
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                val allDishes = withContext(Dispatchers.IO) {
+                    database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
+                }
+                val uniqueCats = allDishes.map { it.category }.distinct()
+                categories = uniqueCats.mapIndexed { idx, catName ->
+                    Category((idx + 1).toLong(), catName)
+                }
+                menuItems = allDishes.mapIndexed { idx, dish ->
+                    val catId = (uniqueCats.indexOf(dish.category) + 1).toLong()
+                    MenuItem(
+                        id = (idx + 1).toLong(),
+                        categoryId = catId,
+                        name = dish.name,
+                        price = (dish.price / 100.0),
+                        taxRate = 5.0,
+                        isAvailable = true
+                    )
+                }
             }
             val restTables = com.restaurant.mobile.delivery.RestaurantTableDefaults.getTablesForRestaurant("rest-1")
             tables = restTables.mapIndexed { idx, t ->
@@ -374,6 +420,15 @@ fun RestaurantMobileApp(
                         }
                     },
                     actions = {
+                        if (userRole == com.restaurant.mobile.delivery.UserRole.ADMIN) {
+                            IconButton(onClick = { showMenuManagementDialog = true }) {
+                                Icon(
+                                    Icons.Default.RestaurantMenu,
+                                    contentDescription = "Manage Menu",
+                                    tint = Color(0xFFC2410C)
+                                )
+                            }
+                        }
                         if (onSwitchStaffPin != null) {
                             IconButton(onClick = onSwitchStaffPin) {
                                 Icon(
@@ -640,13 +695,76 @@ fun RestaurantMobileApp(
                             database = database,
                             onShowToast = onShowToast
                         )
-                        NavigationScreen.ANALYTICS -> AnalyticsScreenView(
-                            analytics = analytics,
-                            isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN)
-                        )
+                        NavigationScreen.ANALYTICS -> {
+                            Column {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                                    elevation = CardDefaults.cardElevation(2.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("Firestore Menu Management", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Text("Add, edit, change prices, and toggle dishes", fontSize = 12.sp, color = Color.Gray)
+                                        }
+                                        Button(
+                                            onClick = { showMenuManagementDialog = true },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C))
+                                        ) {
+                                            Text("Manage Menu")
+                                        }
+                                    }
+                                }
+                                AnalyticsScreenView(
+                                    analytics = analytics,
+                                    isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN)
+                                )
+                            }
+                        }
                     }
 
                     // Slide Cart Bottom Sheet
+                    if (showMenuManagementDialog) {
+                        AdminMenuManagementDialog(
+                            restaurantId = "rest-1",
+                            restaurantName = "Bistro Lumière & Biryani",
+                            dishes = firestoreDishes,
+                            onAddDish = { newDish ->
+                                coroutineScope.launch {
+                                    menuRepo.addDish(newDish)
+                                    onShowToast("Added '' to Firestore")
+                                    refreshAll()
+                                }
+                            },
+                            onUpdateDish = { updated ->
+                                coroutineScope.launch {
+                                    menuRepo.updateDish(updated)
+                                    onShowToast("Updated ''")
+                                    refreshAll()
+                                }
+                            },
+                            onToggleAvailability = { dish, avail ->
+                                coroutineScope.launch {
+                                    menuRepo.updateDishAvailability(dish.restaurantId, dish.id, avail)
+                                    onShowToast("'' is now ${if (avail) "available" else "disabled"}")
+                                    refreshAll()
+                                }
+                            },
+                            onDeleteDish = { dish ->
+                                coroutineScope.launch {
+                                    menuRepo.deleteDish(dish.restaurantId, dish.id)
+                                    onShowToast("Deleted ''")
+                                    refreshAll()
+                                }
+                            },
+                            onDismiss = { showMenuManagementDialog = false }
+                        )
+                    }
+
                     if (isCartOpen) {
                         CartBottomSheetView(
                             cart = cart,

@@ -1,4 +1,4 @@
-package com.restaurant.mobile.delivery
+﻿package com.restaurant.mobile.delivery
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -252,7 +252,7 @@ class TableBookingUiTest {
         val validDraft = TableBookingDraft(
             restaurantId = "rest-1",
             restaurantName = "Bistro Lumière",
-            bookingDate = "2026-10-20",
+            bookingDate = "2026-10-30",
             timeSlot = "8:00 PM",
             partySize = 4,
             seatingArea = "Rooftop Lounge",
@@ -274,7 +274,7 @@ class TableBookingUiTest {
         onProceedToReview(validDraft)
 
         assertNotNull(passedDraft)
-        assertEquals("2026-10-20", passedDraft?.bookingDate)
+        assertEquals("2026-10-30", passedDraft?.bookingDate)
         assertEquals("8:00 PM", passedDraft?.timeSlot)
         assertEquals(4, passedDraft?.partySize)
         assertEquals("Rooftop Lounge", passedDraft?.seatingArea)

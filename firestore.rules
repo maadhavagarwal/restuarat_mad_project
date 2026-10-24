@@ -6,42 +6,70 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function userExists() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function roleExists() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/user_roles/$(request.auth.uid));
+    }
+
     function getUserRole() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+      return userExists()
         ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
         : "CUSTOMER";
     }
 
+    function hasConsistentRole() {
+      return userExists()
+        && roleExists()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+          == get(/databases/$(database)/documents/user_roles/$(request.auth.uid)).data.role;
+    }
+
     function isStaff() {
-      let role = getUserRole();
-      return role in ["WAITER", "CHEF_KDS", "ADMIN", "MASTER_ADMIN"];
+      return hasConsistentRole()
+        && getUserRole() in ["WAITER", "CHEF_KDS", "ADMIN", "MASTER_ADMIN"];
     }
 
     function isWaiterOrAdmin() {
-      let role = getUserRole();
-      return role in ["WAITER", "ADMIN", "MASTER_ADMIN"];
+      return hasConsistentRole()
+        && getUserRole() in ["WAITER", "ADMIN", "MASTER_ADMIN"];
     }
 
     function isKitchenOrAdmin() {
-      let role = getUserRole();
-      return role in ["CHEF_KDS", "WAITER", "ADMIN", "MASTER_ADMIN"];
+      return hasConsistentRole()
+        && getUserRole() in ["CHEF_KDS", "WAITER", "ADMIN", "MASTER_ADMIN"];
     }
 
     function isAdmin() {
-      let role = getUserRole();
-      return role in ["ADMIN", "MASTER_ADMIN"];
+      return hasConsistentRole()
+        && getUserRole() in ["ADMIN", "MASTER_ADMIN"];
     }
 
     function isMasterAdmin() {
-      return getUserRole() == "MASTER_ADMIN";
+      return hasConsistentRole() && getUserRole() == "MASTER_ADMIN";
     }
 
-    // 1. Public/Authenticated Read for Catalog (Restaurants, Dishes, Offers)
-    match /restaurants/{restId} {
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Restaurant catalog
+    match /restaurants/{restaurantId} {
       allow read: if true;
       allow write: if isAdmin();
+
+      // Firebase menu repository stores dishes under each restaurant.
+      match /dishes/{dishId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
     }
 
+    // Legacy top-level catalog collections
     match /dishes/{dishId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -52,78 +80,108 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 2. User Profiles — Users can read/update their own non-role fields; only Admin can assign/change role
+    // User profiles
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow create: if isSignedIn() && request.auth.uid == userId
-                    && (!("role" in request.resource.data) || request.resource.data.role == "CUSTOMER");
-      allow update: if isSignedIn() && (
-        isAdmin() ||
-        (request.auth.uid == userId && request.resource.data.role == resource.data.role)
-      );
+      allow read: if isOwner(userId) || isAdmin();
+
+      allow create: if isOwner(userId)
+        && (!("role" in request.resource.data)
+            || request.resource.data.role == "CUSTOMER");
+
+      allow update: if isAdmin()
+        || (isOwner(userId)
+            && request.resource.data.role == resource.data.role);
+
       allow delete: if isMasterAdmin();
     }
 
-    // 3. Customer Orders — Customer can create & read own orders; Staff can read/update order status
+    // Authoritative role records: clients may read their own role,
+    // but role assignment must be performed by a trusted server/admin.
+    match /user_roles/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if false;
+    }
+
+    // Customer orders
     match /orders/{orderId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isStaff());
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isStaff());
+
       allow create: if isSignedIn()
-                    && request.resource.data.quote.total > 0;
-      allow update: if isSignedIn() && (
-        isStaff() ||
-        (resource.data.userId == request.auth.uid && request.resource.data.status == "Cancelled")
-      );
+        && request.resource.data.quote.total > 0;
+
+      allow update: if isSignedIn()
+        && (isStaff()
+            || (resource.data.userId == request.auth.uid
+                && request.resource.data.status == "Cancelled"));
+
       allow delete: if isMasterAdmin();
     }
 
-    // 4. Table Bookings — Customer can create & read own bookings; Waiter/Admin can read/update all
+    // Table bookings
     match /table_bookings/{bookingId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isWaiterOrAdmin());
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isWaiterOrAdmin());
+
       allow create: if isSignedIn()
-                    && request.resource.data.partySize >= 1
-                    && request.resource.data.partySize <= 20;
-      allow update: if isSignedIn() && (
-        isWaiterOrAdmin() ||
-        (resource.data.userId == request.auth.uid && request.resource.data.status == "CANCELLED")
-      );
+        && request.resource.data.partySize >= 1
+        && request.resource.data.partySize <= 20;
+
+      allow update: if isSignedIn()
+        && (isWaiterOrAdmin()
+            || (resource.data.userId == request.auth.uid
+                && request.resource.data.status == "CANCELLED"));
+
       allow delete: if isAdmin();
     }
 
-    // 5. Dining Tabs (Waiter POS & Dine-In Settlement)
+    // Dining tabs
     match /dining_tabs/{tabId} {
       allow read: if isSignedIn();
-      allow create, update: if isWaiterOrAdmin() || (
-        isSignedIn() &&
-        resource.data.customerId == request.auth.uid &&
-        request.resource.data.status in ["PAYMENT_PENDING", "SETTLED"]
-      );
+
+      allow create: if isWaiterOrAdmin()
+        || (isSignedIn()
+            && request.resource.data.customerId == request.auth.uid
+            && request.resource.data.status in ["PAYMENT_PENDING", "SETTLED"]);
+
+      allow update: if isWaiterOrAdmin()
+        || (isSignedIn()
+            && resource.data.customerId == request.auth.uid
+            && request.resource.data.customerId == request.auth.uid
+            && request.resource.data.status in ["PAYMENT_PENDING", "SETTLED"]);
+
       allow delete: if isAdmin();
     }
 
-    // 6. Kitchen Display System (KDS) Tickets
+    // Kitchen tickets
     match /kot_tickets/{ticketId} {
       allow read: if isStaff();
-      allow create: if isSignedIn();
+      allow create: if isStaff();
       allow update: if isKitchenOrAdmin();
       allow delete: if isAdmin();
     }
 
-    // 7. Staff Payroll — Strictly Admin / Master Admin only
+    // Payroll
     match /staff_payroll/{recordId} {
       allow read, write: if isAdmin();
     }
 
-    // 8. Inventory & Stock Movements — Strictly Staff Read, Admin/Kitchen Write
+    // Inventory
     match /inventory/{itemId} {
       allow read: if isStaff();
       allow write: if isKitchenOrAdmin();
     }
 
-    // 9. Audit Logs — Append-only for Staff, Read-only for Admin
+    // Append-only audit logs
     match /audit_logs/{logId} {
       allow read: if isAdmin();
-      allow create: if isSignedIn();
+      allow create: if isStaff();
       allow update, delete: if false;
+    }
+
+    // Deny everything not explicitly allowed above.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

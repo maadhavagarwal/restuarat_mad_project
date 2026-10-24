@@ -1,4 +1,4 @@
-package com.restaurant.mobile.delivery
+﻿package com.restaurant.mobile.delivery
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -145,6 +145,26 @@ fun CartScreen(vm: DeliveryViewModel) {
 
     Page {
         Heading("Your Cart", "${vm.cart.lines.sumOf { it.quantity }} items in your bag")
+
+        vm.unavailableCartDishNotice?.let { notice ->
+            Surface(
+                color = RestroTokens.coral.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
+                    Text(notice, color = RestroTokens.text, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { vm.unavailableCartDishNotice = null }) {
+                        Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = RestroTokens.muted, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
 
         vm.cart.lines.forEachIndexed { index, line ->
             val dish = vm.catalog.dishes.find { it.id == line.dishId }
