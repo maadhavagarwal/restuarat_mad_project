@@ -209,8 +209,42 @@ fun CartScreen(vm: DeliveryViewModel) {
             }
         }
 
+        // Coupon Feedback Messages
+        if (vm.couponError != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                    Text(vm.couponError ?: "", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        } else if (vm.couponMessage != null) {
+            Surface(
+                color = RestroTokens.green.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.green, modifier = Modifier.size(16.dp))
+                    Text(vm.couponMessage ?: "", color = RestroTokens.green, fontSize = 12.sp)
+                }
+            }
+        }
+
         // Applied Coupon Indicator
         if (vm.cart.coupon.isNotBlank()) {
+            val q = vm.quote ?: vm.computeQuote()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -225,12 +259,21 @@ fun CartScreen(vm: DeliveryViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
-                    Text(
-                        "Coupon '${vm.cart.coupon}' applied",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = RestroTokens.coral
-                    )
+                    Column {
+                        Text(
+                            "Coupon '${vm.cart.coupon}' applied",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = RestroTokens.coral
+                        )
+                        if (q.discount > 0L) {
+                            Text(
+                                "Saved ${money(q.discount)} on this order",
+                                fontSize = 11.sp,
+                                color = RestroTokens.muted
+                            )
+                        }
+                    }
                 }
                 TextButton(
                     onClick = {
@@ -250,9 +293,10 @@ fun CartScreen(vm: DeliveryViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             val coupons = listOf(
-                "WELCOME50" to "₹50 OFF on first order",
-                "FEAST" to "₹50 OFF on orders above ₹200",
-                "FREEDEL" to "Free delivery on orders"
+                "WELCOME50" to "50% OFF up to ₹50",
+                "FEAST" to "₹50 OFF on ₹200+",
+                "FEAST100" to "₹100 OFF on ₹400+",
+                "FREEDEL" to "Free delivery"
             )
             coupons.forEach { (code, desc) ->
                 val isSelected = vm.cart.coupon.equals(code, ignoreCase = true)

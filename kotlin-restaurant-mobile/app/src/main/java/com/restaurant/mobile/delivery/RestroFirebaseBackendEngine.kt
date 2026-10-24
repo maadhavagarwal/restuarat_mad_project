@@ -315,28 +315,8 @@ class RestroFirebaseBackendEngine(
         // Delivery fee based on restaurant
         val deliveryFee = restaurant.deliveryFee
 
-        // Dynamic Coupon Engine
-        var discount = 0L
-        val couponCode = cart.coupon.trim().uppercase()
-        when (couponCode) {
-            "WELCOME50" -> {
-                // ₹50 off (up to 50% of subtotal)
-                discount = min(5000L, subtotal / 2)
-            }
-            "FEAST" -> {
-                // ₹50 off on orders above ₹200
-                if (subtotal >= 20000L) discount = 5000L
-            }
-            "FEAST100" -> {
-                // ₹100 off on orders above ₹400
-                if (subtotal >= 40000L) discount = 10000L
-                else if (subtotal >= 20000L) discount = 5000L
-            }
-            "FREEDEL" -> {
-                // Free delivery discount waives the delivery partner fee
-                discount = deliveryFee
-            }
-        }
+        // Authoritative Dynamic Coupon Engine
+        val discount = CouponRules.calculateDiscount(cart.coupon, subtotal, deliveryFee)
 
         val total = max(0L, subtotal + tax + deliveryFee - discount)
 

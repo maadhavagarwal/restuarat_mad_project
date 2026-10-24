@@ -574,12 +574,15 @@ router.get("/quote", optionalAuth, (req, res) => {
   // Dynamic Coupon Validation
   let discount = 0;
   if (cart.coupon) {
-    const code = cart.coupon.toUpperCase();
-    if (code === "WELCOME50" && subtotal >= 15000) {
+    const code = cart.coupon.trim().toUpperCase();
+    if (code === "WELCOME50") {
       discount = Math.min(5000, Math.round(subtotal * 0.5));
-    } else if (code === "FEAST100" && subtotal >= 40000) {
-      discount = 10000;
-    } else if (code === "FREEDEL" && subtotal >= 20000) {
+    } else if (code === "FEAST") {
+      if (subtotal >= 20000) discount = 5000;
+    } else if (code === "FEAST100") {
+      if (subtotal >= 40000) discount = 10000;
+      else if (subtotal >= 20000) discount = 5000;
+    } else if (code === "FREEDEL") {
       discount = delivery;
     }
   }
@@ -667,10 +670,14 @@ router.post("/orders", authMiddleware, (req, res) => {
   
   let discount = 0;
   if (cart.coupon) {
-    const code = cart.coupon.toUpperCase();
-    if (code === "WELCOME50" && serverSubtotal >= 15000) discount = Math.min(5000, Math.round(serverSubtotal * 0.5));
-    else if (code === "FEAST100" && serverSubtotal >= 40000) discount = 10000;
-    else if (code === "FREEDEL" && serverSubtotal >= 20000) discount = delivery;
+    const code = cart.coupon.trim().toUpperCase();
+    if (code === "WELCOME50") discount = Math.min(5000, Math.round(serverSubtotal * 0.5));
+    else if (code === "FEAST") {
+      if (serverSubtotal >= 20000) discount = 5000;
+    } else if (code === "FEAST100") {
+      if (serverSubtotal >= 40000) discount = 10000;
+      else if (serverSubtotal >= 20000) discount = 5000;
+    } else if (code === "FREEDEL") discount = delivery;
   }
 
   const serverCalculatedTotal = Math.max(0, serverSubtotal + delivery + tax - discount);

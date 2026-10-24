@@ -510,6 +510,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var otpNotificationBanner by mutableStateOf<String?>(null)
     var sessionExpiredBanner by mutableStateOf<String?>(null)
 
+    // Coupon Validation & User Feedback State
+    var couponError by mutableStateOf<String?>(null)
+    var couponMessage by mutableStateOf<String?>(null)
+
     // Proximity & Landmark Feed State
     var currentLandmark by mutableStateOf("Goregaon West, Mumbai")
     var currentLatitude by mutableDoubleStateOf(19.1663)
@@ -1020,12 +1024,53 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun applyCoupon(code: String) = run {
-        try {
-            cart = api.call("/cart", "PUT", cart.copy(coupon = code))
-        } catch (_: Exception) {
-            cart = cart.copy(coupon = code)
+        val clean = code.trim().uppercase()
+        if (clean.isBlank()) {
+            try {
+                cart = api.call("/cart", "PUT", cart.copy(coupon = ""))
+            } catch (_: Exception) {
+                cart = cart.copy(coupon = "")
+            }
+            couponError = null
+            couponMessage = null
+            computeQuote()
+            resetCheckoutKey()
+            return@run
         }
-        computeQuote()
+
+        val subtotal = cart.lines.sumOf { line ->
+            val dish = catalog.dishes.find { it.id == line.dishId }
+            val dishPrice = dish?.price ?: 0L
+            val addonsPrice = dish?.addons?.filter { it.id in line.addons }?.sumOf { it.price } ?: 0L
+            (dishPrice + addonsPrice) * line.quantity
+        }
+
+        val (isValid, errorReason) = CouponRules.validateCoupon(clean, subtotal)
+        if (!isValid) {
+            couponError = errorReason
+            couponMessage = null
+            try {
+                cart = api.call("/cart", "PUT", cart.copy(coupon = ""))
+            } catch (_: Exception) {
+                cart = cart.copy(coupon = "")
+            }
+            computeQuote()
+            resetCheckoutKey()
+            return@run
+        }
+
+        try {
+            cart = api.call("/cart", "PUT", cart.copy(coupon = clean))
+        } catch (_: Exception) {
+            cart = cart.copy(coupon = clean)
+        }
+        val q = computeQuote()
+        couponError = null
+        couponMessage = if (clean == "FREEDEL") {
+            "FREEDEL applied! Free delivery on this order."
+        } else {
+            "$clean applied! You saved ${money(q.discount)}."
+        }
         resetCheckoutKey()
     }
 
@@ -1485,6 +1530,24 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             cart = cart.copy(lines = lines)
         }
+
+        // Validate applied coupon against new subtotal
+        if (cart.coupon.isNotBlank()) {
+            val subtotal = cart.lines.sumOf { line ->
+                val dish = catalog.dishes.find { it.id == line.dishId }
+                val dishPrice = dish?.price ?: 0L
+                val addonsPrice = dish?.addons?.filter { it.id in line.addons }?.sumOf { it.price } ?: 0L
+                (dishPrice + addonsPrice) * line.quantity
+            }
+            val activeCoupon = cart.coupon.trim().uppercase()
+            if ((activeCoupon == "FEAST" || activeCoupon == "FEAST100") && subtotal < 20000L) {
+                couponError = "Coupon '$activeCoupon' was removed because cart subtotal fell below ₹200."
+                couponMessage = null
+                cart = cart.copy(coupon = "")
+                try { api.call("/cart", "PUT", cart) } catch (_: Exception) {}
+            }
+        }
+
         computeQuote()
         resetCheckoutKey()
         if (after != null) route = after
@@ -1886,14 +1949,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             }
             val delivery = 4000L
             val tax = (subtotal * 0.05).toLong()
-            val couponCode = cart.coupon.trim().uppercase()
-            val discount = when (couponCode) {
-                "WELCOME50" -> (subtotal / 2L).coerceAtMost(5000L)
-                "FEAST" -> if (subtotal >= 20000L) 5000L else 0L
-                "FEAST100" -> if (subtotal >= 40000L) 10000L else 0L
-                "FREEDEL" -> delivery
-                else -> if (cart.coupon.isNotBlank()) 5000L.coerceAtMost(subtotal) else 0L
-            }
+            val discount = CouponRules.calculateDiscount(cart.coupon, subtotal, delivery)
             val fallbackRestId = cart.lines.firstOrNull()?.let { line ->
                 catalog.dishes.find { it.id == line.dishId }?.restaurantId
             } ?: "rest-1"
