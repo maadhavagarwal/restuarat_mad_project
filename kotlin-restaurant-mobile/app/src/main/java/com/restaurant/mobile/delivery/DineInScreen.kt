@@ -102,13 +102,13 @@ fun DineInScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Dine-In & Table Booking",
+                            RestroI18n.t("dine_in_title"),
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold,
                             color = RestroTokens.text
                         )
                         Text(
-                            "Reserve curated restaurant tables near you",
+                            RestroI18n.t("dine_in_subtitle"),
                             fontSize = 13.sp,
                             color = RestroTokens.muted
                         )
@@ -142,6 +142,7 @@ fun DineInScreen(
         // 2. Active Dining Session or Walk-In Pay Table Bill Card
         item {
             if (vm.activeTableTab != null) {
+                val activeRestAcceptsPay = vm.catalog.restaurants.find { it.id == vm.restaurantId }?.acceptsDiningPayment ?: true
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
@@ -155,7 +156,8 @@ fun DineInScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Box(
                                 modifier = Modifier.size(40.dp).clip(CircleShape).background(RestroTokens.green.copy(alpha = 0.2f)),
@@ -170,16 +172,37 @@ fun DineInScreen(
                                         Text("DINING ACTIVE", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.Black, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
                                     }
                                 }
-                                Text("Tab: ${money(vm.activeTableTab?.total ?: 0L)} · ${vm.activeTableTab?.items?.size ?: 0} items", fontSize = 12.sp, color = RestroTokens.muted)
+                                Text(
+                                    if (activeRestAcceptsPay) "Tab: ${money(vm.activeTableTab?.total ?: 0L)} · ${vm.activeTableTab?.items?.size ?: 0} items"
+                                    else "Tab: ${money(vm.activeTableTab?.total ?: 0L)} · ${RestroI18n.t("counter_pay_only")}",
+                                    fontSize = 12.sp,
+                                    color = RestroTokens.muted
+                                )
                             }
                         }
-                        Button(
-                            onClick = { showTabPaymentSheet = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Pay Bill", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        if (activeRestAcceptsPay) {
+                            Button(
+                                onClick = { showTabPaymentSheet = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("Pay Bill", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        } else {
+                            Surface(
+                                color = RestroTokens.coral.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.4f))
+                            ) {
+                                Text(
+                                    RestroI18n.t("counter_pay_only"),
+                                    color = RestroTokens.coral,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -423,6 +446,7 @@ fun DineInScreen(
     if (showWalkInSheet) {
         val targetRestId = vm.restaurantId.ifBlank { "rest-1" }
         val restTables = RestaurantTableDefaults.getTablesForRestaurant(targetRestId).map { it.tableNumber }
+        val acceptsPay = vm.catalog.restaurants.find { it.id == targetRestId }?.acceptsDiningPayment ?: true
         WalkInPayBillSheet(
             onTableSelected = { tableNumber ->
                 val tab = vm.lookupWalkInTableBill(tableNumber)
@@ -432,7 +456,8 @@ fun DineInScreen(
             },
             onDismiss = { showWalkInSheet = false },
             errorMessage = vm.walkInTableError,
-            availableTables = restTables
+            availableTables = restTables,
+            acceptsDiningPayment = acceptsPay
         )
     }
 
@@ -625,14 +650,14 @@ fun DineInRestaurantCard(
                     }
                 }
 
-                // Table Capacity Notice
+                // Table Capacity & Dining Payment Policy Notice
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(Icons.Default.TableBar, null, tint = RestroTokens.green, modifier = Modifier.size(15.dp))
                     Text(
-                        "Tables accommodating 1 to ${restaurant.maxPartySize} guests available today",
+                        "Tables accommodating 1 to ${restaurant.maxPartySize} guests · ${if (restaurant.acceptsDiningPayment) "Online Table Pay" else RestroI18n.t("counter_pay_only")}",
                         fontSize = 11.sp,
                         color = RestroTokens.green,
                         fontWeight = FontWeight.Medium

@@ -127,7 +127,8 @@ class RiderDispatchEngine(
     fun assignNearestRider(
         order: DeliveryOrder,
         restaurantLat: Double,
-        restaurantLng: Double
+        restaurantLng: Double,
+        prepMinutes: Int = 22
     ): RiderAssignmentResult {
         // Filter available riders; if all are occupied, select from entire fleet
         val pool = localFleet.filter { it.isAvailable }.ifEmpty { localFleet }
@@ -137,15 +138,20 @@ class RiderDispatchEngine(
             calculateDistanceKm(rider.latitude, rider.longitude, restaurantLat, restaurantLng)
         } ?: DEFAULT_FLEET.first()
 
-        val distanceKm = calculateDistanceKm(
-            nearestRider.latitude,
-            nearestRider.longitude,
+        val destLat = order.address.latitude ?: restaurantLat
+        val destLng = order.address.longitude ?: restaurantLng
+        val routeDistKm = calculateDistanceKm(
             restaurantLat,
-            restaurantLng
-        )
+            restaurantLng,
+            destLat,
+            destLng
+        ).coerceAtLeast(0.8)
 
-        // Dynamic ETA calculation: 3 minutes per km + 10 minutes restaurant prep time
-        val etaMinutes = max(8, (distanceKm * 3.5).roundToInt() + 10)
+        val clampedPrep = prepMinutes.coerceIn(20, 25)
+        val travelMins = (routeDistKm * 3.5).roundToInt().coerceAtLeast(3)
+        // Dynamic ETA calculation: 20-25 minutes restaurant prep time + user-to-restaurant travel time
+        val etaMinutes = clampedPrep + travelMins
+        val distanceKm = routeDistKm
 
         // Mark rider as occupied
         val updatedRider = nearestRider.copy(

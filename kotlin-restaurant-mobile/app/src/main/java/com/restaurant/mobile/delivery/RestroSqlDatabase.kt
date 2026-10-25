@@ -5,6 +5,8 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.google.firebase.FirebaseApp
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.restaurant.mobile.model.KOT
@@ -15,12 +17,41 @@ import java.time.LocalDate
 import java.util.UUID
 
 /**
- * Embedded Kotlin SQL Database Engine for Restro
- * Provides relational SQLite storage for Restaurants, Dishes, Orders, Users, Addresses & OTPs.
+ * Firebase Cloud Firestore + Local Offline Cache Engine for Restro.
+ * Syncs Restaurants, Dishes, Orders, Users, Addresses, Rider Earnings, Payouts & Partner Verifications with Firebase Firestore.
  */
-class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+typealias RestroFirebaseDatabase = RestroSqlDatabase
+
+class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appContext, DATABASE_NAME, null, DATABASE_VERSION) {
 
     private val gson = Gson()
+    private val firebasePrefs by lazy {
+        appContext.getSharedPreferences("restro_firebase_cloud_mirror", Context.MODE_PRIVATE)
+    }
+
+    private val firestore: FirebaseFirestore? by lazy {
+        try {
+            if (FirebaseApp.getApps(appContext).isEmpty()) {
+                FirebaseApp.initializeApp(appContext)
+            }
+            FirebaseFirestore.getInstance()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun syncToFirebaseFirestore(collection: String, docId: String, payload: Map<String, Any?>) {
+        try {
+            val cleanMap = payload.filterValues { it != null }.mapValues { it.value!! }
+            firestore?.collection(collection)?.document(docId)?.set(cleanMap)
+        } catch (_: Exception) {}
+    }
+
+    fun deleteFromFirebaseFirestore(collection: String, docId: String) {
+        try {
+            firestore?.collection(collection)?.document(docId)?.delete()
+        } catch (_: Exception) {}
+    }
 
     companion object {
         const val DATABASE_NAME = "restro_delivery.db"
@@ -587,6 +618,141 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         return db.update(TABLE_RESTAURANTS, cv, "id = ?", arrayOf(id)) > 0
     }
 
+    private fun createRestaurantSettingsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS restaurant_settings (
+                restaurant_id TEXT PRIMARY KEY,
+                open INTEGER NOT NULL DEFAULT 1,
+                prep_minutes INTEGER NOT NULL DEFAULT 22,
+                accepts_dining_payment INTEGER NOT NULL DEFAULT 1,
+                updated_at TEXT NOT NULL
+            );
+            """.trimIndent()
+        )
+    }
+
+    fun saveRestaurantSettings(
+        restaurantId: String,
+        open: Boolean,
+        prepMinutes: Int,
+        acceptsDiningPayment: Boolean
+    ): Boolean {
+        val db = writableDatabase
+        createRestaurantSettingsTable(db)
+        val clampedPrep = prepMinutes.coerceIn(20, 25)
+        val cv = ContentValues().apply {
+            put("restaurant_id", restaurantId)
+            put("open", if (open) 1 else 0)
+            put("prep_minutes", clampedPrep)
+            put("accepts_dining_payment", if (acceptsDiningPayment) 1 else 0)
+            put("updated_at", Instant.now().toString())
+        }
+        db.insertWithOnConflict("restaurant_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+
+        val restCv = ContentValues().apply {
+            put("open", if (open) 1 else 0)
+        }
+        db.update(TABLE_RESTAURANTS, restCv, "id = ?", arrayOf(restaurantId))
+
+        syncToFirebaseFirestore(
+            "restaurant_settings",
+            restaurantId,
+            mapOf(
+                "restaurantId" to restaurantId,
+                "open" to open,
+                "prepMinutes" to clampedPrep,
+                "acceptsDiningPayment" to acceptsDiningPayment,
+                "updatedAt" to Instant.now().toString()
+            )
+        )
+        return true
+    }
+
+    fun updateRestaurantLogo(restaurantId: String, logoUri: String): Boolean {
+        if (logoUri.isBlank()) return false
+        firebasePrefs.edit().putString("rest_logo_$restaurantId", logoUri).apply()
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("image", logoUri)
+        }
+        db.update(TABLE_RESTAURANTS, cv, "id = ?", arrayOf(restaurantId))
+        syncToFirebaseFirestore(
+            "restaurants",
+            restaurantId,
+            mapOf("id" to restaurantId, "logoUrl" to logoUri, "image" to logoUri, "updatedAt" to Instant.now().toString())
+        )
+        return true
+    }
+
+    fun getRestaurantLogo(restaurantId: String): String {
+        return firebasePrefs.getString("rest_logo_$restaurantId", "") ?: ""
+    }
+
+    fun getRestaurantSettings(restaurantId: String): Triple<Boolean, Int, Boolean>? {
+        return try {
+            val db = readableDatabase
+            createRestaurantSettingsTable(db)
+            val cursor = db.rawQuery(
+                "SELECT open, prep_minutes, accepts_dining_payment FROM restaurant_settings WHERE restaurant_id = ? LIMIT 1",
+                arrayOf(restaurantId)
+            )
+            val res = if (cursor.moveToFirst()) {
+                Triple(
+                    cursor.getInt(0) == 1,
+                    cursor.getInt(1).coerceIn(20, 25),
+                    cursor.getInt(2) == 1
+                )
+            } else null
+            cursor.close()
+            res
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun upsertDish(dish: Dish): Boolean {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("id", dish.id)
+            put("restaurant_id", dish.restaurantId)
+            put("category", dish.category)
+            put("name", dish.name)
+            put("description", dish.description)
+            put("price", dish.price)
+            put("image", dish.image)
+            put("vegetarian", if (dish.vegetarian) 1 else 0)
+            put("available", if (dish.available) 1 else 0)
+            put("addons_json", gson.toJson(dish.addons))
+        }
+        val ok = db.insertWithOnConflict(TABLE_DISHES, null, cv, SQLiteDatabase.CONFLICT_REPLACE) != -1L
+        syncToFirebaseFirestore(
+            "dishes",
+            dish.id,
+            mapOf(
+                "id" to dish.id,
+                "restaurantId" to dish.restaurantId,
+                "category" to dish.category,
+                "name" to dish.name,
+                "description" to dish.description,
+                "price" to dish.price,
+                "image" to dish.image,
+                "vegetarian" to dish.vegetarian,
+                "available" to dish.available,
+                "addons" to gson.toJson(dish.addons),
+                "updatedAt" to Instant.now().toString()
+            )
+        )
+        return ok
+    }
+
+    fun deleteDish(dishId: String): Boolean {
+        val db = writableDatabase
+        val ok = db.delete(TABLE_DISHES, "id = ?", arrayOf(dishId)) > 0
+        deleteFromFirebaseFirestore("dishes", dishId)
+        return ok
+    }
+
     fun getAllDishes(): List<Dish> {
         val list = mutableListOf<Dish>()
         val db = readableDatabase
@@ -620,25 +786,34 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     private fun cursorToRestaurant(c: Cursor): Restaurant {
         val id = c.getString(c.getColumnIndexOrThrow("id"))
         val template = MockCatalog.sample.restaurants.find { it.id == id }
+        val savedSettings = getRestaurantSettings(id)
+        val openState = savedSettings?.first ?: (c.getInt(c.getColumnIndexOrThrow("open")) == 1)
+        val prepMins = savedSettings?.second ?: (template?.prepMinutes ?: 22)
+        val acceptsDiningPay = savedSettings?.third ?: (template?.acceptsDiningPayment ?: true)
+        val savedLogo = getRestaurantLogo(id)
+        val dbImage = c.getString(c.getColumnIndexOrThrow("image"))
         return Restaurant(
             id = id,
             name = c.getString(c.getColumnIndexOrThrow("name")),
             cuisine = c.getString(c.getColumnIndexOrThrow("cuisine")),
             description = c.getString(c.getColumnIndexOrThrow("description")),
-            image = c.getString(c.getColumnIndexOrThrow("image")),
+            image = savedLogo.ifBlank { dbImage },
             address = c.getString(c.getColumnIndexOrThrow("address")),
             latitude = c.getDouble(c.getColumnIndexOrThrow("latitude")),
             longitude = c.getDouble(c.getColumnIndexOrThrow("longitude")),
             deliveryMinutes = c.getInt(c.getColumnIndexOrThrow("delivery_minutes")),
             deliveryFee = c.getLong(c.getColumnIndexOrThrow("delivery_fee")),
-            open = c.getInt(c.getColumnIndexOrThrow("open")) == 1,
+            open = openState,
             rating = template?.rating ?: 4.5,
             reviewCount = template?.reviewCount ?: 250,
             costForTwo = template?.costForTwo ?: 800,
             vibes = template?.vibes ?: emptyList(),
             amenities = template?.amenities ?: emptyList(),
             tableBookingAvailable = template?.tableBookingAvailable ?: true,
-            maxPartySize = template?.maxPartySize ?: 12
+            maxPartySize = template?.maxPartySize ?: 12,
+            prepMinutes = prepMins,
+            acceptsDiningPayment = acceptsDiningPay,
+            logoUrl = savedLogo.ifBlank { dbImage }
         )
     }
 
@@ -669,21 +844,17 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     // -------------------------------------------------------------
 
     fun seedDefaultStaffAccounts() {
-        // Demo staff accounts/passwords are a development fixture only; release builds must
-        // provision staff through a trusted admin process, never through shipped credentials.
         if (!com.restaurant.mobile.BuildConfig.DEBUG) return
         val defaultStaff = listOf(
             Pair(Profile("staff-waiter-1", "Rohan Verma (Waiter)", "waiter@restro.app", "+91 90000 11111", role = UserRole.WAITER), "Waiter@123"),
             Pair(Profile("staff-chef-1", "Chef Marco (Kitchen)", "chef@restro.app", "+91 90000 22222", role = UserRole.CHEF_KDS), "Chef@123"),
             Pair(Profile("staff-admin-1", "Ananya Rao (Manager)", "admin@restro.app", "+91 90000 99999", role = UserRole.ADMIN), "Admin@123"),
             Pair(Profile("staff-master-1", "Master Administrator", "master@restro.app", "+91 90000 00000", role = UserRole.MASTER_ADMIN), "Master@123"),
-            Pair(Profile("staff-rider-1", "Ramesh Rider (Delivery Partner)", "rider@restro.app", "+91 98765 12345", role = UserRole.CUSTOMER), "Rider@123"),
-            Pair(Profile("staff-kiosk-1", "Self-Order Kiosk Terminal", "kiosk@restro.app", "+91 90000 77777", role = UserRole.CUSTOMER), "Kiosk@123")
+            Pair(Profile("staff-rider-1", "Ramesh Rider (Delivery Partner)", "rider@restro.app", "+91 98765 12345", role = UserRole.RIDER), "Rider@123"),
+            Pair(Profile("staff-kiosk-1", "Self-Order Kiosk Terminal", "kiosk@restro.app", "+91 90000 77777", role = UserRole.KIOSK), "Kiosk@123")
         )
         defaultStaff.forEach { (staff, defaultPass) ->
-            if (getUserByTarget(staff.email) == null) {
-                saveUser(staff)
-            }
+            saveUser(staff)
             saveUserPasswordIfMissing(staff.email, defaultPass)
             saveUserPasswordIfMissing(staff.phone, defaultPass)
         }
@@ -698,14 +869,15 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
     }
 
     fun seedDefaultStaffPins() {
-        // Demo PINs exist ONLY in debug builds and never overwrite a PIN that was changed later.
         if (!com.restaurant.mobile.BuildConfig.DEBUG) return
         val db = writableDatabase
         val defaults = listOf(
             Triple(UserRole.WAITER, "1234", "Waiter / POS Vault"),
             Triple(UserRole.CHEF_KDS, "5678", "Kitchen KDS Vault"),
+            Triple(UserRole.RIDER, "4321", "Delivery Rider Vault"),
             Triple(UserRole.ADMIN, "9999", "Admin Manager Vault"),
-            Triple(UserRole.MASTER_ADMIN, "0000", "Master Admin Vault")
+            Triple(UserRole.MASTER_ADMIN, "0000", "Master Admin Vault"),
+            Triple(UserRole.KIOSK, "7777", "Kiosk Terminal Vault")
         )
         defaults.forEach { (role, rawPin, label) ->
             val cv = ContentValues().apply {
@@ -3355,5 +3527,250 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         }
         cursor.close()
         return list
+    }
+
+    // -------------------------------------------------------------
+    // PARTNER DOCUMENT VERIFICATION (RIDER DL / VEHICLE & ADMIN FSSAI / GST)
+    // -------------------------------------------------------------
+
+    fun savePartnerVerification(record: PartnerVerificationRecord) {
+        firebasePrefs.edit().putString("partner_verify_${record.userId}", gson.toJson(record)).apply()
+        syncToFirebaseFirestore(
+            "partner_verifications",
+            record.userId,
+            mapOf(
+                "userId" to record.userId,
+                "role" to record.role,
+                "vehicleNumber" to record.vehicleNumber,
+                "drivingLicenseUri" to record.drivingLicenseUri,
+                "fssaiNumber" to record.fssaiNumber,
+                "fssaiCertUri" to record.fssaiCertUri,
+                "gstNumber" to record.gstNumber,
+                "gstCertUri" to record.gstCertUri,
+                "restaurantName" to record.restaurantName,
+                "restaurantLogoUri" to record.restaurantLogoUri,
+                "verificationStatus" to record.verificationStatus,
+                "extractedSummary" to record.extractedSummary,
+                "verifiedAt" to record.verifiedAt
+            )
+        )
+    }
+
+    fun getPartnerVerification(userId: String): PartnerVerificationRecord? {
+        val raw = firebasePrefs.getString("partner_verify_$userId", null) ?: return null
+        return runCatching { gson.fromJson(raw, PartnerVerificationRecord::class.java) }.getOrNull()
+    }
+
+    // -------------------------------------------------------------
+    // RIDER EARNINGS, PAYOUTS, RIDE OFFERS & REJECTED RIDE FILTER (FIREBASE SYNCED)
+    // -------------------------------------------------------------
+
+    fun getRiderRides(riderId: String): List<RiderRideRecord> {
+        val key = "rider_rides_$riderId"
+        val raw = firebasePrefs.getString(key, null)
+        if (raw.isNullOrBlank()) {
+            val now = System.currentTimeMillis()
+            val hourMs = 3_600_000L
+            val dayMs = 86_400_000L
+            val seeded = listOf(
+                RiderRideRecord("ride-101", riderId, "ORD-901", "Bistro Lumière & Biryani", "Oberoi Woods, Goregaon East", 3.2, 24, 75L, now - 1 * hourMs),
+                RiderRideRecord("ride-102", riderId, "ORD-902", "Nori & Ember", "Mindspace, Malad West", 4.1, 28, 92L, now - 3 * hourMs),
+                RiderRideRecord("ride-103", riderId, "ORD-903", "Verde & Co.", "Lokhandwala, Andheri West", 2.8, 22, 68L, now - 5 * hourMs),
+                RiderRideRecord("ride-104", riderId, "ORD-890", "Dakshin Coastal", "Inorbit Mall Road, Malad", 3.6, 25, 84L, now - 2 * dayMs),
+                RiderRideRecord("ride-105", riderId, "ORD-885", "La Piazza Napoletana", "Oshiwara Link Road", 5.0, 31, 110L, now - 3 * dayMs),
+                RiderRideRecord("ride-106", riderId, "ORD-879", "Bistro Lumière & Biryani", "Film City Road, Goregaon", 4.4, 27, 96L, now - 5 * dayMs),
+                RiderRideRecord("ride-107", riderId, "ORD-840", "Nori & Ember", "JVLR Powai Crossing", 6.2, 35, 135L, now - 12 * dayMs),
+                RiderRideRecord("ride-108", riderId, "ORD-825", "Dakshin Coastal", "Marve Road, Malad West", 3.9, 26, 88L, now - 18 * dayMs),
+                RiderRideRecord("ride-109", riderId, "ORD-812", "La Piazza Napoletana", "Versova Metro, Andheri", 4.7, 29, 104L, now - 24 * dayMs)
+            )
+            firebasePrefs.edit().putString(key, gson.toJson(seeded)).apply()
+            seeded.forEach { r ->
+                syncToFirebaseFirestore(
+                    "rider_rides",
+                    r.id,
+                    mapOf(
+                        "id" to r.id,
+                        "riderId" to r.riderId,
+                        "orderId" to r.orderId,
+                        "restaurantName" to r.restaurantName,
+                        "dropAddress" to r.dropAddress,
+                        "distanceKm" to r.distanceKm,
+                        "durationMinutes" to r.durationMinutes,
+                        "incomeRupees" to r.incomeRupees,
+                        "completedAtMs" to r.completedAtMs
+                    )
+                )
+            }
+            return seeded
+        }
+        val type = object : TypeToken<List<RiderRideRecord>>() {}.type
+        return runCatching { gson.fromJson<List<RiderRideRecord>>(raw, type) ?: emptyList() }.getOrDefault(emptyList())
+    }
+
+    fun recordRiderCompletedRide(ride: RiderRideRecord) {
+        val current = getRiderRides(ride.riderId).toMutableList()
+        current.add(0, ride)
+        firebasePrefs.edit().putString("rider_rides_${ride.riderId}", gson.toJson(current)).apply()
+        syncToFirebaseFirestore(
+            "rider_rides",
+            ride.id,
+            mapOf(
+                "id" to ride.id,
+                "riderId" to ride.riderId,
+                "orderId" to ride.orderId,
+                "restaurantName" to ride.restaurantName,
+                "dropAddress" to ride.dropAddress,
+                "distanceKm" to ride.distanceKm,
+                "durationMinutes" to ride.durationMinutes,
+                "incomeRupees" to ride.incomeRupees,
+                "completedAtMs" to ride.completedAtMs
+            )
+        )
+    }
+
+    fun getRiderPayouts(riderId: String): List<RiderPayoutRecord> {
+        val raw = firebasePrefs.getString("rider_payouts_$riderId", null) ?: return emptyList()
+        val type = object : TypeToken<List<RiderPayoutRecord>>() {}.type
+        return runCatching { gson.fromJson<List<RiderPayoutRecord>>(raw, type) ?: emptyList() }.getOrDefault(emptyList())
+    }
+
+    fun recordRiderPayout(payout: RiderPayoutRecord) {
+        val current = getRiderPayouts(payout.riderId).toMutableList()
+        current.add(0, payout)
+        firebasePrefs.edit().putString("rider_payouts_${payout.riderId}", gson.toJson(current)).apply()
+        syncToFirebaseFirestore(
+            "rider_payouts",
+            payout.id,
+            mapOf(
+                "id" to payout.id,
+                "riderId" to payout.riderId,
+                "amountRupees" to payout.amountRupees,
+                "accountDestination" to payout.accountDestination,
+                "status" to payout.status,
+                "timestampMs" to payout.timestampMs
+            )
+        )
+    }
+
+    fun getRejectedRideIds(riderId: String): Set<String> {
+        return firebasePrefs.getStringSet("rider_rejected_$riderId", emptySet()) ?: emptySet()
+    }
+
+    fun rejectRideOffer(riderId: String, offerId: String) {
+        val updated = getRejectedRideIds(riderId).toMutableSet().apply { add(offerId) }
+        firebasePrefs.edit().putStringSet("rider_rejected_$riderId", updated).apply()
+        syncToFirebaseFirestore(
+            "rider_rejected_offers",
+            "${riderId}_$offerId",
+            mapOf("riderId" to riderId, "offerId" to offerId, "rejectedAtMs" to System.currentTimeMillis())
+        )
+    }
+
+    fun getCompletedOfferIds(riderId: String): Set<String> {
+        return firebasePrefs.getStringSet("rider_completed_offers_$riderId", emptySet()) ?: emptySet()
+    }
+
+    fun markRideOfferCompleted(riderId: String, offer: RiderRideOffer) {
+        val updated = getCompletedOfferIds(riderId).toMutableSet().apply { add(offer.id) }
+        firebasePrefs.edit().putStringSet("rider_completed_offers_$riderId", updated).apply()
+        recordRiderCompletedRide(
+            RiderRideRecord(
+                id = "ride-${System.currentTimeMillis()}",
+                riderId = riderId,
+                orderId = offer.orderId,
+                restaurantName = offer.restaurantName,
+                dropAddress = offer.dropAddress,
+                distanceKm = offer.distanceKm,
+                durationMinutes = offer.estimatedMinutes,
+                incomeRupees = offer.riderIncomeRupees,
+                completedAtMs = System.currentTimeMillis()
+            )
+        )
+    }
+
+    fun getAvailableRideOffers(riderId: String): List<RiderRideOffer> {
+        val rejected = getRejectedRideIds(riderId)
+        val completed = getCompletedOfferIds(riderId)
+
+        val liveOrderOffers = getAllOrders()
+            .filter { it.status != DeliveryOrderStatus.DELIVERED && it.status != DeliveryOrderStatus.CANCELLED }
+            .mapIndexed { idx, order ->
+                val distKm = ((idx + 2) * 1.3).let { Math.round(it * 10.0) / 10.0 }
+                val estMins = 22 + (distKm * 3.5).toInt()
+                val payout = (45L + (distKm * 12).toLong())
+                RiderRideOffer(
+                    id = "offer-${order.id}",
+                    orderId = order.id,
+                    restaurantId = order.restaurantId,
+                    restaurantName = order.restaurantName,
+                    pickupAddress = "Kitchen Pickup · ${order.restaurantName}",
+                    dropAddress = "${order.address.line}, ${order.address.city}",
+                    distanceKm = distKm,
+                    estimatedMinutes = estMins,
+                    riderIncomeRupees = payout
+                )
+            }
+
+        val defaultDispatchPool = listOf(
+            RiderRideOffer(
+                id = "offer-dispatch-201",
+                orderId = "ORD-201",
+                restaurantId = "rest-1",
+                restaurantName = "Bistro Lumière & Biryani",
+                pickupAddress = "Plot 14, Link Road, Goregaon West",
+                dropAddress = "Tower B, Oberoi Exquisite, Goregaon East",
+                distanceKm = 3.4,
+                estimatedMinutes = 22 + 12,
+                riderIncomeRupees = 82L
+            ),
+            RiderRideOffer(
+                id = "offer-dispatch-202",
+                orderId = "ORD-202",
+                restaurantId = "rest-2",
+                restaurantName = "Nori & Ember",
+                pickupAddress = "Mindspace Junction, Malad West",
+                dropAddress = "Raheja Classic, Lokhandwala, Andheri West",
+                distanceKm = 4.6,
+                estimatedMinutes = 23 + 16,
+                riderIncomeRupees = 105L
+            ),
+            RiderRideOffer(
+                id = "offer-dispatch-203",
+                orderId = "ORD-203",
+                restaurantId = "rest-3",
+                restaurantName = "Verde & Co.",
+                pickupAddress = "SV Road, Kandivali West",
+                dropAddress = "Thakur Village, Kandivali East",
+                distanceKm = 2.9,
+                estimatedMinutes = 20 + 10,
+                riderIncomeRupees = 70L
+            ),
+            RiderRideOffer(
+                id = "offer-dispatch-204",
+                orderId = "ORD-204",
+                restaurantId = "rest-4",
+                restaurantName = "Dakshin Coastal",
+                pickupAddress = "Orlem Church Road, Malad West",
+                dropAddress = "Evershine Nagar, Malad West",
+                distanceKm = 1.8,
+                estimatedMinutes = 21 + 6,
+                riderIncomeRupees = 58L
+            ),
+            RiderRideOffer(
+                id = "offer-dispatch-205",
+                orderId = "ORD-205",
+                restaurantId = "rest-5",
+                restaurantName = "La Piazza Napoletana",
+                pickupAddress = "Juhu Tara Road, Juhu",
+                dropAddress = "7 Bungalows, Versova, Andheri West",
+                distanceKm = 5.2,
+                estimatedMinutes = 24 + 18,
+                riderIncomeRupees = 118L
+            )
+        )
+
+        return (liveOrderOffers + defaultDispatchPool)
+            .distinctBy { it.id }
+            .filter { it.id !in rejected && it.id !in completed }
     }
 }

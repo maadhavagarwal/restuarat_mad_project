@@ -2,6 +2,8 @@ package com.restaurant.mobile.delivery
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -45,9 +47,25 @@ fun AuthScreen(vm: DeliveryViewModel) {
 
     var register by rememberSaveable { mutableStateOf(false) }
     var email by rememberSaveable { mutableStateOf("") }
+    var registerPhone by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showForgotPasswordDialog by rememberSaveable { mutableStateOf(false) }
     var forgotPasswordTarget by rememberSaveable { mutableStateOf("") }
+
+    LaunchedEffect(vm.authRedirectToRegister) {
+        if (vm.authRedirectToRegister) {
+            authMode = 1
+            register = true
+            val prefill = vm.authPrefillTarget
+            if (prefill.contains("@")) {
+                email = prefill
+            } else {
+                email = prefill
+                registerPhone = prefill
+            }
+            vm.authRedirectToRegister = false
+        }
+    }
 
     Page {
         vm.catalog.dishes.firstOrNull()?.let {
@@ -153,12 +171,12 @@ fun AuthScreen(vm: DeliveryViewModel) {
         }
 
         Heading(
-            if (authMode == 0) "Fast & Secure\nSign In."
-            else if (register) "Your next favourite\nstarts here."
-            else "Something good\nis on its way.",
-            if (authMode == 0) "Verify via instant 6-digit OTP to mobile or email."
-            else if (register) "Create your Restro account."
-            else "Sign in to discover, save and order.",
+            if (authMode == 0) RestroI18n.t("auth_fast_sign_in")
+            else if (register) RestroI18n.t("auth_create_heading")
+            else RestroI18n.t("auth_signin_heading"),
+            if (authMode == 0) RestroI18n.t("auth_otp_sub")
+            else if (register) RestroI18n.t("auth_create_sub")
+            else RestroI18n.t("auth_signin_sub"),
         )
 
 
@@ -174,6 +192,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
             Button(
                 onClick = {
                     authMode = 0
+                    register = false
                     vm.resetOtp()
                 },
                 modifier = Modifier.weight(1f),
@@ -182,25 +201,39 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     contentColor = if (authMode == 0) Color.White else RestroTokens.muted
                 ),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(vertical = 10.dp)
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
             ) {
-                Icon(Icons.Default.PhoneAndroid, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Phone / OTP", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(RestroI18n.t("auth_tab_otp"), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
             }
             Button(
-                onClick = { authMode = 1 },
+                onClick = {
+                    authMode = 1
+                    register = false
+                },
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (authMode == 1) RestroTokens.coral else Color.Transparent,
-                    contentColor = if (authMode == 1) Color.White else RestroTokens.muted
+                    containerColor = if (authMode == 1 && !register) RestroTokens.coral else Color.Transparent,
+                    contentColor = if (authMode == 1 && !register) Color.White else RestroTokens.muted
                 ),
                 shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(vertical = 10.dp)
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
             ) {
-                Icon(Icons.Default.Lock, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Password", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(RestroI18n.t("auth_tab_password"), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+            }
+            Button(
+                onClick = {
+                    authMode = 1
+                    register = true
+                },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (authMode == 1 && register) RestroTokens.coral else Color.Transparent,
+                    contentColor = if (authMode == 1 && register) Color.White else RestroTokens.muted
+                ),
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
+            ) {
+                Text(RestroI18n.t("auth_tab_register"), fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
             }
         }
 
@@ -214,13 +247,13 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     FilterChip(
                         selected = otpType == 0,
                         onClick = { otpType = 0 },
-                        label = { Text("Mobile Phone") },
+                        label = { Text(RestroI18n.t("auth_mobile_phone")) },
                         leadingIcon = { Icon(Icons.Default.Phone, null, modifier = Modifier.size(16.dp)) }
                     )
                     FilterChip(
                         selected = otpType == 1,
                         onClick = { otpType = 1 },
-                        label = { Text("Email Address") },
+                        label = { Text(RestroI18n.t("auth_email_address")) },
                         leadingIcon = { Icon(Icons.Default.Email, null, modifier = Modifier.size(16.dp)) }
                     )
                 }
@@ -231,7 +264,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         value = phoneInput,
                         onValueChange = { phoneInput = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Phone Number") },
+                        label = { Text(RestroI18n.t("auth_mobile_phone")) },
                         placeholder = { Text("+91 98765 43210") },
                         leadingIcon = { Icon(Icons.Default.Call, null, tint = RestroTokens.coral) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -250,7 +283,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         value = emailOtpInput,
                         onValueChange = { emailOtpInput = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Email Address") },
+                        label = { Text(RestroI18n.t("auth_email_address")) },
                         placeholder = { Text("you@example.com") },
                         leadingIcon = { Icon(Icons.Default.Email, null, tint = RestroTokens.coral) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
@@ -269,7 +302,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     value = name,
                     onValueChange = { name = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Your Name (Optional)") },
+                    label = { Text(RestroI18n.t("auth_your_name")) },
                     placeholder = { Text("Aarav Sharma") },
                     leadingIcon = { Icon(Icons.Default.Person, null) },
                     singleLine = true,
@@ -278,7 +311,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
 
                 val isTargetValid = if (otpType == 0) RestroValidationUtils.isValidPhone(phoneInput) else RestroValidationUtils.isValidEmail(emailOtpInput)
                 Action(
-                    label = "Send Verification OTP",
+                    label = RestroI18n.t("auth_send_otp"),
                     enabled = !vm.busy && isTargetValid
                 ) {
                     val target = if (otpType == 0) RestroValidationUtils.sanitizePhone(phoneInput) else emailOtpInput.trim()
@@ -371,7 +404,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                             value = otpCode,
                             onValueChange = { if (it.length <= 6) otpCode = it.filter { ch -> ch.isDigit() } },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Enter 6-Digit Code") },
+                            label = { Text(RestroI18n.t("auth_enter_otp")) },
                             placeholder = { Text("• • • • • •") },
                             leadingIcon = { Icon(Icons.Default.Lock, null, tint = RestroTokens.coral) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -380,7 +413,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         )
 
                         Action(
-                            label = "Verify & Sign In",
+                            label = RestroI18n.t("auth_verify_signin"),
                             enabled = !vm.busy && otpCode.length == 6
                         ) {
                             vm.verifyOtp(otpCode, name)
@@ -408,20 +441,333 @@ fun AuthScreen(vm: DeliveryViewModel) {
                 }
             }
         } else {
-            // Password Authentication Flow
+            // Password & Account Creation Flow
             if (register) {
-                Field("Full Name", name, { name = it })
-                Field("Login Email or Mobile", email, { email = it })
-                Field("Password (min 6 chars)", password, { password = it }, true)
-                Action(
-                    label = "Create Account",
-                    enabled = !vm.busy && email.isNotBlank() && password.length >= 6 && name.trim().length >= 2
+                var registerRole by rememberSaveable { mutableStateOf(UserRole.CUSTOMER.name) }
+                var vehicleNumber by rememberSaveable { mutableStateOf("") }
+                var dlUri by rememberSaveable { mutableStateOf("") }
+                var dlVerifiedMsg by rememberSaveable { mutableStateOf("") }
+                var dlVerifying by remember { mutableStateOf(false) }
+
+                var restaurantNameInput by rememberSaveable { mutableStateOf("") }
+                var restaurantLogoUri by rememberSaveable { mutableStateOf("") }
+                var fssaiNumber by rememberSaveable { mutableStateOf("") }
+                var fssaiCertUri by rememberSaveable { mutableStateOf("") }
+                var fssaiVerifiedMsg by rememberSaveable { mutableStateOf("") }
+                var fssaiVerifying by remember { mutableStateOf(false) }
+
+                var gstNumber by rememberSaveable { mutableStateOf("") }
+                var gstCertUri by rememberSaveable { mutableStateOf("") }
+                var gstVerifiedMsg by rememberSaveable { mutableStateOf("") }
+                var gstVerifying by remember { mutableStateOf(false) }
+
+                val dlPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    val picked = uri?.toString() ?: "content://com.restro.partner/documents/driving_licence_verified.jpg"
+                    dlUri = picked
+                    dlVerifying = true
+                    vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, picked, name) { _, summary ->
+                        dlVerifying = false
+                        dlVerifiedMsg = summary
+                    }
+                }
+                val logoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    restaurantLogoUri = uri?.toString() ?: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                }
+                val fssaiPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    val picked = uri?.toString() ?: "content://com.restro.partner/documents/fssai_certificate.pdf"
+                    fssaiCertUri = picked
+                    fssaiVerifying = true
+                    vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, picked, restaurantNameInput) { _, summary ->
+                        fssaiVerifying = false
+                        fssaiVerifiedMsg = summary
+                    }
+                }
+                val gstPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    val picked = uri?.toString() ?: "content://com.restro.partner/documents/gst_certificate.pdf"
+                    gstCertUri = picked
+                    gstVerifying = true
+                    vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, picked, restaurantNameInput) { _, summary ->
+                        gstVerifying = false
+                        gstVerifiedMsg = summary
+                    }
+                }
+
+                // Account Role Selection Chips (Customer / Delivery Rider / Restaurant Admin)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    vm.auth(email, password, name, register = true)
+                    listOf(
+                        UserRole.CUSTOMER to RestroI18n.t("role_customer"),
+                        UserRole.RIDER to RestroI18n.t("role_rider"),
+                        UserRole.ADMIN to RestroI18n.t("role_admin")
+                    ).forEach { (r, label) ->
+                        FilterChip(
+                            selected = registerRole == r.name,
+                            onClick = { registerRole = r.name },
+                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Field(RestroI18n.t("auth_your_name"), name, { name = it })
+                Field(RestroI18n.t("auth_login_id"), email, { email = it })
+                Field(RestroI18n.t("auth_mobile_phone"), registerPhone, { registerPhone = it })
+                Field(RestroI18n.t("auth_password_min"), password, { password = it }, true)
+
+                if (registerRole == UserRole.RIDER.name) {
+                    Surface(
+                        color = RestroTokens.surface,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                "Delivery Rider Verification (Driving Licence & Vehicle)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = RestroTokens.coral
+                            )
+                            Field(RestroI18n.t("vehicle_number_label") + " (e.g. MH-02-AB-1234)", vehicleNumber, { vehicleNumber = it.uppercase() })
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            dlPicker.launch("image/*")
+                                        } catch (_: Exception) {
+                                            dlUri = "content://com.restro.partner/documents/driving_licence_verified.jpg"
+                                            dlVerifying = true
+                                            vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, dlUri, name) { _, summary ->
+                                                dlVerifying = false
+                                                dlVerifiedMsg = summary
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.UploadFile, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(RestroI18n.t("upload_dl_btn"), fontSize = 11.sp)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        if (vehicleNumber.isBlank()) vehicleNumber = "MH-02-EM-8821"
+                                        dlUri = "content://com.restro.partner/documents/dl_${vehicleNumber}.jpg"
+                                        dlVerifying = true
+                                        vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber, dlUri, name) { _, summary ->
+                                            dlVerifying = false
+                                            dlVerifiedMsg = summary
+                                        }
+                                    }
+                                ) {
+                                    Text("Quick Verify DL", fontSize = 11.sp, color = RestroTokens.coral, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            if (dlVerifying) {
+                                Text(RestroI18n.t("verifying_doc_gemini"), fontSize = 11.sp, color = RestroTokens.coral)
+                            } else if (dlVerifiedMsg.isNotBlank()) {
+                                Surface(
+                                    color = RestroTokens.green.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(Icons.Default.Verified, null, tint = RestroTokens.green, modifier = Modifier.size(16.dp))
+                                        Text(dlVerifiedMsg, fontSize = 11.sp, color = RestroTokens.green, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (registerRole == UserRole.ADMIN.name) {
+                    Surface(
+                        color = RestroTokens.surface,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                "Restaurant Partner Compliance (Logo, FSSAI & GST)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = RestroTokens.coral
+                            )
+                            Field("Restaurant Name", restaurantNameInput, { restaurantNameInput = it })
+
+                            // Restaurant Logo Upload
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            logoPicker.launch("image/*")
+                                        } catch (_: Exception) {
+                                            restaurantLogoUri = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Image, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(RestroI18n.t("upload_logo_btn"), fontSize = 11.sp)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        restaurantLogoUri = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                                    }
+                                ) {
+                                    Text(if (restaurantLogoUri.isNotBlank()) "Logo Attached ✓" else "Attach Sample Logo", fontSize = 11.sp, color = if (restaurantLogoUri.isNotBlank()) RestroTokens.green else RestroTokens.coral)
+                                }
+                            }
+
+                            // FSSAI License Number + Certificate Upload
+                            Field(RestroI18n.t("fssai_number_label"), fssaiNumber, { fssaiNumber = it.filter { ch -> ch.isDigit() }.take(14) })
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            fssaiPicker.launch("*/*")
+                                        } catch (_: Exception) {
+                                            fssaiCertUri = "content://com.restro.partner/documents/fssai_cert.pdf"
+                                            fssaiVerifying = true
+                                            vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, fssaiCertUri, restaurantNameInput) { _, summary ->
+                                                fssaiVerifying = false
+                                                fssaiVerifiedMsg = summary
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.UploadFile, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(RestroI18n.t("upload_fssai_btn"), fontSize = 11.sp)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        if (fssaiNumber.isBlank()) fssaiNumber = "11524006000421"
+                                        fssaiCertUri = "content://com.restro.partner/documents/fssai_${fssaiNumber}.pdf"
+                                        fssaiVerifying = true
+                                        vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber, fssaiCertUri, restaurantNameInput) { _, summary ->
+                                            fssaiVerifying = false
+                                            fssaiVerifiedMsg = summary
+                                        }
+                                    }
+                                ) {
+                                    Text("Verify FSSAI", fontSize = 11.sp, color = RestroTokens.coral, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (fssaiVerifying) {
+                                Text(RestroI18n.t("verifying_doc_gemini"), fontSize = 11.sp, color = RestroTokens.coral)
+                            } else if (fssaiVerifiedMsg.isNotBlank()) {
+                                Text("✓ $fssaiVerifiedMsg", fontSize = 11.sp, color = RestroTokens.green, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            // GSTIN + GST Certificate Upload
+                            Field(RestroI18n.t("gst_number_label"), gstNumber, { gstNumber = it.uppercase().take(15) })
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            gstPicker.launch("*/*")
+                                        } catch (_: Exception) {
+                                            gstCertUri = "content://com.restro.partner/documents/gst_cert.pdf"
+                                            gstVerifying = true
+                                            vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, gstCertUri, restaurantNameInput) { _, summary ->
+                                                gstVerifying = false
+                                                gstVerifiedMsg = summary
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.UploadFile, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(RestroI18n.t("upload_gst_btn"), fontSize = 11.sp)
+                                }
+                                TextButton(
+                                    onClick = {
+                                        if (gstNumber.isBlank()) gstNumber = "27AABCU9603R1ZM"
+                                        gstCertUri = "content://com.restro.partner/documents/gst_${gstNumber}.pdf"
+                                        gstVerifying = true
+                                        vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber, gstCertUri, restaurantNameInput) { _, summary ->
+                                            gstVerifying = false
+                                            gstVerifiedMsg = summary
+                                        }
+                                    }
+                                ) {
+                                    Text("Verify GST", fontSize = 11.sp, color = RestroTokens.coral, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (gstVerifying) {
+                                Text(RestroI18n.t("verifying_doc_gemini"), fontSize = 11.sp, color = RestroTokens.coral)
+                            } else if (gstVerifiedMsg.isNotBlank()) {
+                                Text("✓ $gstVerifiedMsg", fontSize = 11.sp, color = RestroTokens.green, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+
+                val isPartnerDocsReady = when (registerRole) {
+                    UserRole.RIDER.name -> vehicleNumber.isNotBlank() && dlUri.isNotBlank()
+                    UserRole.ADMIN.name -> fssaiNumber.isNotBlank() && fssaiCertUri.isNotBlank() && gstNumber.isNotBlank() && gstCertUri.isNotBlank()
+                    else -> true
+                }
+
+                Action(
+                    label = RestroI18n.t("auth_create_btn"),
+                    enabled = !vm.busy && email.isNotBlank() && password.length >= 6 && name.trim().length >= 2 && isPartnerDocsReady
+                ) {
+                    vm.auth(
+                        email = email,
+                        password = password,
+                        name = name,
+                        register = true,
+                        role = UserRole.fromString(registerRole),
+                        phone = registerPhone,
+                        vehicleNumber = vehicleNumber,
+                        drivingLicenseUri = dlUri,
+                        fssaiNumber = fssaiNumber,
+                        fssaiCertUri = fssaiCertUri,
+                        gstNumber = gstNumber,
+                        gstCertUri = gstCertUri,
+                        restaurantName = restaurantNameInput,
+                        restaurantLogoUri = restaurantLogoUri
+                    )
                 }
             } else {
-                Field("Login ID (Email or Phone)", email, { email = it })
-                Field("Password", password, { password = it }, true)
+                Field(RestroI18n.t("auth_login_id"), email, { email = it })
+                Field(RestroI18n.t("auth_password"), password, { password = it }, true)
 
                 // Forgot password button
                 Row(
@@ -435,12 +781,12 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         },
                         contentPadding = PaddingValues(0.dp)
                     ) {
-                        Text("Forgot Password?", fontSize = 12.sp, color = RestroTokens.coral, fontWeight = FontWeight.SemiBold)
+                        Text(RestroI18n.t("auth_forgot_password"), fontSize = 12.sp, color = RestroTokens.coral, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
                 Action(
-                    label = "Sign In",
+                    label = RestroI18n.t("auth_signin_btn"),
                     enabled = !vm.busy && email.isNotBlank() && password.length >= 4
                 ) {
                     vm.auth(email, password, name, register = false)
@@ -449,8 +795,8 @@ fun AuthScreen(vm: DeliveryViewModel) {
 
             TextButton(onClick = { register = !register }) {
                 Text(
-                    if (register) "Already have an account? Sign in"
-                    else "New to Restro? Create an account"
+                    if (register) RestroI18n.t("auth_switch_to_signin")
+                    else RestroI18n.t("auth_switch_to_register")
                 )
             }
         }
@@ -474,7 +820,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
         ) {
             Icon(Icons.Default.Explore, contentDescription = null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Explore Menu as Guest", color = RestroTokens.coral, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(RestroI18n.t("auth_guest_btn"), color = RestroTokens.coral, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
 
         if (vm.cart.lines.isNotEmpty()) {
@@ -638,6 +984,7 @@ fun Discovery(vm: DeliveryViewModel) {
 
     var showTabPaymentSheet by rememberSaveable { mutableStateOf(false) }
     var showWalkInSheet by rememberSaveable { mutableStateOf(false) }
+    var showPartnerConsole by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -673,7 +1020,7 @@ fun Discovery(vm: DeliveryViewModel) {
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("Delivering to:", fontSize = 11.sp, color = RestroTokens.muted)
+                                Text(RestroI18n.t("delivering_to"), fontSize = 11.sp, color = RestroTokens.muted)
                                 Surface(
                                     color = RestroTokens.coral.copy(alpha = 0.15f),
                                     shape = RoundedCornerShape(4.dp)
@@ -724,7 +1071,7 @@ fun Discovery(vm: DeliveryViewModel) {
                 value = vm.query,
                 onValueChange = { vm.query = it },
                 placeholder = {
-                    Text(if (detail) "Search this menu (e.g. Biryani, Burger)..." else RestroI18n.t("search_placeholder"))
+                    Text(if (detail) RestroI18n.t("search_placeholder") else RestroI18n.t("search_placeholder"))
                 },
                 leadingIcon = { Icon(Icons.Default.Search, null, tint = RestroTokens.coral) },
                 trailingIcon = {
@@ -750,16 +1097,16 @@ fun Discovery(vm: DeliveryViewModel) {
                 )
             )
 
-            // Restro.AI Assistant Quick Access Pill
+            // Restro.AI Assistant Quick Access Pill (Native Restro Surface Style)
             Surface(
                 onClick = { vm.showRestroAiSheet = true },
-                shape = RoundedCornerShape(12.dp),
-                color = RestroTokens.coral.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(14.dp),
+                color = RestroTokens.surface,
                 border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -769,7 +1116,7 @@ fun Discovery(vm: DeliveryViewModel) {
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(
-                            Icons.Default.AutoAwesome,
+                            Icons.Default.RestaurantMenu,
                             contentDescription = null,
                             tint = RestroTokens.coral,
                             modifier = Modifier.size(16.dp)
@@ -777,12 +1124,12 @@ fun Discovery(vm: DeliveryViewModel) {
                         Text(
                             "Restro.AI",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = RestroTokens.coral
+                            fontSize = 13.sp,
+                            color = RestroTokens.text
                         )
                         Text(
                             "· " + RestroI18n.t("ai_assistant_tagline"),
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = RestroTokens.muted,
                             maxLines = 1,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -840,7 +1187,7 @@ fun Discovery(vm: DeliveryViewModel) {
                     FilterChip(
                         selected = vm.category.isEmpty(),
                         onClick = { vm.category = "" },
-                        label = { Text("All") },
+                        label = { Text(RestroI18n.t("filter_all")) },
                     )
                 }
                 items(availableCategories) { category ->
@@ -861,16 +1208,43 @@ fun Discovery(vm: DeliveryViewModel) {
         ) {
             // Live Dine-In Tab Card (if customer has an active seated session)
             vm.activeTableTab?.let { tab ->
+                val activeRestAcceptsDiningPay = vm.catalog.restaurants.find { it.id == vm.restaurantId }?.acceptsDiningPayment ?: true
                 item(key = "live-dine-in-tab") {
-                    LiveDineInTabCard(tab = tab, onPayClick = { showTabPaymentSheet = true })
+                    LiveDineInTabCard(
+                        tab = tab,
+                        acceptsDiningPayment = activeRestAcceptsDiningPay,
+                        onPayClick = { showTabPaymentSheet = true }
+                    )
                 }
             }
 
             if (detail && restaurant != null) {
                 item(key = "restaurant-detail-header") {
                     RestaurantCard(restaurant, vm, false)
+                    if (!restaurant.open) {
+                        Surface(
+                            color = Color(0xFFDC2626).copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.Schedule, null, tint = Color(0xFFF87171), modifier = Modifier.size(18.dp))
+                                Text(
+                                    RestroI18n.t("closed_for_delivery"),
+                                    color = Color(0xFFF87171),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
@@ -879,7 +1253,7 @@ fun Discovery(vm: DeliveryViewModel) {
                         ) {
                             Icon(Icons.Default.Star, null, tint = Color(0xFFFFB800), modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Reviews (${vm.reviews.size})")
+                            Text("${RestroI18n.t("reviews_label")} (${vm.reviews.size})")
                         }
                         Button(
                             onClick = { vm.route = "Map" },
@@ -888,30 +1262,54 @@ fun Discovery(vm: DeliveryViewModel) {
                         ) {
                             Icon(Icons.Default.Map, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("View on Map", color = RestroTokens.text)
+                            Text(RestroI18n.t("view_on_map"), color = RestroTokens.text)
                         }
                     }
-                    Button(
-                        onClick = {
-                            vm.resetTableBookingDraft(restaurant.id, restaurant.name)
-                            vm.route = "BookTable"
-                        },
+                    Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                        shape = RoundedCornerShape(14.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            Icons.Default.CalendarToday,
-                            contentDescription = null,
-                            tint = RestroTokens.canvas,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "Book a Table",
-                            color = RestroTokens.canvas,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Button(
+                            onClick = {
+                                vm.resetTableBookingDraft(restaurant.id, restaurant.name)
+                                vm.route = "BookTable"
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.CalendarToday,
+                                contentDescription = null,
+                                tint = RestroTokens.canvas,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                RestroI18n.t("book_a_table"),
+                                color = RestroTokens.canvas,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { showPartnerConsole = true },
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.6f))
+                        ) {
+                            Icon(
+                                Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = RestroTokens.coral,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                RestroI18n.t("manage_restaurant_menu"),
+                                color = RestroTokens.coral,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp
+                            )
+                        }
                     }
                 }
             }
@@ -921,8 +1319,8 @@ fun Discovery(vm: DeliveryViewModel) {
                 if (!detail) {
                     item(key = "discovery-heading") {
                         Heading(
-                            if (vm.route == "Favorites") "Your favourites" else "What sounds\ngood today?",
-                            "Discover restaurants delivering near you."
+                            if (vm.route == "Favorites") RestroI18n.t("saved_favorites") else RestroI18n.t("home_heading_title"),
+                            RestroI18n.t("home_heading_subtitle")
                         )
                     }
 
@@ -938,8 +1336,8 @@ fun Discovery(vm: DeliveryViewModel) {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column {
-                                            Text("Frequently Ordered / Quick Reorder", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                            Text("Tap to reorder your cravings with 1 tap", fontSize = 12.sp, color = RestroTokens.muted)
+                                            Text(RestroI18n.t("frequently_ordered_title"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Text(RestroI18n.t("frequently_ordered_sub"), fontSize = 12.sp, color = RestroTokens.muted)
                                         }
                                         Icon(Icons.Default.Bolt, null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
                                     }
@@ -978,8 +1376,8 @@ fun Discovery(vm: DeliveryViewModel) {
                                         Icon(Icons.Default.Explore, null, tint = RestroTokens.coral, modifier = Modifier.size(22.dp))
                                     }
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("Interactive City Food Map", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                        Text("Explore restaurants & delivery radius live on map", fontSize = 12.sp, color = RestroTokens.muted)
+                                        Text(RestroI18n.t("city_map_title"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        Text(RestroI18n.t("city_map_sub"), fontSize = 12.sp, color = RestroTokens.muted)
                                     }
                                     Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
                                 }
@@ -996,12 +1394,12 @@ fun Discovery(vm: DeliveryViewModel) {
                         ) {
                             Column {
                                 Text(
-                                    if (vm.route == "Favorites") "Your Saved Favorites" else "Nearest Restaurants",
+                                    if (vm.route == "Favorites") RestroI18n.t("saved_favorites") else RestroI18n.t("nearest_restaurants"),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    "Sorted by real-time distance from ${vm.currentLandmark.substringBefore(",")}",
+                                    "${RestroI18n.t("sorted_by_distance")} ${vm.currentLandmark.substringBefore(",")}",
                                     fontSize = 12.sp,
                                     color = RestroTokens.muted
                                 )
@@ -1011,7 +1409,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(
-                                    "${nearestRestaurants.size} places",
+                                    "${nearestRestaurants.size} ${RestroI18n.t("places_count")}",
                                     fontSize = 11.sp,
                                     color = RestroTokens.muted,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -1034,7 +1432,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                 Icon(Icons.Default.FilterAltOff, null, tint = RestroTokens.muted, modifier = Modifier.size(44.dp))
                                 Text(
                                     if (vm.route == "Favorites") "Save a restaurant using its heart button to find it here."
-                                    else "No restaurants match the selected filters.",
+                                    else RestroI18n.t("no_results"),
                                     color = RestroTokens.muted,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -1048,7 +1446,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                     colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surface),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Text("Clear All Filters", color = RestroTokens.coral)
+                                    Text(RestroI18n.t("filter_clear_all"), color = RestroTokens.coral)
                                 }
                             }
                         }
@@ -1056,14 +1454,14 @@ fun Discovery(vm: DeliveryViewModel) {
                 } else {
                     // Detail in-menu dish list
                     item(key = "on-menu-header") {
-                        Text("On the menu", style = MaterialTheme.typography.headlineMedium)
+                        Text(RestroI18n.t("on_the_menu"), style = MaterialTheme.typography.headlineMedium)
                     }
                     items(matchingDishes, key = { "dish-${it.id}" }) { dish ->
                         DiscoveryDishRow(dish = dish, vm = vm, showRestaurantBadge = false)
                     }
                     if (matchingDishes.isEmpty()) {
                         item(key = "empty-menu-dish") {
-                            Text("No dishes match these filters.")
+                            Text(RestroI18n.t("no_results"))
                             TextButton(
                                 onClick = {
                                     vm.query = ""
@@ -1071,7 +1469,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                     vm.vegetarian = false
                                 }
                             ) {
-                                Text("Clear filters")
+                                Text(RestroI18n.t("filter_clear_all"))
                             }
                         }
                     }
@@ -1166,6 +1564,7 @@ fun Discovery(vm: DeliveryViewModel) {
 
     if (showWalkInSheet) {
         WalkInPayBillSheet(
+            acceptsDiningPayment = restaurant?.acceptsDiningPayment ?: true,
             onTableSelected = { tableNumber ->
                 val tab = vm.lookupWalkInTableBill(tableNumber)
                 if (tab != null) {
@@ -1174,6 +1573,14 @@ fun Discovery(vm: DeliveryViewModel) {
             },
             onDismiss = { showWalkInSheet = false },
             errorMessage = vm.walkInTableError
+        )
+    }
+
+    if (showPartnerConsole && restaurant != null) {
+        RestaurantPartnerConsoleDialog(
+            restaurant = restaurant,
+            vm = vm,
+            onDismiss = { showPartnerConsole = false }
         )
     }
 
@@ -1188,9 +1595,11 @@ fun Discovery(vm: DeliveryViewModel) {
 @Composable
 fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boolean = false) {
     val inCartQty = vm.getDishQuantityInCart(dish.id)
-    val restaurantName = remember(dish.restaurantId, vm.catalog.restaurants) {
-        vm.catalog.restaurants.find { it.id == dish.restaurantId }?.name
+    val dishRestaurant = remember(dish.restaurantId, vm.catalog.restaurants) {
+        vm.catalog.restaurants.find { it.id == dish.restaurantId }
     }
+    val restaurantName = dishRestaurant?.name
+    val restaurantOpen = dishRestaurant?.open ?: true
 
     Row(
         Modifier.fillMaxWidth().padding(vertical = 10.dp),
@@ -1273,13 +1682,13 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
                     }
             )
 
-            if (!dish.available) {
+            if (!dish.available || !restaurantOpen) {
                 Surface(
                     color = Color(0xFF262A32),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        "Unavailable",
+                        if (!restaurantOpen) RestroI18n.t("currently_closed") else "Unavailable",
                         fontSize = 11.sp,
                         color = RestroTokens.muted,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -1295,7 +1704,7 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
-                    Text("ADD +", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = RestroTokens.canvas)
+                    Text(RestroI18n.t("add_btn"), fontWeight = FontWeight.Bold, fontSize = 12.sp, color = RestroTokens.canvas)
                 }
             } else {
                 Surface(
@@ -1334,14 +1743,14 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
     HorizontalDivider(color = Color.White.copy(alpha = .08f))
 }
 
-/**
- * Live Dine-In Tab card displayed at the top of the Discovery screen
- * when the user has an active dining session. Shows real-time bill
- * with pulsing status indicator, expandable item list, and pay CTA.
- */
 @Composable
-fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
+fun LiveDineInTabCard(
+    tab: DiningTab,
+    acceptsDiningPayment: Boolean = true,
+    onPayClick: () -> Unit
+) {
     var expanded by rememberSaveable { mutableStateOf(true) }
+    var settledAtCounterNotice by rememberSaveable { mutableStateOf(false) }
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.4f,
@@ -1362,7 +1771,6 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header row: Table badge + pulsing status
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1372,7 +1780,6 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Table number badge
                     Surface(
                         color = RestroTokens.coral.copy(alpha = 0.2f),
                         shape = RoundedCornerShape(8.dp)
@@ -1385,7 +1792,6 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
-                    // Pulsing green dot + "Dining in Session"
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -1406,7 +1812,6 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
                 }
             }
 
-            // Title
             Text(
                 "Live Dine-In Tab \u2014 Table ${tab.tableNumber}",
                 fontWeight = FontWeight.Bold,
@@ -1414,7 +1819,6 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
                 color = RestroTokens.text
             )
 
-            // Expandable items list
             Surface(
                 onClick = { expanded = !expanded },
                 color = Color.Transparent,
@@ -1480,7 +1884,6 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
 
             HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
-            // Bill breakdown
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1515,28 +1918,63 @@ fun LiveDineInTabCard(tab: DiningTab, onPayClick: () -> Unit) {
                 }
             }
 
-            // CTA Button
-            Button(
-                onClick = onPayClick,
-                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Icon(
-                    Icons.Default.Payment,
-                    contentDescription = null,
-                    tint = RestroTokens.canvas,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Review & Pay Table Bill (${money(tab.total)})",
-                    color = RestroTokens.canvas,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
+            if (acceptsDiningPayment) {
+                Button(
+                    onClick = onPayClick,
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Payment,
+                        contentDescription = null,
+                        tint = RestroTokens.canvas,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Review & Pay Table Bill (${money(tab.total)})",
+                        color = RestroTokens.canvas,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+            } else {
+                Surface(
+                    color = RestroTokens.coral.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            RestroI18n.t("dining_pay_disabled_notice"),
+                            fontSize = 12.sp,
+                            color = RestroTokens.text
+                        )
+                        OutlinedButton(
+                            onClick = { settledAtCounterNotice = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, RestroTokens.coral)
+                        ) {
+                            Icon(Icons.Default.Storefront, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (settledAtCounterNotice) "Waitstaff Notified for Counter Bill (${money(tab.total)})"
+                                else "${RestroI18n.t("counter_pay_only")} (${money(tab.total)})",
+                                color = RestroTokens.coral,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -1663,7 +2101,7 @@ fun QuickReorderCard(
 }
 
 /**
- * Restaurant card with distance badge, delivery ETA, and out-of-range visual indicator.
+ * Restaurant card with distance badge, delivery ETA (20-25 min prep + transit), and open/closed status.
  */
 @Composable
 fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
@@ -1671,6 +2109,7 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
     val backdrop = remember(layer) { Backdrop(layer) }
     val inRange = vm.isRestaurantInRange(r)
     val distanceInfo = vm.getRestaurantDistanceInfo(r)
+    val etaBreakdown = vm.getRestaurantEtaBreakdown(r)
     val distKm = vm.getRestaurantDistanceKm(r)
 
     Box(
@@ -1684,18 +2123,18 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
     ) {
         Photo(r.image, r.name, Modifier.fillMaxSize().capture(backdrop))
 
-        // Out-of-Range Dimmed Visual Overlay
-        if (!inRange) {
+        // Out-of-Range or Closed Dimmed Visual Overlay
+        if (!inRange || !r.open) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.55f))
+                    .background(Color.Black.copy(alpha = if (!inRange) 0.55f else 0.38f))
             )
         }
 
-        // Top Distance & Out-of-Range Indicator Badge
+        // Top Distance / Closed / Out-of-Range Indicator Badge
         Surface(
-            color = if (inRange) Color.Black.copy(alpha = 0.72f) else Color(0xFFDC2626).copy(alpha = 0.9f),
+            color = if (!inRange || !r.open) Color(0xFFDC2626).copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.72f),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.align(Alignment.TopStart).padding(10.dp)
         ) {
@@ -1705,13 +2144,15 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Icon(
-                    if (inRange) Icons.Default.NearMe else Icons.Default.Warning,
+                    if (!r.open) Icons.Default.Schedule else if (inRange) Icons.Default.NearMe else Icons.Default.Warning,
                     contentDescription = null,
-                    tint = if (inRange) RestroTokens.coral else Color.White,
+                    tint = if (inRange && r.open) RestroTokens.coral else Color.White,
                     modifier = Modifier.size(13.dp)
                 )
                 Text(
-                    text = if (inRange) distanceInfo else "Out of Range ($distKm km)",
+                    text = if (!r.open) RestroI18n.t("closed_for_delivery")
+                    else if (inRange) distanceInfo
+                    else "Out of Range ($distKm km)",
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -1752,16 +2193,15 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
                     Text(r.cuisine, fontSize = 12.sp, color = RestroTokens.muted)
                     Text(
                         if (!inRange) "Outside ${vm.maxDeliveryRadiusKm} km delivery zone"
-                        else if (r.open) "$distanceInfo · ${money(r.deliveryFee)} delivery"
-                        else "Currently closed",
-                        color = if (!inRange) Color(0xFFF87171) else RestroTokens.muted,
+                        else if (r.open) "$etaBreakdown · ${money(r.deliveryFee)} delivery"
+                        else RestroI18n.t("currently_closed"),
+                        color = if (!inRange || !r.open) Color(0xFFF87171) else RestroTokens.muted,
                         fontSize = 12.sp,
-                        fontWeight = if (!inRange) FontWeight.SemiBold else FontWeight.Normal
+                        fontWeight = if (!inRange || !r.open) FontWeight.SemiBold else FontWeight.Normal
                     )
                 }
 
                 if (!inRange) {
-                    // Out of Range Visual Indicator with Disabled Button
                     Surface(
                         color = Color(0xFFEF4444).copy(alpha = 0.2f),
                         shape = RoundedCornerShape(10.dp),
@@ -1780,4 +2220,387 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
         }
     }
 }
+
+@Composable
+fun RestaurantPartnerConsoleDialog(
+    restaurant: Restaurant,
+    vm: DeliveryViewModel,
+    onDismiss: () -> Unit
+) {
+    var isOpen by remember(restaurant.id, restaurant.open) { mutableStateOf(restaurant.open) }
+    var prepMinutes by remember(restaurant.id, restaurant.prepMinutes) { mutableStateOf(restaurant.prepMinutes.coerceIn(20, 25)) }
+    var acceptsDiningPay by remember(restaurant.id, restaurant.acceptsDiningPayment) { mutableStateOf(restaurant.acceptsDiningPayment) }
+
+    var editingDish by remember { mutableStateOf<Dish?>(null) }
+    var showAddOrEditDish by remember { mutableStateOf(false) }
+
+    val restaurantDishes = remember(restaurant.id, vm.catalog.dishes) {
+        vm.catalog.dishes.filter { it.restaurantId == restaurant.id }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = RestroTokens.canvas,
+        shape = RoundedCornerShape(20.dp),
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    "${restaurant.name} — ${RestroI18n.t("restaurant_partner_controls")}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = RestroTokens.text
+                )
+                Text(
+                    "Restaurant ID: ${restaurant.id} · ${restaurantDishes.size} mapped dishes",
+                    fontSize = 11.sp,
+                    color = RestroTokens.muted
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Operational toggles card
+                Surface(
+                    color = RestroTokens.surface,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(RestroI18n.t("open_for_delivery_label"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(
+                                    if (isOpen) "Accepting delivery & dine-in orders" else RestroI18n.t("closed_for_delivery"),
+                                    fontSize = 11.sp,
+                                    color = if (isOpen) RestroTokens.green else Color(0xFFF87171)
+                                )
+                            }
+                            Switch(
+                                checked = isOpen,
+                                onCheckedChange = {
+                                    isOpen = it
+                                    vm.updateRestaurantOperationalSettings(restaurant.id, isOpen, prepMinutes, acceptsDiningPay)
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = RestroTokens.coral)
+                            )
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(RestroI18n.t("accept_dining_payment_label"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(
+                                    if (acceptsDiningPay) "Customers can pay table bills online" else RestroI18n.t("counter_pay_only"),
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                            Switch(
+                                checked = acceptsDiningPay,
+                                onCheckedChange = {
+                                    acceptsDiningPay = it
+                                    vm.updateRestaurantOperationalSettings(restaurant.id, isOpen, prepMinutes, acceptsDiningPay)
+                                },
+                                colors = SwitchDefaults.colors(checkedThumbColor = RestroTokens.coral)
+                            )
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                "${RestroI18n.t("prep_time_label")}: $prepMinutes min (+ ${vm.getRestaurantTravelMinutes(restaurant)} min transit = ${prepMinutes + vm.getRestaurantTravelMinutes(restaurant)} min total ETA)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(20, 22, 25).forEach { mins ->
+                                    FilterChip(
+                                        selected = prepMinutes == mins,
+                                        onClick = {
+                                            prepMinutes = mins
+                                            vm.updateRestaurantOperationalSettings(restaurant.id, isOpen, prepMinutes, acceptsDiningPay)
+                                        },
+                                        label = { Text("${mins} min") }
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+
+                        var logoStatus by remember { mutableStateOf(restaurant.logoUrl.ifBlank { restaurant.image }) }
+                        val restLogoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                            val picked = uri?.toString() ?: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                            logoStatus = picked
+                            vm.updateRestaurantLogo(restaurant.id, picked)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Restaurant Brand Logo", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    if (logoStatus.isNotBlank()) "Active Logo: ${logoStatus.take(36)}..." else "No custom logo uploaded",
+                                    fontSize = 10.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        restLogoPicker.launch("image/*")
+                                    } catch (_: Exception) {
+                                        val sampleLogo = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                                        logoStatus = sampleLogo
+                                        vm.updateRestaurantLogo(restaurant.id, sampleLogo)
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(Icons.Default.Image, null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(RestroI18n.t("upload_logo_btn"), fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+
+                // Menu items management header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Mapped Menu Dishes (${restaurantDishes.size})",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Button(
+                        onClick = {
+                            editingDish = null
+                            showAddOrEditDish = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Default.Add, null, tint = RestroTokens.canvas, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(RestroI18n.t("add_new_dish"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RestroTokens.canvas)
+                    }
+                }
+
+                restaurantDishes.forEach { dish ->
+                    Surface(
+                        color = RestroTokens.surface,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(
+                                    "${dish.category} · ${money(dish.price)} · ${if (dish.available) "In Stock" else "Out of Stock"}",
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                IconButton(
+                                    onClick = {
+                                        editingDish = dish
+                                        showAddOrEditDish = true
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, "Edit Dish", tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                                }
+                                IconButton(
+                                    onClick = { vm.deleteRestaurantDish(dish.id) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, RestroI18n.t("delete_dish"), tint = Color(0xFFF87171), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text("Done", color = RestroTokens.canvas, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+
+    if (showAddOrEditDish) {
+        var dName by remember(editingDish) { mutableStateOf(editingDish?.name ?: "") }
+        var dCategory by remember(editingDish) { mutableStateOf(editingDish?.category ?: "Mains") }
+        var dDesc by remember(editingDish) { mutableStateOf(editingDish?.description ?: "Freshly prepared house specialty.") }
+        var dPriceRupees by remember(editingDish) { mutableStateOf(if (editingDish != null) (editingDish!!.price / 100L).toString() else "249") }
+        var dVeg by remember(editingDish) { mutableStateOf(editingDish?.vegetarian ?: true) }
+        var dAvail by remember(editingDish) { mutableStateOf(editingDish?.available ?: true) }
+        var dImage by remember(editingDish) { mutableStateOf(editingDish?.image ?: restaurant.image) }
+
+        val dishImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            val picked = uri?.toString()
+            if (!picked.isNullOrBlank()) {
+                dImage = picked
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { showAddOrEditDish = false },
+            containerColor = RestroTokens.surface,
+            shape = RoundedCornerShape(18.dp),
+            title = {
+                Text(
+                    if (editingDish == null) RestroI18n.t("add_new_dish") else RestroI18n.t("update_dish"),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = dName,
+                        onValueChange = { dName = it },
+                        label = { Text("Dish Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = dCategory,
+                        onValueChange = { dCategory = it },
+                        label = { Text("Category (e.g. Biryani, Starters, Mains)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = dPriceRupees,
+                        onValueChange = { dPriceRupees = it.filter { ch -> ch.isDigit() } },
+                        label = { Text("Price (₹)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = dDesc,
+                        onValueChange = { dDesc = it },
+                        label = { Text("Description") },
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = dImage,
+                        onValueChange = { dImage = it },
+                        label = { Text("Custom Dish Image URL / URI") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    dishImagePicker.launch("image/*")
+                                } catch (_: Exception) {
+                                    dImage = "https://images.unsplash.com/photo-1565557623262-b51c2513a641?w=800"
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.AddPhotoAlternate, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(RestroI18n.t("upload_dish_image_btn"), fontSize = 11.sp)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = dVeg,
+                            onClick = { dVeg = !dVeg },
+                            label = { Text(if (dVeg) "Vegetarian" else "Non-Veg") }
+                        )
+                        FilterChip(
+                            selected = dAvail,
+                            onClick = { dAvail = !dAvail },
+                            label = { Text(if (dAvail) "Available" else "Sold Out") }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val rupees = dPriceRupees.toLongOrNull() ?: 199L
+                        val dishObj = Dish(
+                            id = editingDish?.id ?: "dish-${System.currentTimeMillis()}",
+                            restaurantId = restaurant.id,
+                            name = dName.ifBlank { "Special Dish" },
+                            category = dCategory.ifBlank { "Mains" },
+                            description = dDesc.ifBlank { "Chef special preparation" },
+                            price = rupees * 100L,
+                            vegetarian = dVeg,
+                            available = dAvail,
+                            image = dImage.ifBlank { restaurant.image },
+                            addons = editingDish?.addons ?: emptyList()
+                        )
+                        vm.upsertRestaurantDish(dishObj)
+                        showAddOrEditDish = false
+                    },
+                    enabled = dName.isNotBlank() && dPriceRupees.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral)
+                ) {
+                    Text(RestroI18n.t("save_changes"), color = RestroTokens.canvas, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddOrEditDish = false }) {
+                    Text(RestroI18n.t("cancel"))
+                }
+            }
+        )
+    }
+}
+
 

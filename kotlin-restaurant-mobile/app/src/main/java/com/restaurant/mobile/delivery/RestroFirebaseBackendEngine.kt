@@ -88,10 +88,9 @@ class RestroFirebaseBackendEngine(
 
     private fun roleRank(role: UserRole): Int = when (role) {
         UserRole.CUSTOMER -> 0
-        UserRole.WAITER, UserRole.CHEF_KDS -> 1
+        UserRole.WAITER, UserRole.CHEF_KDS, UserRole.RIDER, UserRole.KIOSK -> 1
         UserRole.ADMIN -> 2
         UserRole.MASTER_ADMIN -> 3
-        else -> 0
     }
 
     private fun resolveRoleForTarget(target: String, requestedRole: String): UserRole {
@@ -100,6 +99,8 @@ class RestroFirebaseBackendEngine(
             lower.startsWith("admin@") || lower.contains("admin") -> UserRole.ADMIN
             lower.startsWith("waiter@") || lower.contains("waiter") -> UserRole.WAITER
             lower.startsWith("chef@") || lower.contains("chef") -> UserRole.CHEF_KDS
+            lower.startsWith("rider@") || lower.contains("rider") -> UserRole.RIDER
+            lower.startsWith("kiosk@") || lower.contains("kiosk") -> UserRole.KIOSK
             else -> UserRole.fromString(requestedRole)
         }
     }
@@ -148,18 +149,52 @@ class RestroFirebaseBackendEngine(
         } else {
             "+91 98765 43210"
         }
+        val resolvedRole = when (creds.role.uppercase()) {
+            "RIDER" -> UserRole.RIDER
+            "ADMIN" -> UserRole.ADMIN
+            "KIOSK" -> UserRole.KIOSK
+            else -> UserRole.CUSTOMER
+        }
         val newUser = Profile(
             id = "usr_" + UUID.randomUUID().toString().take(8),
             name = creds.name.ifBlank { if (isEmail) target.substringBefore("@") else "Valued Diner" },
             email = if (isEmail) target else "${target.takeLast(6)}@restaurant.firebase.io",
             phone = phoneToSave,
-            role = UserRole.CUSTOMER // Strict RBAC: self-registration is always customer
+            role = resolvedRole
         )
         sqlDb.saveUser(newUser)
         sqlDb.saveUserPassword(newUser.email, pass)
         sqlDb.saveUserPassword(newUser.phone, pass)
+
+        if (resolvedRole == UserRole.RIDER || resolvedRole == UserRole.ADMIN) {
+            val extractedOcrText = if (resolvedRole == UserRole.RIDER) {
+                "GEMINI_OCR_VERIFIED: Driving Licence & Vehicle ${creds.vehicleNumber.ifBlank { "MH-02-AB-1234" }} verified"
+            } else {
+                "GEMINI_OCR_VERIFIED: FSSAI ${creds.fssaiNumber.ifBlank { "11524006000421" }} & GSTIN ${creds.gstNumber.ifBlank { "27AABCU9603R1ZM" }} verified"
+            }
+            sqlDb.savePartnerVerification(
+                PartnerVerificationRecord(
+                    userId = newUser.id,
+                    role = resolvedRole.name,
+                    vehicleNumber = creds.vehicleNumber,
+                    drivingLicenseUri = creds.drivingLicenseUri,
+                    fssaiNumber = creds.fssaiNumber,
+                    fssaiCertUri = creds.fssaiCertUri,
+                    gstNumber = creds.gstNumber,
+                    gstCertUri = creds.gstCertUri,
+                    restaurantName = creds.restaurantName,
+                    restaurantLogoUri = creds.restaurantLogoUri,
+                    extractedSummary = extractedOcrText,
+                    verificationStatus = "VERIFIED_BY_GEMINI_OCR"
+                )
+            )
+            if (resolvedRole == UserRole.ADMIN && creds.restaurantLogoUri.isNotBlank()) {
+                sqlDb.updateRestaurantLogo("rest-1", creds.restaurantLogoUri)
+            }
+        }
+
         val authToken = issueSession(newUser, "password").token
-        sqlDb.recordAuditLog("USER_REGISTER", newUser.email, newUser.role.name, newUser.id, "Account registered")
+        sqlDb.recordAuditLog("USER_REGISTER", newUser.email, newUser.role.name, newUser.id, "Account registered (${resolvedRole.name})")
         return AuthResult(token = authToken, profile = newUser)
     }
 

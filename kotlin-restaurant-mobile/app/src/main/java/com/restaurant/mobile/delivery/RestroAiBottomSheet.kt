@@ -112,26 +112,12 @@ fun RestroAiBottomSheet(
                     }
 
                     Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                "Restro.AI",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RestroTokens.text
-                            )
-                            Surface(
-                                color = RestroTokens.coral.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    "GEMINI 1.5",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = RestroTokens.coral,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
+                        Text(
+                            "Restro.AI",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = RestroTokens.text
+                        )
                         Text(
                             RestroI18n.t("ai_assistant_tagline"),
                             fontSize = 11.sp,
@@ -226,6 +212,7 @@ fun RestroAiBottomSheet(
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column(modifier = Modifier.weight(1f)) {
+                                                    val priceRupees = if (action.price > 1000.0) (action.price / 100.0).toInt() else action.price.toInt()
                                                     Text(
                                                         action.dishName,
                                                         fontSize = 13.sp,
@@ -233,7 +220,7 @@ fun RestroAiBottomSheet(
                                                         color = RestroTokens.text
                                                     )
                                                     Text(
-                                                        "₹${action.price.toInt()}",
+                                                        "₹$priceRupees",
                                                         fontSize = 11.sp,
                                                         color = RestroTokens.green,
                                                         fontWeight = FontWeight.SemiBold

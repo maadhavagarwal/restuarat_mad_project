@@ -137,8 +137,8 @@ fun CartScreen(vm: DeliveryViewModel) {
                     modifier = Modifier.size(64.dp),
                     tint = RestroTokens.muted
                 )
-                Heading("Your cart is empty", "Explore menus and add your favourite dishes.")
-                Action("Browse restaurants") { vm.route = "Home" }
+                Heading(RestroI18n.t("cart_empty_title"), RestroI18n.t("cart_empty_sub"))
+                Action(RestroI18n.t("browse_restaurants")) { vm.route = "Home" }
             }
         }
         return
@@ -147,7 +147,7 @@ fun CartScreen(vm: DeliveryViewModel) {
     var couponInput by rememberSaveable { mutableStateOf(vm.cart.coupon) }
 
     Page {
-        Heading("Your Cart", "${vm.cart.lines.sumOf { it.quantity }} items in your bag")
+        Heading(RestroI18n.t("cart_title"), "${vm.cart.lines.sumOf { it.quantity }} ${RestroI18n.t("cart_subtitle")}")
 
         vm.cart.lines.forEachIndexed { index, line ->
             val dish = vm.catalog.dishes.find { it.id == line.dishId }
@@ -1241,7 +1241,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
         }
         else -> { // "Orders" list
             Page {
-                Heading("Order History", "Your past orders and deliveries")
+                Heading(RestroI18n.t("orders_title"), RestroI18n.t("orders_subtitle"))
 
                 if (vm.orders.isEmpty()) {
                     Column(
@@ -1926,51 +1926,90 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
                 HorizontalDivider(color = RestroTokens.border)
 
-                // App Language Selector
-                Surface(
-                    onClick = { vm.showLanguageSelector = true },
-                    shape = RoundedCornerShape(14.dp),
-                    color = RestroTokens.surfaceElevated,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                // App Language Selector (1-Tap Inline Switcher + Full Language Screen)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        onClick = { vm.showLanguageSelector = true },
+                        shape = RoundedCornerShape(14.dp),
+                        color = RestroTokens.surfaceElevated,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Translate,
+                                    contentDescription = "Language",
+                                    tint = RestroTokens.coral,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Column {
+                                    Text(
+                                        RestroI18n.t("language_settings_title"),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = RestroTokens.text
+                                    )
+                                    Text(
+                                        "${RestroI18n.currentLanguage.uppercase()} · ${AppLanguage.fromCode(RestroI18n.currentLanguage).nativeName}",
+                                        fontSize = 11.sp,
+                                        color = RestroTokens.coral,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
                             Icon(
-                                Icons.Default.Translate,
-                                contentDescription = "Language",
-                                tint = RestroTokens.coral,
+                                Icons.Default.ChevronRight,
+                                contentDescription = "Select language",
+                                tint = RestroTokens.muted,
                                 modifier = Modifier.size(20.dp)
                             )
-                            Column {
-                                Text(
-                                    "App Language / भाषा",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = RestroTokens.text
-                                )
-                                Text(
-                                    "${RestroI18n.currentLanguage.uppercase()} · ${AppLanguage.fromCode(RestroI18n.currentLanguage).nativeName}",
-                                    fontSize = 11.sp,
-                                    color = RestroTokens.coral,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                        }
+                    }
+
+                    // Instant 1-Tap Language Switcher Pills in Settings
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AppLanguage.entries.forEach { lang ->
+                            val selected = RestroI18n.currentLanguage == lang.code
+                            Surface(
+                                onClick = { vm.selectLanguage(lang.code, isInitialOnboarding = false) },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (selected) RestroTokens.coral else RestroTokens.surfaceElevated,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) RestroTokens.coral else RestroTokens.border
+                                ),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        lang.nativeName,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (selected) Color.White else RestroTokens.text
+                                    )
+                                    Text(
+                                        lang.englishName,
+                                        fontSize = 10.sp,
+                                        color = if (selected) Color.White.copy(alpha = 0.85f) else RestroTokens.muted
+                                    )
+                                }
                             }
                         }
-                        Icon(
-                            Icons.Default.ChevronRight,
-                            contentDescription = "Select language",
-                            tint = RestroTokens.muted,
-                            modifier = Modifier.size(20.dp)
-                        )
                     }
                 }
 
@@ -2003,7 +2042,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                             )
                             Column {
                                 Text(
-                                    "Personalized App Tour",
+                                    RestroI18n.t("replay_tour_title"),
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = RestroTokens.text

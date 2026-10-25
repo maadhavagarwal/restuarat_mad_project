@@ -516,10 +516,29 @@ fun OrderTrackingRouteMap(
         label = "heartbeatProgress"
     )
 
-    // Calculate real live distance remaining and ETA
-    val totalRouteDistanceKm = 3.6
+    // Calculate real live distance remaining and ETA (20-25m restaurant prep + user-to-restaurant travel time)
+    val selRestForEta = vm?.catalog?.restaurants?.find { it.name == order?.restaurantName || it.id == order?.restaurantId }
+    val restPrepMins = (selRestForEta?.prepMinutes ?: 22).coerceIn(20, 25)
+    val totalRouteDistanceKm = remember(order?.id, selRestForEta?.latitude, selRestForEta?.longitude, order?.address?.latitude, order?.address?.longitude) {
+        val rLat = selRestForEta?.latitude ?: (vm?.currentLatitude?.plus(0.0075) ?: 19.2288)
+        val rLng = selRestForEta?.longitude ?: (vm?.currentLongitude?.plus(0.0055) ?: 72.8541)
+        val uLat = order?.address?.latitude ?: (vm?.currentLatitude ?: 19.2129)
+        val uLng = order?.address?.longitude ?: (vm?.currentLongitude ?: 72.8424)
+        val earthRadius = 6371.0
+        val dLat = Math.toRadians(uLat - rLat)
+        val dLng = Math.toRadians(uLng - rLng)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                kotlin.math.cos(Math.toRadians(rLat)) * kotlin.math.cos(Math.toRadians(uLat)) *
+                kotlin.math.sin(dLng / 2) * kotlin.math.sin(dLng / 2)
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+        (Math.round(earthRadius * c * 10.0) / 10.0).coerceAtLeast(1.2)
+    }
     val remainingDistanceKm = ((1.0f - animatedProgress) * totalRouteDistanceKm).coerceAtLeast(0.0)
-    val liveEtaMinutes = (remainingDistanceKm * 3.5).toInt().coerceAtLeast(1)
+    val remainingPrepMins = if (animatedProgress < 0.4f) {
+        ((1.0f - (animatedProgress / 0.4f)) * restPrepMins).toInt()
+    } else 0
+    val remainingTransitMins = (remainingDistanceKm * 3.5).toInt()
+    val liveEtaMinutes = (remainingPrepMins + remainingTransitMins).coerceAtLeast(if (animatedProgress >= 1.0f) 0 else 1)
 
     val distanceText = if (remainingDistanceKm <= 0.05) {
         "At your gate"

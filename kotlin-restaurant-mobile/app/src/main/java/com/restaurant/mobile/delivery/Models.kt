@@ -43,6 +43,11 @@ data class Restaurant(
     val amenities: List<String> = listOf("AC Dining", "Valet Parking", "Full Bar"),
     val tableBookingAvailable: Boolean = true,
     val maxPartySize: Int = 12,
+    val prepMinutes: Int = 22,
+    val acceptsDiningPayment: Boolean = true,
+    val logoUrl: String = "",
+    val fssaiNumber: String = "11523006000482",
+    val gstNumber: String = "27AABCU9603R1ZM",
 )
 
 data class Offer(
@@ -63,8 +68,10 @@ enum class UserRole(val label: String) {
     CUSTOMER("Customer"),
     WAITER("Waiter / POS"),
     CHEF_KDS("Kitchen Chef"),
+    RIDER("Delivery Rider"),
     ADMIN("Admin"),
-    MASTER_ADMIN("Master Admin");
+    MASTER_ADMIN("Master Admin"),
+    KIOSK("Self-Service Kiosk");
 
     val isStaff: Boolean
         get() = this != CUSTOMER
@@ -80,6 +87,56 @@ enum class UserRole(val label: String) {
             entries.find { it.name.equals(value?.trim(), ignoreCase = true) } ?: CUSTOMER
     }
 }
+
+data class RiderRideRecord(
+    val id: String,
+    val riderId: String,
+    val orderId: String,
+    val restaurantName: String,
+    val dropAddress: String,
+    val distanceKm: Double,
+    val durationMinutes: Int,
+    val incomeRupees: Long,
+    val completedAtMs: Long = System.currentTimeMillis()
+)
+
+data class RiderPayoutRecord(
+    val id: String,
+    val riderId: String,
+    val amountRupees: Long,
+    val accountDestination: String,
+    val status: String = "COMPLETED",
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
+data class RiderRideOffer(
+    val id: String,
+    val orderId: String,
+    val restaurantId: String,
+    val restaurantName: String,
+    val pickupAddress: String,
+    val dropAddress: String,
+    val distanceKm: Double,
+    val estimatedMinutes: Int,
+    val riderIncomeRupees: Long,
+    val status: String = "AVAILABLE" // AVAILABLE, ACCEPTED, DELIVERED
+)
+
+data class PartnerVerificationRecord(
+    val userId: String,
+    val role: String,
+    val vehicleNumber: String = "",
+    val drivingLicenseUri: String = "",
+    val fssaiNumber: String = "",
+    val fssaiCertUri: String = "",
+    val gstNumber: String = "",
+    val gstCertUri: String = "",
+    val restaurantName: String = "",
+    val restaurantLogoUri: String = "",
+    val verificationStatus: String = "VERIFIED_BY_GEMINI_OCR",
+    val extractedSummary: String = "",
+    val verifiedAt: String = Instant.now().toString()
+)
 
 data class StaffPayrollRecord(
     val id: String,
@@ -245,6 +302,14 @@ data class Credentials(
     val name: String = "",
     val role: String = "CUSTOMER",
     val phone: String = "",
+    val vehicleNumber: String = "",
+    val drivingLicenseUri: String = "",
+    val fssaiNumber: String = "",
+    val fssaiCertUri: String = "",
+    val gstNumber: String = "",
+    val gstCertUri: String = "",
+    val restaurantName: String = "",
+    val restaurantLogoUri: String = "",
 )
 
 data class Checkout(

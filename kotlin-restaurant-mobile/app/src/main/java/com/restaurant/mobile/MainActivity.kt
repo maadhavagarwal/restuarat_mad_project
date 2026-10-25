@@ -4,7 +4,9 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -165,7 +167,8 @@ class MainActivity : ComponentActivity() {
                         Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                     },
                     sqlDb = deliveryVm.sqlDb,
-                    backendEngine = deliveryVm.backend
+                    backendEngine = deliveryVm.backend,
+                    deliveryVm = deliveryVm
                 )
             } else {
                 com.restaurant.mobile.delivery.DeliveryApp(
@@ -183,7 +186,8 @@ enum class NavigationScreen(val title: String, val icon: ImageVector) {
     MENU("Menu & Prices", Icons.Default.MenuBook),
     INVENTORY("Inventory", Icons.Default.Inventory),
     SALARY("Staff Payroll", Icons.Default.Payments),
-    ANALYTICS("Analytics", Icons.Default.BarChart)
+    ANALYTICS("Analytics", Icons.Default.BarChart),
+    RIDER("Rider Hub", Icons.Default.DeliveryDining)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -195,7 +199,8 @@ fun RestaurantMobileApp(
     onUserInteraction: (() -> Unit)? = null,
     onShowToast: (String) -> Unit,
     sqlDb: com.restaurant.mobile.delivery.RestroSqlDatabase? = null,
-    backendEngine: com.restaurant.mobile.delivery.RestroFirebaseBackendEngine? = null
+    backendEngine: com.restaurant.mobile.delivery.RestroFirebaseBackendEngine? = null,
+    deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -203,11 +208,14 @@ fun RestaurantMobileApp(
     val backend = remember(backendEngine, database) {
         backendEngine ?: com.restaurant.mobile.delivery.RestroFirebaseBackendEngine(context, database)
     }
+    var showStaffAiSheet by rememberSaveable { mutableStateOf(false) }
 
     val allowedScreens = remember(userRole) {
         when (userRole) {
             com.restaurant.mobile.delivery.UserRole.WAITER -> listOf(NavigationScreen.POS, NavigationScreen.TABLES)
             com.restaurant.mobile.delivery.UserRole.CHEF_KDS -> listOf(NavigationScreen.KDS, NavigationScreen.TABLES)
+            com.restaurant.mobile.delivery.UserRole.RIDER -> listOf(NavigationScreen.RIDER)
+            com.restaurant.mobile.delivery.UserRole.KIOSK -> listOf(NavigationScreen.POS)
             com.restaurant.mobile.delivery.UserRole.ADMIN -> listOf(
                 NavigationScreen.POS,
                 NavigationScreen.KDS,
@@ -215,7 +223,8 @@ fun RestaurantMobileApp(
                 NavigationScreen.MENU,
                 NavigationScreen.INVENTORY,
                 NavigationScreen.SALARY,
-                NavigationScreen.ANALYTICS
+                NavigationScreen.ANALYTICS,
+                NavigationScreen.RIDER
             )
             com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN -> NavigationScreen.entries
             com.restaurant.mobile.delivery.UserRole.CUSTOMER -> emptyList()
@@ -345,6 +354,78 @@ fun RestaurantMobileApp(
                         }
                     },
                     actions = {
+                        // Multi-language & Restro.AI available on ALL portals EXCEPT Self-Service Kiosk
+                        if (userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                            val currentLang = com.restaurant.mobile.delivery.RestroI18n.currentLanguage
+                            Surface(
+                                color = Color(0xFFF1F5F9),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    listOf("en" to "EN", "hi" to "हिं", "mr" to "मरा").forEach { (code, shortLabel) ->
+                                        val selected = currentLang == code
+                                        Surface(
+                                            color = if (selected) Color(0xFFC2410C) else Color.Transparent,
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier.clickable {
+                                                onUserInteraction?.invoke()
+                                                if (deliveryVm != null) {
+                                                    deliveryVm.selectLanguage(code, isInitialOnboarding = false)
+                                                } else {
+                                                    com.restaurant.mobile.delivery.RestroI18n.setLanguage(code)
+                                                }
+                                            }
+                                        ) {
+                                            Text(
+                                                text = shortLabel,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (selected) Color.White else Color(0xFF334155),
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (deliveryVm != null) {
+                                Surface(
+                                    color = Color(0xFFC2410C),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .padding(end = 4.dp)
+                                        .clickable {
+                                            onUserInteraction?.invoke()
+                                            showStaffAiSheet = true
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.AutoAwesome,
+                                            contentDescription = "Restro.AI",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "Restro.AI",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         if (onSignOut != null) {
                             IconButton(onClick = onSignOut) {
                                 Icon(
@@ -614,6 +695,20 @@ fun RestaurantMobileApp(
                         NavigationScreen.ANALYTICS -> AnalyticsScreenView(
                             analytics = analytics,
                             isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN)
+                        )
+                        NavigationScreen.RIDER -> com.restaurant.mobile.delivery.RiderPortalScreenView(
+                            riderId = deliveryVm?.profile?.id ?: "staff-rider-1",
+                            riderName = deliveryVm?.profile?.name ?: "Ramesh Kumar",
+                            database = database,
+                            onShowToast = onShowToast
+                        )
+                    }
+
+                    // Restro.AI Assistant Sheet across all portals EXCEPT Kiosk
+                    if (showStaffAiSheet && deliveryVm != null && userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                        com.restaurant.mobile.delivery.RestroAiBottomSheet(
+                            vm = deliveryVm,
+                            onDismiss = { showStaffAiSheet = false }
                         )
                     }
 
@@ -3040,16 +3135,23 @@ fun AdminMenuManagementScreenView(
     onShowToast: (String) -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
+    var restaurants by remember { mutableStateOf<List<com.restaurant.mobile.delivery.Restaurant>>(emptyList()) }
+    var selectedRestaurantId by remember { mutableStateOf("rest-1") }
     var dishes by remember { mutableStateOf<List<com.restaurant.mobile.delivery.Dish>>(emptyList()) }
+
     var editingDish by remember { mutableStateOf<com.restaurant.mobile.delivery.Dish?>(null) }
-    var editPriceStr by remember { mutableStateOf("") }
-    var editAvailable by remember { mutableStateOf(true) }
+    var showDishDialog by remember { mutableStateOf(false) }
 
     fun refreshMenu() {
         coroutineScope.launch(Dispatchers.IO) {
-            val list = database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
+            val restList = database.getAllRestaurants().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.restaurants }
+            val dishList = database.getAllDishes().ifEmpty { com.restaurant.mobile.delivery.MockCatalog.sample.dishes }
             withContext(Dispatchers.Main) {
-                dishes = list
+                restaurants = restList
+                if (restList.isNotEmpty() && restList.none { it.id == selectedRestaurantId }) {
+                    selectedRestaurantId = restList.first().id
+                }
+                dishes = dishList
             }
         }
     }
@@ -3058,26 +3160,141 @@ fun AdminMenuManagementScreenView(
         refreshMenu()
     }
 
+    val selectedRest = restaurants.find { it.id == selectedRestaurantId }
+    val filteredDishes = dishes.filter { it.restaurantId == selectedRestaurantId }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(restaurants, key = { it.id }) { rest ->
+                FilterChip(
+                    selected = rest.id == selectedRestaurantId,
+                    onClick = { selectedRestaurantId = rest.id },
+                    label = { Text("${rest.name} (${rest.id})") }
+                )
+            }
+        }
+
+        selectedRest?.let { rest ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(Icons.Default.MenuBook, null, tint = MaterialTheme.colorScheme.primary)
-                Column {
-                    Text("Menu & Pricing Control", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("Update live menu prices and stock availability in real time", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${rest.name} Operations", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(
+                                "Prep: ${rest.prepMinutes}m · Delivery: ${if (rest.open) "OPEN" else "CLOSED"} · Dining Pay: ${if (rest.acceptsDiningPayment) "ONLINE" else "COUNTER ONLY"}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                editingDish = null
+                                showDishDialog = true
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Add Dish", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = rest.open,
+                            onClick = {
+                                val nextOpen = !rest.open
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    database.saveRestaurantSettings(rest.id, nextOpen, rest.prepMinutes, rest.acceptsDiningPayment)
+                                    refreshMenu()
+                                    withContext(Dispatchers.Main) {
+                                        onShowToast("${rest.name} is now ${if (nextOpen) "OPEN for delivery" else "CLOSED for delivery"}")
+                                    }
+                                }
+                            },
+                            label = { Text(if (rest.open) "Open for Delivery" else "Closed for Delivery") }
+                        )
+                        FilterChip(
+                            selected = rest.acceptsDiningPayment,
+                            onClick = {
+                                val nextDining = !rest.acceptsDiningPayment
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    database.saveRestaurantSettings(rest.id, rest.open, rest.prepMinutes, nextDining)
+                                    refreshMenu()
+                                    withContext(Dispatchers.Main) {
+                                        onShowToast("${rest.name}: ${if (nextDining) "Online Dining Pay Enabled" else "Counter Settlement Only"}")
+                                    }
+                                }
+                            },
+                            label = { Text(if (rest.acceptsDiningPayment) "Online Dining Pay: ON" else "Counter Pay Only") }
+                        )
+                    }
+
+                    val adminLogoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                        val picked = uri?.toString() ?: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                        coroutineScope.launch(Dispatchers.IO) {
+                            database.updateRestaurantLogo(rest.id, picked)
+                            refreshMenu()
+                            withContext(Dispatchers.Main) {
+                                onShowToast("Restaurant logo updated for ${rest.name}")
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Logo: ${rest.logoUrl.ifBlank { rest.image }.take(34)}...",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                try {
+                                    adminLogoPicker.launch("image/*")
+                                } catch (_: Exception) {
+                                    val fallbackLogo = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        database.updateRestaurantLogo(rest.id, fallbackLogo)
+                                        refreshMenu()
+                                        withContext(Dispatchers.Main) {
+                                            onShowToast("Restaurant logo updated for ${rest.name}")
+                                        }
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Default.Image, null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(com.restaurant.mobile.delivery.RestroI18n.t("upload_logo_btn"), fontSize = 11.sp)
+                        }
+                    }
                 }
             }
         }
@@ -3086,7 +3303,7 @@ fun AdminMenuManagementScreenView(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(dishes, key = { it.id }) { dish ->
+            items(filteredDishes, key = { it.id }) { dish ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -3102,14 +3319,14 @@ fun AdminMenuManagementScreenView(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             Text(
-                                "₹${dish.price / 100} · ${dish.category}",
-                                fontSize = 13.sp,
+                                "₹${dish.price / 100} · ${dish.category} · Mapped to ${dish.restaurantId}",
+                                fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             Surface(
                                 color = if (dish.available) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFEF4444).copy(alpha = 0.2f),
                                 shape = RoundedCornerShape(6.dp)
@@ -3117,7 +3334,7 @@ fun AdminMenuManagementScreenView(
                                 Text(
                                     if (dish.available) "AVAILABLE" else "86'D (OUT)",
                                     color = if (dish.available) Color(0xFF10B981) else Color(0xFFEF4444),
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
@@ -3125,10 +3342,22 @@ fun AdminMenuManagementScreenView(
 
                             IconButton(onClick = {
                                 editingDish = dish
-                                editPriceStr = (dish.price / 100).toString()
-                                editAvailable = dish.available
+                                showDishDialog = true
                             }) {
                                 Icon(Icons.Default.Edit, contentDescription = "Edit Dish", tint = Color(0xFFC2410C))
+                            }
+
+                            IconButton(onClick = {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    database.deleteDish(dish.id)
+                                    database.recordAuditLog("DISH_DELETED", "admin@restro.app", "ADMIN", dish.id, "Deleted ${dish.name}")
+                                    refreshMenu()
+                                    withContext(Dispatchers.Main) {
+                                        onShowToast("Deleted ${dish.name}")
+                                    }
+                                }
+                            }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete Dish", tint = Color(0xFFEF4444))
                             }
                         }
                     }
@@ -3137,53 +3366,130 @@ fun AdminMenuManagementScreenView(
         }
     }
 
-    if (editingDish != null) {
-        val target = editingDish!!
+    if (showDishDialog) {
+        val target = editingDish
+        var dName by remember(target) { mutableStateOf(target?.name ?: "") }
+        var dCategory by remember(target) { mutableStateOf(target?.category ?: "Mains") }
+        var dDesc by remember(target) { mutableStateOf(target?.description ?: "Freshly prepared house specialty") }
+        var editPriceStr by remember(target) { mutableStateOf(if (target != null) (target.price / 100).toString() else "249") }
+        var editVeg by remember(target) { mutableStateOf(target?.vegetarian ?: true) }
+        var editAvailable by remember(target) { mutableStateOf(target?.available ?: true) }
+        var editDishImage by remember(target) {
+            mutableStateOf(target?.image ?: (selectedRest?.image ?: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800"))
+        }
+
+        val adminDishImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            val picked = uri?.toString()
+            if (!picked.isNullOrBlank()) {
+                editDishImage = picked
+            }
+        }
+
         AlertDialog(
-            onDismissRequest = { editingDish = null },
-            title = { Text("Edit ${target.name}") },
+            onDismissRequest = { showDishDialog = false },
+            title = { Text(if (target == null) "Add Dish to ${selectedRest?.name ?: selectedRestaurantId}" else "Update ${target.name}") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = dName,
+                        onValueChange = { dName = it },
+                        label = { Text("Dish Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = dCategory,
+                        onValueChange = { dCategory = it },
+                        label = { Text("Category") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     OutlinedTextField(
                         value = editPriceStr,
                         onValueChange = { editPriceStr = it.filter { ch -> ch.isDigit() } },
                         label = { Text("Price in ₹") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = editAvailable,
-                            onCheckedChange = { editAvailable = it }
-                        )
-                        Text("Available on Live Menu")
+                    OutlinedTextField(
+                        value = dDesc,
+                        onValueChange = { dDesc = it },
+                        label = { Text("Description") },
+                        maxLines = 2,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editDishImage,
+                        onValueChange = { editDishImage = it },
+                        label = { Text("Custom Dish Image URL / URI") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            try {
+                                adminDishImagePicker.launch("image/*")
+                            } catch (_: Exception) {
+                                editDishImage = "https://images.unsplash.com/photo-1565557623262-b51c2513a641?w=800"
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(Icons.Default.AddPhotoAlternate, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(com.restaurant.mobile.delivery.RestroI18n.t("upload_dish_image_btn"), fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = editVeg, onCheckedChange = { editVeg = it })
+                            Text("Veg")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = editAvailable, onCheckedChange = { editAvailable = it })
+                            Text("Available")
+                        }
                     }
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    val newPricePaise = (editPriceStr.toLongOrNull() ?: (target.price / 100)) * 100
+                    val newPricePaise = (editPriceStr.toLongOrNull() ?: 199L) * 100L
+                    val dishObj = com.restaurant.mobile.delivery.Dish(
+                        id = target?.id ?: "dish-${System.currentTimeMillis()}",
+                        restaurantId = target?.restaurantId ?: selectedRestaurantId,
+                        name = dName.ifBlank { "Special Dish" },
+                        category = dCategory.ifBlank { "Mains" },
+                        description = dDesc.ifBlank { "Chef special" },
+                        price = newPricePaise,
+                        vegetarian = editVeg,
+                        available = editAvailable,
+                        image = editDishImage.ifBlank { selectedRest?.image ?: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800" },
+                        addons = target?.addons ?: emptyList()
+                    )
                     coroutineScope.launch(Dispatchers.IO) {
-                        database.updateDishPriceAndAvailability(target.id, newPricePaise, editAvailable)
+                        database.upsertDish(dishObj)
                         database.recordAuditLog(
-                            "MENU_UPDATED",
+                            if (target == null) "DISH_ADDED" else "MENU_UPDATED",
                             "admin@restro.app",
                             "ADMIN",
-                            target.id,
-                            "Price changed to ₹${newPricePaise / 100}, available=$editAvailable"
+                            dishObj.id,
+                            "${dishObj.name} (₹${newPricePaise / 100}, available=$editAvailable)"
                         )
                         withContext(Dispatchers.Main) {
+                            showDishDialog = false
                             editingDish = null
                             refreshMenu()
-                            onShowToast("${target.name} updated: ₹${newPricePaise / 100}")
+                            onShowToast("${dishObj.name} saved (₹${newPricePaise / 100})")
                         }
                     }
                 }) {
-                    Text("Save Changes")
+                    Text("Save Dish")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editingDish = null }) {
+                TextButton(onClick = { showDishDialog = false }) {
                     Text("Cancel")
                 }
             }

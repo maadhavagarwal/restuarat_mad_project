@@ -46,6 +46,12 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                         CircularProgressIndicator(Modifier.padding(24.dp))
                     }
                 }
+            else if (!vm.hasSelectedLanguage)
+                LanguageSelectionScreen(
+                    onLanguageSelected = { lang ->
+                        vm.selectLanguage(lang)
+                    }
+                )
             else if (vm.profile == null && !vm.isGuestMode)
                 Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                     Column(Modifier.fillMaxSize()) {
@@ -62,7 +68,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        "BISTRO & DINING",
+                                        RestroI18n.t("bistro_dining"),
                                         color = RestroTokens.coral,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
@@ -70,12 +76,24 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                     )
                                 }
                             }
-                            Icon(
-                                Icons.Default.RestaurantMenu,
-                                contentDescription = "Restro Dining",
-                                tint = RestroTokens.coral,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                AppLanguage.entries.forEach { lang ->
+                                    val isSel = RestroI18n.currentLanguage == lang.code
+                                    Surface(
+                                        onClick = { vm.selectLanguage(lang.code) },
+                                        color = if (isSel) RestroTokens.coral else RestroTokens.surface,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            lang.nativeName,
+                                            color = if (isSel) Color.White else RestroTokens.muted,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                         if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                         vm.error?.let { message ->
@@ -105,12 +123,6 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                         }
                     }
                 }
-            else if (!vm.hasSelectedLanguage)
-                LanguageSelectionScreen(
-                    onLanguageSelected = { lang ->
-                        vm.selectLanguage(lang)
-                    }
-                )
             else
                 Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                     Column(Modifier.fillMaxSize().capture(backdrop)) {

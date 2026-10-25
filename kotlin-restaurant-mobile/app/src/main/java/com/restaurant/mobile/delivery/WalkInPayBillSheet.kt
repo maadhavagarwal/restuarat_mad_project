@@ -22,32 +22,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * Walk-In Pay Bill Bottom Sheet (Prompt 11).
- *
- * Allows a walk-in dine-in customer to identify their table so the app
- * can look up the active tab and present the bill for payment.
- *
- * Features:
- * 1. Grid of preset tables T1 – T12.
- * 2. Manual table-number text input for tables beyond the grid.
- * 3. Selection state tracking for the chosen table.
- * 4. Input validation — table number must be non-blank and alphanumeric.
- * 5. "Look Up Table Bill" CTA that invokes [onTableSelected] with the
- *    validated table number.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WalkInPayBillSheet(
     onTableSelected: (tableNumber: String) -> Unit,
     onDismiss: () -> Unit,
     errorMessage: String? = null,
-    availableTables: List<String> = emptyList()
+    availableTables: List<String> = emptyList(),
+    acceptsDiningPayment: Boolean = true
 ) {
-    // Preset table labels matching restaurant inventory
     val presetTables = if (availableTables.isNotEmpty()) availableTables else (1..12).map { "T$it" }
 
-    // Selection state: either a preset or manually entered
     var selectedPreset by rememberSaveable { mutableStateOf<String?>(null) }
     var manualInput by rememberSaveable { mutableStateOf("") }
     var useManualInput by rememberSaveable { mutableStateOf(false) }
@@ -58,17 +43,14 @@ fun WalkInPayBillSheet(
     }
     val displayedError = if (localErrorDismissed) null else errorMessage
 
-    // Derived: the effective table number the user has chosen
     val effectiveTable = if (useManualInput) manualInput.trim() else selectedPreset
 
-    // Validation for manual input: non-blank, alphanumeric (letters, digits, hyphens allowed)
     val manualInputValid = remember(manualInput) {
         val trimmed = manualInput.trim()
         trimmed.isNotBlank() && trimmed.length <= 10 &&
                 trimmed.all { it.isLetterOrDigit() || it == '-' }
     }
 
-    // Overall form validity
     val isValid = if (useManualInput) manualInputValid else selectedPreset != null
 
     ModalBottomSheet(
@@ -83,7 +65,6 @@ fun WalkInPayBillSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -107,7 +88,8 @@ fun WalkInPayBillSheet(
                         )
                     }
                     Text(
-                        "Select your table to view the bill",
+                        if (acceptsDiningPayment) "Select your table to view and pay the bill"
+                        else RestroI18n.t("counter_pay_only"),
                         fontSize = 12.sp,
                         color = RestroTokens.muted
                     )
@@ -117,7 +99,34 @@ fun WalkInPayBillSheet(
                 }
             }
 
-            // Table Grid — 4 columns × 3 rows
+            if (!acceptsDiningPayment) {
+                Surface(
+                    color = RestroTokens.coral.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Storefront,
+                            contentDescription = null,
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            RestroI18n.t("dining_pay_disabled_notice"),
+                            fontSize = 12.sp,
+                            color = RestroTokens.text,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
             Text(
                 "Select your table",
                 fontWeight = FontWeight.SemiBold,
@@ -176,7 +185,6 @@ fun WalkInPayBillSheet(
                 }
             }
 
-            // Divider with "or"
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -193,7 +201,6 @@ fun WalkInPayBillSheet(
                 )
             }
 
-            // Manual input
             Text(
                 "Enter table number manually",
                 fontWeight = FontWeight.SemiBold,
@@ -241,7 +248,6 @@ fun WalkInPayBillSheet(
                 )
             )
 
-            // Selected table summary
             if (isValid && effectiveTable != null) {
                 Surface(
                     color = RestroTokens.coral.copy(alpha = 0.1f),
@@ -263,7 +269,7 @@ fun WalkInPayBillSheet(
                             Icon(
                                 Icons.Default.TableBar,
                                 contentDescription = null,
-                                tint = RestroTokens.coral,
+                               tint = RestroTokens.coral,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -290,7 +296,6 @@ fun WalkInPayBillSheet(
                 }
             }
 
-            // Error Message (e.g. No active unpaid bill found)
             if (!displayedError.isNullOrBlank()) {
                 Surface(
                     color = Color(0xFFEF4444).copy(alpha = 0.15f),
@@ -320,7 +325,6 @@ fun WalkInPayBillSheet(
                 }
             }
 
-            // CTA Button
             Button(
                 onClick = {
                     effectiveTable?.let { onTableSelected(it) }
@@ -343,7 +347,7 @@ fun WalkInPayBillSheet(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Look Up Table Bill",
+                    if (acceptsDiningPayment) "Look Up Table Bill" else "View Table Bill (Settle at Counter)",
                     color = RestroTokens.canvas,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
