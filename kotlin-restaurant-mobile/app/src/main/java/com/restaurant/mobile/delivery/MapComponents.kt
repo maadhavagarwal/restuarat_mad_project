@@ -80,21 +80,11 @@ fun DeliveryInteractiveMap(
 
     val restaurants = vm.catalog.restaurants
     val selectedRestaurant = restaurants.find { it.id == selectedRestaurantId } ?: restaurants.firstOrNull()
-    var mapEngine by rememberSaveable { mutableStateOf("GMaps") }
+    var mapEngine by rememberSaveable { mutableStateOf("Street") }
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF14171C))) {
         when (mapEngine) {
-            "GMaps" -> {
-                RealGoogleMapsWebView(
-                    latitude = vm.currentLatitude,
-                    longitude = vm.currentLongitude,
-                    restaurants = restaurants,
-                    selectedRestaurantId = selectedRestaurantId,
-                    onSelectRestaurant = { selectedRestaurantId = it },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-            "OSM", "Street" -> {
+            "GMaps", "OSM", "Street" -> {
                 RealOpenStreetMapWebView(
                     latitude = vm.currentLatitude,
                     longitude = vm.currentLongitude,
@@ -316,37 +306,6 @@ fun DeliveryInteractiveMap(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    onClick = {
-                        mapEngine = when (mapEngine) {
-                            "GMaps" -> "Street"
-                            "Street" -> "Vector"
-                            else -> "GMaps"
-                        }
-                    },
-                    color = RestroTokens.surface.copy(alpha = 0.95f),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(Icons.Default.Layers, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
-                        Text(
-                            when (mapEngine) {
-                                "GMaps" -> "Google Maps"
-                                "Street" -> "Street Map"
-                                else -> "Vector Map"
-                            },
-                            fontSize = 11.sp,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                val context = LocalContext.current
                 IconButton(
                     onClick = {
                         val sel = selectedRestaurant ?: restaurants.firstOrNull()
@@ -498,7 +457,6 @@ fun DeliveryInteractiveMap(
                         Button(
                             onClick = {
                                 vm.openRestaurant(selectedRestaurant.id)
-                                onClose?.invoke()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
                             shape = RoundedCornerShape(14.dp),
@@ -541,7 +499,7 @@ fun OrderTrackingRouteMap(
 
     var proximityAlertFired by rememberSaveable(order?.id) { mutableStateOf(false) }
     var deliveredAlertFired by rememberSaveable(order?.id) { mutableStateOf(order?.status == "Delivered") }
-    var mapMode by rememberSaveable(order?.id) { mutableStateOf("GoogleMaps") }
+    var mapMode by rememberSaveable(order?.id) { mutableStateOf("Street") }
 
     // 10-Second Auto-Updating Coroutine Heartbeat
     LaunchedEffect(order?.id) {
@@ -632,47 +590,8 @@ fun OrderTrackingRouteMap(
                 )
             }
 
-            // Map Style Switcher (Google Maps vs Street vs Dark)
+            // Direct Google Maps Intent
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Surface(
-                    onClick = {
-                        mapMode = when (mapMode) {
-                            "GoogleMaps" -> "Street"
-                            "Street" -> "DarkRoute"
-                            else -> "GoogleMaps"
-                        }
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    color = RestroTokens.surface
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            when (mapMode) {
-                                "GoogleMaps" -> Icons.Default.Place
-                                "Street" -> Icons.Default.Map
-                                else -> Icons.Default.Nightlight
-                            },
-                            contentDescription = null,
-                            tint = RestroTokens.coral,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = when (mapMode) {
-                                "GoogleMaps" -> "Google Maps"
-                                "Street" -> "Street Map"
-                                else -> "Dark Route"
-                            },
-                            fontSize = 11.sp,
-                            color = RestroTokens.text,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-
                 Surface(
                     onClick = {
                         val selRest = vm?.catalog?.restaurants?.find { it.name == order?.restaurantName || it.id == order?.restaurantId }

@@ -447,9 +447,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     val backend = RestroFirebaseBackendEngine(app)
     val sqlDb get() = backend.sqlDb
     val cloudEngine = FirebaseCloudEngine(app, backend.sqlDb)
+    val riderDispatchEngine = RiderDispatchEngine(cloudEngine)
     val api = DeliveryApi().apply { engine = backend }
     var starting by mutableStateOf(true)
         private set
+
+    var activeRiderFleet by mutableStateOf<List<Rider>>(RiderDispatchEngine.DEFAULT_FLEET)
+    var latestDispatchLog by mutableStateOf("Nearest Rider Dispatch System Active")
 
     var busy by mutableStateOf(false)
         private set
@@ -492,7 +496,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var vegetarian by mutableStateOf(false)
     var sortPrice by mutableStateOf(false)
     private val checkoutPrefs =
-        app.getSharedPreferences("restro-checkout", android.content.Context.MODE_PRIVATE)
+        getApplication<Application>().getSharedPreferences("restro-checkout", android.content.Context.MODE_PRIVATE)
     private var checkoutKey =
         checkoutPrefs.getString("key", null)
             ?: UUID.randomUUID().toString().also {
@@ -529,6 +533,20 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var pendingDishToAdd by mutableStateOf<Dish?>(null)
     var pendingAddonsToAdd by mutableStateOf<List<String>>(emptyList())
     var pendingQuantityToAdd by mutableIntStateOf(1)
+
+    // Multilingual & Onboarding Tour State
+    var hasSelectedLanguage by mutableStateOf(false)
+    var isTourActive by mutableStateOf(false)
+    var currentTourStep by mutableIntStateOf(0)
+    var showLanguageSelector by mutableStateOf(false)
+
+    // Restro.AI Assistant State
+    var showRestroAiSheet by mutableStateOf(false)
+    val aiChatHistory = mutableStateListOf<RestroAiMessage>()
+
+    // Voice Interaction State
+    var isVoiceListening by mutableStateOf(false)
+    var voiceManager: RestroVoiceManager = RestroVoiceManager(app)
 
     // Android Native Notification Channel Manager
     var notificationHelper: DeliveryNotificationHelper = DeliveryNotificationHelper(app)
@@ -590,14 +608,20 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var bookingConfirmationError by mutableStateOf<String?>(null)
     var confirmedBooking by mutableStateOf<TableBooking?>(null)
 
-    fun resetTableBookingDraft(restId: String = "", restName: String = "") {
+    fun resetTableBookingDraft(
+        restId: String = "",
+        restName: String = "",
+        partySize: Int = TableBookingDefaults.DEFAULT_PARTY_SIZE,
+        tableNumber: String = ""
+    ) {
         tableBookingDraft = TableBookingDraft(
             restaurantId = restId,
             restaurantName = restName,
             bookingDate = "",
             timeSlot = "",
-            partySize = TableBookingDefaults.DEFAULT_PARTY_SIZE,
+            partySize = partySize,
             seatingArea = TableBookingDefaults.DEFAULT_SEATING_AREA,
+            tableNumber = tableNumber,
             specialRequests = ""
         )
         bookingConfirmationError = null
@@ -632,7 +656,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                     timeSlot = draft.timeSlot,
                     partySize = draft.partySize,
                     seatingArea = draft.seatingArea,
-                    specialRequests = draft.specialRequests
+                    specialRequests = draft.specialRequests,
+                    requestedTableNumber = draft.tableNumber
                 )
 
                 when (result) {
@@ -1027,6 +1052,18 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         sessionExpiredBanner = null
     }
 
+    fun removeCoupon() = run {
+        try {
+            cart = api.call("/cart", "PUT", cart.copy(coupon = ""))
+        } catch (_: Exception) {
+            cart = cart.copy(coupon = "")
+        }
+        couponError = null
+        couponMessage = "Coupon removed. Original price restored."
+        computeQuote()
+        resetCheckoutKey()
+    }
+
     fun applyCoupon(code: String) = run {
         val clean = code.trim().uppercase()
         if (clean.isBlank()) {
@@ -1100,6 +1137,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } else {
                 api.token = session.load()
+            val savedLang = getApplication<Application>().getSharedPreferences("restro-lang", android.content.Context.MODE_PRIVATE).getString("code", null)
+            if (!savedLang.isNullOrBlank()) {
+                RestroI18n.setLanguage(savedLang)
+                hasSelectedLanguage = true
+            }
                 val savedProfile = session.loadProfile()
                 if (savedProfile != null) {
                     withContext(Dispatchers.Main) {
@@ -1395,14 +1437,43 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         error = null
         val resolvedTarget = if (isPhone) RestroValidationUtils.sanitizePhone(cleanTarget) else cleanTarget
         otpTarget = resolvedTarget
+        busy = true
 
-        if (isPhone && currentActivity != null) {
+        val dispatchViaGateway: suspend () -> Unit = {
+            try {
+                val response: OtpSendResponse = api.call(
+                    "/auth/otp/send",
+                    "POST",
+                    OtpSendRequest(target = resolvedTarget, type = if (isPhone) "phone" else "email")
+                )
+                withContext(Dispatchers.Main) {
+                    busy = false
+                    otpSent = true
+                    otpPreviewCode = response.previewOtp
+                    otpNotificationBanner = "Verification code dispatched to $resolvedTarget"
+                    response.previewOtp?.let { code ->
+                        notificationHelper.notifyOtpDispatched(resolvedTarget, code)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    busy = false
+                    otpSent = false
+                    otpPreviewCode = null
+                    otpNotificationBanner = null
+                    error = "Failed to dispatch verification code: " + (e.message ?: "Unknown error")
+                }
+            }
+        }
+
+        if (isPhone && currentActivity != null && !com.restaurant.mobile.BuildConfig.DEBUG) {
             val act = currentActivity!!
             FirebasePhoneAuthManager.sendPhoneOtp(
                 activity = act,
                 phoneNumber = resolvedTarget,
                 onCodeSent = { _ ->
                     viewModelScope.launch(Dispatchers.Main) {
+                        busy = false
                         otpSent = true
                         otpPreviewCode = null
                         otpNotificationBanner = "Verification code sent via SMS to $resolvedTarget"
@@ -1410,44 +1481,22 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onAutoVerified = { cred ->
                     viewModelScope.launch(Dispatchers.Main) {
+                        busy = false
                         cred.smsCode?.let { verifyOtp(it) }
                     }
                 },
                 onFailure = { errorMsg ->
-                    viewModelScope.launch(Dispatchers.Main) {
+                    viewModelScope.launch(Dispatchers.IO) {
                         FirebasePhoneAuthManager.storedVerificationId = null
-                        try {
-                            val response: OtpSendResponse = api.call(
-                                "/auth/otp/send",
-                                "POST",
-                                OtpSendRequest(target = resolvedTarget, type = "phone")
-                            )
-                            otpSent = true
-                            otpPreviewCode = null
-                            otpNotificationBanner = "Verification code dispatched to $resolvedTarget"
-                        } catch (e: Exception) {
-                            otpSent = false
-                            otpPreviewCode = null
-                            otpNotificationBanner = null
-                            error = "SMS dispatch failed: $errorMsg. (${e.message})"
-                        }
+                        dispatchViaGateway()
                     }
                 }
             )
             return@run
         }
 
-        try {
-            val response: OtpSendResponse = api.call(
-                "/auth/otp/send",
-                "POST",
-                OtpSendRequest(target = resolvedTarget, type = if (isPhone) "phone" else "email")
-            )
-            otpSent = true
-            otpPreviewCode = null
-            otpNotificationBanner = "Verification code dispatched to $resolvedTarget"
-        } catch (e: Exception) {
-            error = e.message ?: "Failed to send verification code"
+        viewModelScope.launch(Dispatchers.IO) {
+            dispatchViaGateway()
         }
     }
 
@@ -1457,6 +1506,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             error = "Please enter the 6-digit verification code"
             return@run
         }
+        busy = true
+        error = null
 
         if (FirebasePhoneAuthManager.storedVerificationId != null) {
             FirebasePhoneAuthManager.verifyCode(
@@ -1512,31 +1563,39 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             return@run
         }
 
-        try {
-            val response: AuthResult = api.call(
-                "/auth/otp/verify",
-                "POST",
-                OtpVerifyRequest(target = otpTarget, code = cleanCode, name = name, role = role.name)
-            )
-            api.token = response.token
-            session.save(response.token)
-            profile = response.profile
-            session.saveProfile(response.profile)
-            sessionExpiredBanner = null
-            otpSent = false
-            otpPreviewCode = null
-            otpNotificationBanner = null
-            refreshAccount()
-            isGuestMode = false
-            authReasonBanner = null
-            val targetRoute = pendingPostAuthRoute ?: "Home"
-            pendingPostAuthRoute = null
-            if (targetRoute == "Checkout") {
-                loadQuote()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val response: AuthResult = api.call(
+                    "/auth/otp/verify",
+                    "POST",
+                    OtpVerifyRequest(target = otpTarget, code = cleanCode, name = name, role = role.name)
+                )
+                withContext(Dispatchers.Main) {
+                    busy = false
+                    api.token = response.token
+                    session.save(response.token)
+                    profile = response.profile
+                    session.saveProfile(response.profile)
+                    sessionExpiredBanner = null
+                    otpSent = false
+                    otpPreviewCode = null
+                    otpNotificationBanner = null
+                    refreshAccount()
+                    isGuestMode = false
+                    authReasonBanner = null
+                    val targetRoute = pendingPostAuthRoute ?: "Home"
+                    pendingPostAuthRoute = null
+                    if (targetRoute == "Checkout") {
+                        loadQuote()
+                    }
+                    route = targetRoute
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    busy = false
+                    error = e.message ?: "Invalid OTP verification code. Please try again."
+                }
             }
-            route = targetRoute
-        } catch (e: Exception) {
-            error = e.message ?: "Invalid verification code. Please try again."
         }
     }
 
@@ -1747,6 +1806,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             changeCart(lines, null)
         }
     }
+
+    fun addToCart(dish: Dish) { add(dish, emptyList(), 1) }
 
     fun add(dish: Dish, addons: List<String>, quantity: Int) {
         tryAddDish(dish, addons, quantity, redirectToCart = false)
@@ -2149,18 +2210,43 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         val checkoutObj = Checkout(selectedAddr.id, paymentMethod, checkoutKey, total)
         try {
             val confirmedOrder = backend.placeOrder(checkoutObj, cart, selectedAddr, profile?.id ?: "")
+
+            // Intelligent Nearest Rider Dynamic Assignment
+            val rest = catalog.restaurants.find { it.id == confirmedOrder.restaurantId }
+            val restLat = rest?.latitude ?: currentLatitude
+            val restLng = rest?.longitude ?: currentLongitude
+            val assignment = riderDispatchEngine.assignNearestRider(confirmedOrder, restLat, restLng)
+            val orderWithRider = confirmedOrder.copy(
+                riderId = assignment.rider.id,
+                riderName = assignment.rider.name,
+                riderPhone = assignment.rider.phone,
+                riderVehicle = "${assignment.rider.vehicleNumber} (${assignment.rider.vehicleModel})",
+                riderRating = assignment.rider.rating,
+                riderLatitude = assignment.rider.latitude,
+                riderLongitude = assignment.rider.longitude
+            )
+            activeRiderFleet = riderDispatchEngine.getFleet()
+            latestDispatchLog = assignment.dispatchLog
+
             // Real-time Cloud Firestore sync
-            cloudEngine.saveOrderToCloud(confirmedOrder)
-            orders = listOf(confirmedOrder) + orders.filterNot { it.id == confirmedOrder.id }
-            orderId = confirmedOrder.id
+            cloudEngine.saveOrderToCloud(orderWithRider)
+            cloudEngine.saveRiderLocationToCloud(
+                orderId = orderWithRider.id,
+                latitude = assignment.rider.latitude,
+                longitude = assignment.rider.longitude,
+                etaMinutes = assignment.etaMinutes
+            )
+
+            orders = listOf(orderWithRider) + orders.filterNot { it.id == orderWithRider.id }
+            orderId = orderWithRider.id
             cart = Cart()
             quote = null
             resetCheckoutKey()
             route = "Confirmation"
             notificationHelper.notifyOrderPlaced(
-                orderId = confirmedOrder.id,
-                restaurantName = confirmedOrder.restaurantName,
-                etaMinutes = 28
+                orderId = orderWithRider.id,
+                restaurantName = orderWithRider.restaurantName,
+                etaMinutes = assignment.etaMinutes
             )
         } catch (e: Exception) {
             error = e.message ?: "Failed to place order."
@@ -2232,13 +2318,51 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         changeCart(newLines, "Cart")
     }
 
-    fun track() = run {
+    fun track(targetOrderId: String? = null) = run {
+        val oId = targetOrderId?.ifBlank { null } ?: orderId.ifBlank { orders.firstOrNull()?.id ?: "" }
+        if (oId.isBlank()) return@run
+
         try {
-            val updated: DeliveryOrder = api.call("/orders/$orderId")
-            orders = orders.map { if (it.id == updated.id) updated else it }
-            cloudEngine.saveOrderToCloud(updated)
+            val trackingJson = try {
+                api.request("/orders/$oId/tracking", "GET", null)
+            } catch (_: Exception) { null }
+
+            if (trackingJson != null) {
+                val mapType = object : com.google.gson.reflect.TypeToken<Map<String, Any>>() {}.type
+                val trackingData: Map<String, Any> = api.gson.fromJson(trackingJson, mapType)
+                val status = trackingData["status"] as? String ?: "Out for delivery"
+                val eta = (trackingData["etaMinutes"] as? Number)?.toInt() ?: 15
+                val dist = (trackingData["distanceRemainingKm"] as? Number)?.toDouble() ?: 2.5
+                liveRiderEtaMins = eta
+                liveRiderDistanceKm = dist
+                liveRiderStatus = when {
+                    status == "Delivered" -> "Delivered"
+                    dist <= 0.5 -> "Ramesh is at your gate"
+                    else -> "Out for delivery"
+                }
+                orders = orders.map { if (it.id == oId) it.copy(status = status) else it }
+                orders.find { it.id == oId }?.let { cloudEngine.saveOrderToCloud(it) }
+            } else {
+                val updated: DeliveryOrder = api.call("/orders/$oId")
+                orders = orders.map { if (it.id == updated.id) updated else it }
+                cloudEngine.saveOrderToCloud(updated)
+                liveRiderEtaMins = when (updated.status) {
+                    "Confirmed" -> 30
+                    "Preparing" -> 20
+                    "Out for delivery" -> (liveRiderEtaMins - 2).coerceAtLeast(3)
+                    "Delivered" -> 0
+                    else -> 15
+                }
+                liveRiderDistanceKm = when (updated.status) {
+                    "Confirmed" -> 4.8
+                    "Preparing" -> 3.6
+                    "Out for delivery" -> (liveRiderDistanceKm - 0.4).coerceAtLeast(0.3)
+                    "Delivered" -> 0.0
+                    else -> 2.0
+                }
+            }
         } catch (_: Exception) {
-            val current = orders.find { it.id == orderId }
+            val current = orders.find { it.id == oId }
             if (current != null) {
                 val nextStatus = when (current.status) {
                     "Confirmed" -> "Preparing"
@@ -2247,8 +2371,24 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                     else -> "Delivered"
                 }
                 val updated = current.copy(status = nextStatus)
+                if (nextStatus == "Delivered" && current.riderId.isNotBlank()) {
+                    riderDispatchEngine.releaseRider(current.riderId)
+                    activeRiderFleet = riderDispatchEngine.getFleet()
+                }
                 orders = orders.map { if (it.id == updated.id) updated else it }
                 cloudEngine.saveOrderToCloud(updated)
+                liveRiderEtaMins = when (nextStatus) {
+                    "Preparing" -> 22
+                    "Out for delivery" -> 11
+                    "Delivered" -> 0
+                    else -> (liveRiderEtaMins - 3).coerceAtLeast(1)
+                }
+                liveRiderDistanceKm = when (nextStatus) {
+                    "Preparing" -> 4.2
+                    "Out for delivery" -> 1.8
+                    "Delivered" -> 0.0
+                    else -> (liveRiderDistanceKm - 0.6).coerceAtLeast(0.2)
+                }
             }
         }
     }
@@ -2279,6 +2419,168 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             favorites = api.call("/favorites/$id", "PUT", mapOf("selected" to !favorites.contains(id)))
         } catch (_: Exception) {
             favorites = if (favorites.contains(id)) favorites - id else favorites + id
+        }
+    }
+
+    fun selectLanguage(langCode: String) {
+        RestroI18n.setLanguage(langCode)
+        hasSelectedLanguage = true
+        getApplication<Application>().getSharedPreferences("restro-lang", android.content.Context.MODE_PRIVATE)
+            .edit().putString("code", langCode).commit()
+        profile?.let {
+            val updated = it.copy(preferredLanguage = langCode)
+            profile = updated
+            session.saveProfile(updated)
+            cloudEngine.saveUserToCloud(updated)
+        }
+        if (!hasCompletedTour()) {
+            startAppTour()
+        }
+    }
+
+    fun hasCompletedTour(): Boolean {
+        return profile?.hasCompletedTour == true || getApplication<Application>().getSharedPreferences("restro-tour", android.content.Context.MODE_PRIVATE).getBoolean("completed", false)
+    }
+
+    fun startAppTour() {
+        currentTourStep = 0
+        isTourActive = true
+    }
+
+    fun nextTourStep() {
+        if (currentTourStep < RestroTourCatalog.steps.size - 1) {
+            currentTourStep++
+            val target = RestroTourCatalog.steps[currentTourStep].targetTab
+            if (target in listOf("Home", "Cart", "Addresses", "DineIn", "Orders", "Profile", "Checkout")) {
+                route = target
+            }
+        } else {
+            finishAppTour()
+        }
+    }
+
+    fun prevTourStep() {
+        if (currentTourStep > 0) {
+            currentTourStep--
+            val target = RestroTourCatalog.steps[currentTourStep].targetTab
+            if (target in listOf("Home", "Cart", "Addresses", "DineIn", "Orders", "Profile", "Checkout")) {
+                route = target
+            }
+        }
+    }
+
+    fun finishAppTour() {
+        isTourActive = false
+        getApplication<Application>().getSharedPreferences("restro-tour", android.content.Context.MODE_PRIVATE).edit().putBoolean("completed", true).commit()
+        profile?.let {
+            val updated = it.copy(hasCompletedTour = true)
+            profile = updated
+            session.saveProfile(updated)
+            cloudEngine.saveUserToCloud(updated)
+        }
+        route = "Home"
+    }
+
+    fun sendRestroAiMessage(message: String, onReplyReceived: () -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val reqBody = mapOf(
+                    "message" to message,
+                    "context" to mapOf(
+                        "restaurantId" to restaurantId,
+                        "preferredLanguage" to RestroI18n.currentLanguage
+                    )
+                )
+                val resp: Map<String, Any> = api.call("/ai/chat", "POST", reqBody)
+                val replyText = resp["reply"]?.toString() ?: "I found some delicious options for you!"
+                val rawActions = resp["actions"] as? List<*> ?: emptyList<Any>()
+                val rawSuggestions = resp["suggestions"] as? List<*> ?: emptyList<Any>()
+
+                val parsedActions = rawActions.mapNotNull { item ->
+                    (item as? Map<*, *>)?.let { map ->
+                        RestroAiAction(
+                            type = map["type"]?.toString() ?: "ADD_TO_CART",
+                            dishId = map["dishId"]?.toString() ?: "",
+                            dishName = map["dishName"]?.toString() ?: "",
+                            price = (map["price"] as? Number)?.toDouble() ?: 0.0
+                        )
+                    }
+                }
+
+                val parsedSuggestions = rawSuggestions.mapNotNull { it?.toString() }
+
+                withContext(Dispatchers.Main) {
+                    aiChatHistory.add(
+                        RestroAiMessage(
+                            isUser = false,
+                            text = replyText,
+                            actions = parsedActions,
+                            suggestions = parsedSuggestions
+                        )
+                    )
+                    voiceManager.speak(replyText)
+                    onReplyReceived()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    val fallbackReply = when (RestroI18n.currentLanguage) {
+                        "hi" -> "माफ़ कीजिए, अभी नेटवर्क समस्या के कारण सुझाव प्राप्त नहीं हो सके। कृपया मेनू ब्राउज़ करें।"
+                        "mr" -> "क्षमस्व, नेटवर्क समस्येमुळे शिफारसी लोड झाल्या नाहीत. कृपया मेनू तपासा."
+                        else -> "Sorry, I had trouble reaching the AI service. Feel free to browse our fresh menu directly!"
+                    }
+                    aiChatHistory.add(RestroAiMessage(isUser = false, text = fallbackReply))
+                    onReplyReceived()
+                }
+            }
+        }
+    }
+
+    fun handleVoiceResult(speechText: String) {
+        isVoiceListening = false
+        val clean = speechText.trim()
+        if (clean.isBlank()) return
+
+        val lower = clean.lowercase()
+        when {
+            lower.contains("cart") || lower.contains("कार्ट") -> {
+                route = "Cart"
+                voiceManager.speak(when (RestroI18n.currentLanguage) {
+                    "hi" -> "आपकी कार्ट खोल दी गई है"
+                    "mr" -> "तुमची कार्ट उघडली आहे"
+                    else -> "Opening your cart"
+                })
+            }
+            lower.contains("dine in") || lower.contains("डाइन") || lower.contains("डायन") || lower.contains("table") -> {
+                route = "DineIn"
+                voiceManager.speak(when (RestroI18n.currentLanguage) {
+                    "hi" -> "डाइन इन टेबल बुकिंग पेज खोला गया"
+                    "mr" -> "डायन-इन टेबल बुकिंग पेज उघडले आहे"
+                    else -> "Opening table booking"
+                })
+            }
+            lower.contains("order") || lower.contains("ऑर्डर") -> {
+                route = "Orders"
+                voiceManager.speak(when (RestroI18n.currentLanguage) {
+                    "hi" -> "आपके ऑर्डर्स खोले जा रहे हैं"
+                    "mr" -> "तुमचे ऑर्डर्स उघडले जात आहेत"
+                    else -> "Opening your orders"
+                })
+            }
+            lower.contains("profile") || lower.contains("प्रोफाइल") || lower.contains("account") -> {
+                route = "Profile"
+            }
+            lower.contains("ai") || lower.contains("assistant") || lower.contains("सहायक") -> {
+                showRestroAiSheet = true
+            }
+            else -> {
+                query = clean
+                route = "Home"
+                voiceManager.speak(when (RestroI18n.currentLanguage) {
+                    "hi" -> clean + " के परिणाम दिखाए जा रहे हैं"
+                    "mr" -> clean + " चे परिणाम दाखवले जात आहेत"
+                    else -> "Showing results for " + clean
+                })
+            }
         }
     }
 

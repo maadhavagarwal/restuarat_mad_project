@@ -676,7 +676,9 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
             Pair(Profile("staff-waiter-1", "Rohan Verma (Waiter)", "waiter@restro.app", "+91 90000 11111", role = UserRole.WAITER), "Waiter@123"),
             Pair(Profile("staff-chef-1", "Chef Marco (Kitchen)", "chef@restro.app", "+91 90000 22222", role = UserRole.CHEF_KDS), "Chef@123"),
             Pair(Profile("staff-admin-1", "Ananya Rao (Manager)", "admin@restro.app", "+91 90000 99999", role = UserRole.ADMIN), "Admin@123"),
-            Pair(Profile("staff-master-1", "Master Administrator", "master@restro.app", "+91 90000 00000", role = UserRole.MASTER_ADMIN), "Master@123")
+            Pair(Profile("staff-master-1", "Master Administrator", "master@restro.app", "+91 90000 00000", role = UserRole.MASTER_ADMIN), "Master@123"),
+            Pair(Profile("staff-rider-1", "Ramesh Rider (Delivery Partner)", "rider@restro.app", "+91 98765 12345", role = UserRole.CUSTOMER), "Rider@123"),
+            Pair(Profile("staff-kiosk-1", "Self-Order Kiosk Terminal", "kiosk@restro.app", "+91 90000 77777", role = UserRole.CUSTOMER), "Kiosk@123")
         )
         defaultStaff.forEach { (staff, defaultPass) ->
             if (getUserByTarget(staff.email) == null) {
@@ -1617,6 +1619,7 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
         partySize: Int,
         seatingArea: String,
         specialRequests: String = "",
+        requestedTableNumber: String = "",
         inventory: List<RestaurantTable> = RestaurantTableDefaults.DEFAULT_TABLES
     ): TableAllocationResult {
         val db = writableDatabase
@@ -1643,21 +1646,51 @@ class RestroSqlDatabase(context: Context) : SQLiteOpenHelper(context, DATABASE_N
                     inventory
                 }
 
-                // Run allocation rules with restaurant-specific inventory
-                val allocation = TableAllocationEngine.allocateTable(
-                    restaurantId = restaurantId,
-                    restaurantName = restaurantName,
-                    userId = userId,
-                    userName = userName,
-                    userPhone = userPhone,
-                    bookingDate = bookingDate,
-                    timeSlot = timeSlot,
-                    partySize = partySize,
-                    seatingArea = seatingArea,
-                    specialRequests = specialRequests,
-                    existingBookings = existingBookings,
-                    inventory = effectiveInventory
-                )
+                // If user selected a specific table, allocate it directly if available
+                val requestedTable = if (requestedTableNumber.isNotBlank()) {
+                    effectiveInventory.find { it.tableNumber.equals(requestedTableNumber.trim(), ignoreCase = true) }
+                } else null
+
+                val isRequestedBooked = requestedTable != null && existingBookings.any {
+                    it.tableNumber.equals(requestedTable.tableNumber, ignoreCase = true) &&
+                    (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
+                }
+
+                val allocation = if (requestedTable != null && !isRequestedBooked) {
+                    val bookingId = "TB-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
+                    val confirmedBooking = TableBooking(
+                        id = bookingId,
+                        userId = userId,
+                        userName = userName,
+                        userPhone = userPhone,
+                        tableId = requestedTable.tableNumber,
+                        tableNumber = requestedTable.tableNumber,
+                        bookingDate = bookingDate,
+                        timeSlot = timeSlot,
+                        partySize = partySize,
+                        seatingArea = seatingArea,
+                        specialRequests = specialRequests,
+                        status = TableBookingStatus.CONFIRMED,
+                        restaurantId = restaurantId,
+                        restaurantName = restaurantName
+                    )
+                    TableAllocationResult.Success(confirmedBooking, requestedTable)
+                } else {
+                    TableAllocationEngine.allocateTable(
+                        restaurantId = restaurantId,
+                        restaurantName = restaurantName,
+                        userId = userId,
+                        userName = userName,
+                        userPhone = userPhone,
+                        bookingDate = bookingDate,
+                        timeSlot = timeSlot,
+                        partySize = partySize,
+                        seatingArea = seatingArea,
+                        specialRequests = specialRequests,
+                        existingBookings = existingBookings,
+                        inventory = effectiveInventory
+                    )
+                }
 
                 if (allocation is TableAllocationResult.Failure) {
                     return allocation

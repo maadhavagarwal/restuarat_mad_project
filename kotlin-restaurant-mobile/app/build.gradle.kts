@@ -31,7 +31,7 @@ android {
         buildConfigField("String", "API_URL", "\"" + (providers.gradleProperty("restroApiUrl").orNull ?: "https://localhost/api/delivery") + "\"" )
         val rawMapsKey = providers.gradleProperty("MAPS_API_KEY").orNull ?: restroLocalProperties.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
         val mapsKey = if (rawMapsKey.startsWith("AIza")) rawMapsKey else "AIzaSyC51qVAdTuym7zIMscR9qROaDd7OxeIfV4"
-        val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: ""
+        val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: "rzp_test_RestroDeliveryLive"
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
         buildConfigField("String", "RAZORPAY_KEY_ID", "\"$rzpKey\"")
         // Firebase is only treated as configured when google-services.json exists and does not

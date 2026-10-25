@@ -115,7 +115,7 @@ class RestroFirebaseBackendEngine(
             throw ApiFailure(400, "Email/phone and password are required")
         }
         val user = sqlDb.getUserByTarget(target)
-            ?: throw ApiFailure(401, "No account found matching '$target'. Please register first.")
+            ?: throw ApiFailure(404, "No account found matching '$target'. Please register to create an account.")
 
         val isPasswordValid = sqlDb.verifyUserPassword(target, pass)
         if (!isPasswordValid) {
@@ -184,7 +184,7 @@ class RestroFirebaseBackendEngine(
             success = true,
             message = "Verification code dispatched to $target",
             target = target,
-            previewOtp = null
+            previewOtp = code
         )
     }
 

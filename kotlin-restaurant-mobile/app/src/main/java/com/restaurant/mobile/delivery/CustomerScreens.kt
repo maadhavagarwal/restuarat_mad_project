@@ -278,14 +278,18 @@ fun CartScreen(vm: DeliveryViewModel) {
                         }
                     }
                 }
-                TextButton(
+                OutlinedButton(
                     onClick = {
                         couponInput = ""
-                        vm.applyCoupon("")
+                        vm.removeCoupon()
                     },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                 ) {
-                    Text("Remove", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Remove", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -493,6 +497,54 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
 
         HorizontalDivider(color = RestroTokens.border)
 
+        // Applied Coupon Summary & Remove in Checkout
+        if (vm.cart.coupon.isNotBlank()) {
+            val q = vm.quote ?: vm.computeQuote()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(RestroTokens.coral.copy(alpha = 0.12f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                    Column {
+                        Text(
+                            "Coupon '${vm.cart.coupon}' applied",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = RestroTokens.coral
+                        )
+                        if (q.discount > 0L) {
+                            Text(
+                                "Saved ${money(q.discount)} on this order",
+                                fontSize = 11.sp,
+                                color = RestroTokens.muted
+                            )
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        vm.removeCoupon()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Remove", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+
         val effectiveQuote = vm.quote ?: vm.computeQuote()
         val quoteTotal = effectiveQuote.total
         BillRow("Grand Total", quoteTotal)
@@ -673,7 +725,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                     Spacer(Modifier.height(4.dp))
                     Action("Track Live Order on Map") {
                         vm.route = "Tracking"
-                        vm.track()
+                        vm.track(vm.orderId)
                     }
                     TextButton(onClick = { vm.route = "Home" }) {
                         Text("Continue Discovering Dishes")
@@ -714,6 +766,68 @@ fun OrdersScreen(vm: DeliveryViewModel) {
             } else {
                 Page {
                     Heading("Live Order Tracking", "Order #${activeOrder.id} · ${activeOrder.restaurantName}")
+
+                    // Live Refreshed ETA Header Card
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(CircleShape)
+                                        .background(RestroTokens.coral.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        if (activeOrder.status == "Delivered") Icons.Default.CheckCircle else Icons.Default.Timer,
+                                        null,
+                                        tint = if (activeOrder.status == "Delivered") RestroTokens.green else RestroTokens.coral,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = if (activeOrder.status == "Delivered") "Order Status" else "Estimated Delivery Time (ETA)",
+                                        fontSize = 11.sp,
+                                        color = RestroTokens.muted
+                                    )
+                                    Text(
+                                        text = if (activeOrder.status == "Delivered") "Delivered at Doorstep" else "${vm.liveRiderEtaMins} mins (${String.format(java.util.Locale.US, "%.1f km away", vm.liveRiderDistanceKm)})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = if (activeOrder.status == "Delivered") RestroTokens.green else RestroTokens.text
+                                    )
+                                }
+                            }
+                            FilledTonalButton(
+                                onClick = {
+                                    vm.track(activeOrder.id)
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "ETA Refreshed: ${vm.liveRiderEtaMins} mins",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Icon(Icons.Default.Refresh, null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Refresh", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
 
                     // Proximity Alert Banner (Triggers when rider is under 500m or at gate)
                     if (activeOrder.status != "Delivered" && (vm.liveRiderDistanceKm <= 0.5 || vm.liveRiderStatus.contains("gate"))) {
@@ -1047,7 +1161,14 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                     // Action Controls
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            onClick = { vm.track() },
+                            onClick = {
+                                vm.track(activeOrder.id)
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "ETA refreshed: ${vm.liveRiderEtaMins} mins remaining",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            },
                             enabled = !vm.busy,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(14.dp)
@@ -1800,6 +1921,106 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                                 Text("Sleek & Deep", fontSize = 10.sp, color = RestroTokens.muted)
                             }
                         }
+                    }
+                }
+
+                HorizontalDivider(color = RestroTokens.border)
+
+                // App Language Selector
+                Surface(
+                    onClick = { vm.showLanguageSelector = true },
+                    shape = RoundedCornerShape(14.dp),
+                    color = RestroTokens.surfaceElevated,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Translate,
+                                contentDescription = "Language",
+                                tint = RestroTokens.coral,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    "App Language / भाषा",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = RestroTokens.text
+                                )
+                                Text(
+                                    "${RestroI18n.currentLanguage.uppercase()} · ${AppLanguage.fromCode(RestroI18n.currentLanguage).nativeName}",
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.coral,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                        Icon(
+                            Icons.Default.ChevronRight,
+                            contentDescription = "Select language",
+                            tint = RestroTokens.muted,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // Guided App Tour Replay
+                Surface(
+                    onClick = {
+                        vm.route = "Home"
+                        vm.startAppTour()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    color = RestroTokens.surfaceElevated,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Explore,
+                                contentDescription = "Tour",
+                                tint = RestroTokens.coral,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    "Personalized App Tour",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = RestroTokens.text
+                                )
+                                Text(
+                                    "14-step guided feature walkthrough",
+                                    fontSize = 11.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                        }
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = "Start tour",
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }

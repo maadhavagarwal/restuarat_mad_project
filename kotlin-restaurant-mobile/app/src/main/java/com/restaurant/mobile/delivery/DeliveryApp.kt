@@ -105,6 +105,12 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                         }
                     }
                 }
+            else if (!vm.hasSelectedLanguage)
+                LanguageSelectionScreen(
+                    onLanguageSelected = { lang ->
+                        vm.selectLanguage(lang)
+                    }
+                )
             else
                 Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                     Column(Modifier.fillMaxSize().capture(backdrop)) {
@@ -413,6 +419,47 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                         )
                     }
 
+                    if (vm.showRestroAiSheet) {
+                        RestroAiBottomSheet(
+                            vm = vm,
+                            onDismiss = { vm.showRestroAiSheet = false }
+                        )
+                    }
+
+                    if (vm.isVoiceListening) {
+                        VoiceListeningDialog(
+                            language = RestroI18n.currentLanguage,
+                            onDismiss = { vm.isVoiceListening = false },
+                            onSimulateVoiceResult = { spokenText ->
+                                vm.handleVoiceResult(spokenText)
+                            }
+                        )
+                    }
+
+                    if (vm.isTourActive) {
+                        InteractiveAppTourOverlay(
+                            currentStepIndex = vm.currentTourStep,
+                            onNext = vm::nextTourStep,
+                            onBack = vm::prevTourStep,
+                            onSkip = vm::finishAppTour,
+                            onFinish = vm::finishAppTour
+                        )
+                    }
+
+                    if (vm.showLanguageSelector) {
+                        androidx.compose.ui.window.Dialog(
+                            onDismissRequest = { vm.showLanguageSelector = false },
+                            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+                        ) {
+                            LanguageSelectionScreen(
+                                onLanguageSelected = {
+                                    vm.selectLanguage(it)
+                                    vm.showLanguageSelector = false
+                                }
+                            )
+                        }
+                    }
+
                     if (vm.profile != null || vm.isGuestMode)
                         Glass(
                             Modifier.align(Alignment.BottomCenter)
@@ -427,11 +474,11 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                             ) {
                                 listOf(
-                                        Triple("Home", "Delivery", Icons.Default.DeliveryDining),
-                                        Triple("DineIn", "Dine-In", Icons.Default.TableBar),
-                                        Triple("Orders", "Orders", Icons.Default.ReceiptLong),
-                                        Triple("Bookings", "Bookings", Icons.Default.EventSeat),
-                                        Triple("Profile", "Profile", Icons.Default.PersonOutline),
+                                        Triple("Home", RestroI18n.t("tab_delivery"), Icons.Default.DeliveryDining),
+                                        Triple("DineIn", RestroI18n.t("tab_dine_in"), Icons.Default.TableBar),
+                                        Triple("Orders", RestroI18n.t("tab_orders"), Icons.Default.ReceiptLong),
+                                        Triple("Bookings", RestroI18n.t("tab_bookings"), Icons.Default.EventSeat),
+                                        Triple("Profile", RestroI18n.t("tab_profile"), Icons.Default.PersonOutline),
                                     )
                                     .forEach { (route, label, icon) ->
                                         val isSelected = when (route) {

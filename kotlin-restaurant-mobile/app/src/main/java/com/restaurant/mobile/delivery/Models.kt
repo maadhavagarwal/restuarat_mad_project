@@ -105,6 +105,8 @@ data class Profile(
     val reducedGlass: Boolean = false,
     val isDarkMode: Boolean = true,
     val role: UserRole = UserRole.CUSTOMER,
+    val preferredLanguage: String = "en",
+    val hasCompletedTour: Boolean = false
 )
 
 data class Address(
@@ -147,6 +149,30 @@ data class Quote(
 
 data class Event(val status: String, val at: String = Instant.now().toString())
 
+data class Rider(
+    val id: String = "",
+    val name: String = "",
+    val phone: String = "",
+    val vehicleNumber: String = "",
+    val vehicleModel: String = "Hero Splendor Electric",
+    val rating: Double = 4.8,
+    val totalDeliveries: Int = 300,
+    val latitude: Double = 19.1672,
+    val longitude: Double = 72.8518,
+    val isAvailable: Boolean = true,
+    val activeOrderId: String? = null,
+    val batteryPercent: Int = 90,
+    val lastUpdated: Long = System.currentTimeMillis()
+)
+
+data class RiderAssignmentResult(
+    val rider: Rider,
+    val distanceKm: Double,
+    val etaMinutes: Int,
+    val candidateCount: Int,
+    val dispatchLog: String
+)
+
 data class DeliveryOrder(
     val id: String,
     val restaurantId: String,
@@ -160,6 +186,13 @@ data class DeliveryOrder(
     /** Owner of the order (authenticated user id). Empty only for legacy rows created before v10.1. */
     val userId: String = "",
     val idempotencyKey: String? = null,
+    val riderId: String = "",
+    val riderName: String = "",
+    val riderPhone: String = "",
+    val riderVehicle: String = "",
+    val riderRating: Double = 4.8,
+    val riderLatitude: Double = 0.0,
+    val riderLongitude: Double = 0.0,
 )
 
 /** Payment status values. Only a provider-verified payment may ever be [PAID_VERIFIED]. */

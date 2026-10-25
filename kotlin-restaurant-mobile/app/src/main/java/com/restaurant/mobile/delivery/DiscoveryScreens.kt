@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -327,6 +328,45 @@ fun AuthScreen(vm: DeliveryViewModel) {
                             }
                         }
 
+                        vm.otpPreviewCode?.let { code ->
+                            Surface(
+                                color = RestroTokens.green.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, RestroTokens.green.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Security Verification Code",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = RestroTokens.green
+                                        )
+                                        Text(
+                                            code,
+                                            fontSize = 22.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            letterSpacing = 4.sp,
+                                            color = RestroTokens.text
+                                        )
+                                    }
+                                    Button(
+                                        onClick = { otpCode = code },
+                                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.green),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Auto-Fill", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                }
+                            }
+                        }
+
                         OutlinedTextField(
                             value = otpCode,
                             onValueChange = { if (it.length <= 6) otpCode = it.filter { ch -> ch.isDigit() } },
@@ -560,31 +600,39 @@ fun Discovery(vm: DeliveryViewModel) {
     val restaurant = vm.catalog.restaurants.find { it.id == vm.restaurantId }
     val detail = vm.route == "Restaurant"
 
-    // Search query matching: searches dishes across name, description, and category
+    // Search query & category matching: searches dishes across name, description, and category
     val matchingDishes = remember(vm.query, vm.vegetarian, vm.category, vm.sortPrice, vm.catalog.dishes, detail, vm.restaurantId) {
-        if (vm.query.isBlank() && !detail) emptyList()
+        if (vm.query.isBlank() && vm.category.isBlank() && !detail) emptyList()
         else {
             vm.catalog.dishes.filter { d ->
                 (!detail || d.restaurantId == vm.restaurantId) &&
                 (!vm.vegetarian || d.vegetarian) &&
-                (vm.category.isBlank() || d.category == vm.category) &&
-                (vm.query.isBlank() ||
-                    d.name.contains(vm.query, ignoreCase = true) ||
-                    d.description.contains(vm.query, ignoreCase = true) ||
-                    d.category.contains(vm.query, ignoreCase = true))
+                (vm.category.isBlank() || d.category.equals(vm.category, ignoreCase = true)) &&
+                (vm.query.isBlank() || RestroMultilingualSearch.matchesDish(d, vm.query))
             }.let { if (vm.sortPrice) it.sortedBy { d -> d.price } else it }
         }
     }
 
-    val nearestRestaurants = remember(vm.route, vm.favorites, vm.query, vm.currentLatitude, vm.currentLongitude, vm.catalog) {
-        vm.getNearestRestaurants().filter {
-            (vm.route != "Favorites" || it.id in vm.favorites) &&
-            (vm.query.isBlank() ||
-                it.name.contains(vm.query, ignoreCase = true) ||
-                it.cuisine.contains(vm.query, ignoreCase = true) ||
+    val nearestRestaurants = remember(vm.route, vm.favorites, vm.query, vm.vegetarian, vm.category, vm.sortPrice, vm.currentLatitude, vm.currentLongitude, vm.catalog) {
+        vm.getNearestRestaurants().filter { rest ->
+            val matchesRoute = (vm.route != "Favorites" || rest.id in vm.favorites)
+            val matchesVeg = !vm.vegetarian || vm.catalog.dishes.any { d -> d.restaurantId == rest.id && d.vegetarian }
+            val matchesCategory = vm.category.isBlank() ||
+                rest.cuisine.contains(vm.category, ignoreCase = true) ||
+                vm.catalog.dishes.any { d -> d.restaurantId == rest.id && d.category.equals(vm.category, ignoreCase = true) }
+            val matchesQuery = vm.query.isBlank() ||
+                RestroMultilingualSearch.matchesRestaurant(rest, vm.query) ||
                 vm.catalog.dishes.any { d ->
-                    d.restaurantId == it.id && (d.name.contains(vm.query, ignoreCase = true) || d.category.contains(vm.query, ignoreCase = true))
-                })
+                    d.restaurantId == rest.id && RestroMultilingualSearch.matchesDish(d, vm.query)
+                }
+            matchesRoute && matchesVeg && matchesCategory && matchesQuery
+        }.let { list ->
+            if (vm.sortPrice) {
+                list.sortedBy { rest ->
+                    val dishes = vm.catalog.dishes.filter { it.restaurantId == rest.id }
+                    if (dishes.isEmpty()) 999999L else dishes.minOf { it.price }
+                }
+            } else list
         }
     }
 
@@ -671,18 +719,23 @@ fun Discovery(vm: DeliveryViewModel) {
                 }
             }
 
-            // Fixed Permanent Search Bar (Always stays mounted, never loses focus on keystroke!)
+            // Fixed Permanent Search Bar with Multilingual Voice Input
             OutlinedTextField(
                 value = vm.query,
                 onValueChange = { vm.query = it },
                 placeholder = {
-                    Text(if (detail) "Search this menu (e.g. Biryani, Burger)..." else "Restaurants, dishes, cravings...")
+                    Text(if (detail) "Search this menu (e.g. Biryani, Burger)..." else RestroI18n.t("search_placeholder"))
                 },
                 leadingIcon = { Icon(Icons.Default.Search, null, tint = RestroTokens.coral) },
                 trailingIcon = {
-                    if (vm.query.isNotEmpty()) {
-                        IconButton(onClick = { vm.query = "" }) {
-                            Icon(Icons.Default.Close, "Clear search", tint = RestroTokens.muted)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (vm.query.isNotEmpty()) {
+                            IconButton(onClick = { vm.query = "" }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Close, "Clear search", tint = RestroTokens.muted, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        IconButton(onClick = { vm.isVoiceListening = true }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.Mic, RestroI18n.t("voice_search_tooltip"), tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
                         }
                     }
                 },
@@ -697,6 +750,53 @@ fun Discovery(vm: DeliveryViewModel) {
                 )
             )
 
+            // Restro.AI Assistant Quick Access Pill
+            Surface(
+                onClick = { vm.showRestroAiSheet = true },
+                shape = RoundedCornerShape(12.dp),
+                color = RestroTokens.coral.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            "Restro.AI",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = RestroTokens.coral
+                        )
+                        Text(
+                            "· " + RestroI18n.t("ai_assistant_tagline"),
+                            fontSize = 11.sp,
+                            color = RestroTokens.muted,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = RestroTokens.coral,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+
             // Category & Preference Filter Chips
             val availableCategories = if (detail) {
                 vm.catalog.dishes.filter { it.restaurantId == vm.restaurantId }.map { it.category }.distinct()
@@ -704,18 +804,36 @@ fun Discovery(vm: DeliveryViewModel) {
                 vm.catalog.dishes.map { it.category }.distinct()
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (vm.vegetarian || vm.sortPrice || vm.category.isNotEmpty() || vm.query.isNotEmpty()) {
+                    item {
+                        FilterChip(
+                            selected = true,
+                            onClick = {
+                                vm.query = ""
+                                vm.category = ""
+                                vm.vegetarian = false
+                                vm.sortPrice = false
+                            },
+                            label = { Text(RestroI18n.t("filter_clear_all"), fontWeight = FontWeight.Bold) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = RestroTokens.coral.copy(alpha = 0.2f),
+                                selectedLabelColor = RestroTokens.coral
+                            )
+                        )
+                    }
+                }
                 item {
                     FilterChip(
                         selected = vm.vegetarian,
                         onClick = { vm.vegetarian = !vm.vegetarian },
-                        label = { Text("Veg Only 🌱") },
+                        label = { Text(RestroI18n.t("filter_veg_only")) },
                     )
                 }
                 item {
                     FilterChip(
                         selected = vm.sortPrice,
                         onClick = { vm.sortPrice = !vm.sortPrice },
-                        label = { Text("Price: Low ↗") },
+                        label = { Text(RestroI18n.t("filter_price_low_high")) },
                     )
                 }
                 item {
@@ -908,11 +1026,31 @@ fun Discovery(vm: DeliveryViewModel) {
 
                     if (nearestRestaurants.isEmpty()) {
                         item(key = "empty-restaurants") {
-                            Text(
-                                if (vm.route == "Favorites") "Save a restaurant using its heart button to find it here."
-                                else "No restaurants found nearby.",
-                                color = RestroTokens.muted
-                            )
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(Icons.Default.FilterAltOff, null, tint = RestroTokens.muted, modifier = Modifier.size(44.dp))
+                                Text(
+                                    if (vm.route == "Favorites") "Save a restaurant using its heart button to find it here."
+                                    else "No restaurants match the selected filters.",
+                                    color = RestroTokens.muted,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Button(
+                                    onClick = {
+                                        vm.query = ""
+                                        vm.category = ""
+                                        vm.vegetarian = false
+                                        vm.sortPrice = false
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surface),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Clear All Filters", color = RestroTokens.coral)
+                                }
+                            }
                         }
                     }
                 } else {

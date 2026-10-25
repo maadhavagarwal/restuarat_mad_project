@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -82,6 +83,7 @@ data class TableBookingDraft(
     val timeSlot: String = "",
     val partySize: Int = TableBookingDefaults.DEFAULT_PARTY_SIZE,
     val seatingArea: String = TableBookingDefaults.DEFAULT_SEATING_AREA,
+    val tableNumber: String = "",
     val specialRequests: String = "",
 ) {
     val isValid: Boolean
@@ -89,7 +91,8 @@ data class TableBookingDraft(
                 isValidDateFormat(bookingDate) &&
                 timeSlot.isNotBlank() &&
                 partySize in TableBookingDefaults.MIN_PARTY_SIZE..TableBookingDefaults.MAX_PARTY_SIZE &&
-                seatingArea.isNotBlank()
+                seatingArea.isNotBlank() &&
+                tableNumber.isNotBlank()
 
     companion object {
         fun isValidDateFormat(dateStr: String, today: LocalDate = LocalDate.now()): Boolean {
@@ -115,6 +118,7 @@ fun computeBookingValidationError(draft: TableBookingDraft): String? {
         draft.partySize < TableBookingDefaults.MIN_PARTY_SIZE -> "Party size must be at least 1 guest"
         draft.partySize > TableBookingDefaults.MAX_PARTY_SIZE -> "Party size cannot exceed 20 guests"
         draft.seatingArea.isBlank() -> "Please select a seating area preference"
+        draft.tableNumber.isBlank() -> "Please select an available table"
         else -> null
     }
 }
@@ -257,7 +261,19 @@ fun BookTableContent(
                 selectedArea = draft.seatingArea,
                 onSelectArea = { area ->
                     validationError = null
-                    onDraftChange(draft.copy(seatingArea = area))
+                    onDraftChange(draft.copy(seatingArea = area, tableNumber = ""))
+                }
+            )
+
+            // E2. Available Table Selection
+            BookingTableSelector(
+                restaurantId = draft.restaurantId,
+                seatingArea = draft.seatingArea,
+                partySize = draft.partySize,
+                selectedTable = draft.tableNumber,
+                onSelectTable = { tableNum ->
+                    validationError = null
+                    onDraftChange(draft.copy(tableNumber = tableNum))
                 }
             )
 
@@ -893,6 +909,88 @@ private fun BookingSeatingPreferenceSelector(
 }
 
 @Composable
+fun BookingTableSelector(
+    restaurantId: String,
+    seatingArea: String,
+    partySize: Int,
+    selectedTable: String,
+    onSelectTable: (String) -> Unit
+) {
+    val allTables = remember(restaurantId) {
+        if (restaurantId.isNotBlank()) RestaurantTableDefaults.getTablesForRestaurant(restaurantId)
+        else RestaurantTableDefaults.DEFAULT_TABLES
+    }
+    val areaTables = remember(allTables, seatingArea) {
+        val filtered = allTables.filter { it.seatingArea.equals(seatingArea, ignoreCase = true) }
+        if (filtered.isNotEmpty()) filtered else allTables
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.TableBar, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
+            Text("Select Available Table", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = RestroTokens.text)
+        }
+        Text(
+            "Tables configured for $seatingArea · Tap an available table to assign",
+            fontSize = 12.sp,
+            color = RestroTokens.muted
+        )
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(areaTables) { tbl ->
+                val isSelected = tbl.tableNumber.equals(selectedTable, ignoreCase = true)
+                Surface(
+                    onClick = {
+                        onSelectTable(tbl.tableNumber)
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else RestroTokens.surface,
+                    border = BorderStroke(1.5.dp, if (isSelected) RestroTokens.coral else Color.White.copy(alpha = 0.1f)),
+                    modifier = Modifier.width(110.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(if (isSelected) RestroTokens.coral else Color.White.copy(alpha = 0.08f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                tbl.tableNumber,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = if (isSelected) RestroTokens.canvas else RestroTokens.text
+                            )
+                        }
+                        Text("${tbl.capacity} Seats", fontSize = 11.sp, color = RestroTokens.muted)
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (isSelected) RestroTokens.coral.copy(alpha = 0.2f) else RestroTokens.green.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                if (isSelected) "SELECTED" else "AVAILABLE",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) RestroTokens.coral else RestroTokens.green,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun BookingSpecialRequestsField(
     specialRequests: String,
     onSpecialRequestsChange: (String) -> Unit
@@ -1037,6 +1135,12 @@ private fun LiveBookingSummaryCard(
             SummaryRow(
                 label = "Seating Area",
                 value = draft.seatingArea
+            )
+
+            SummaryRow(
+                label = "Table",
+                value = if (draft.tableNumber.isNotBlank()) "Table ${draft.tableNumber}" else "Table not selected",
+                isPlaceholder = draft.tableNumber.isBlank()
             )
 
             if (draft.specialRequests.isNotBlank()) {
@@ -1323,6 +1427,12 @@ fun TableBookingReviewContent(
                         icon = Icons.Default.Chair,
                         label = "Seating Area",
                         value = draft.seatingArea
+                    )
+
+                    ReviewDetailRow(
+                        icon = Icons.Default.TableBar,
+                        label = "Selected Table",
+                        value = if (draft.tableNumber.isNotBlank()) "Table ${draft.tableNumber}" else "Optimal Table Assignment"
                     )
 
                     ReviewDetailRow(

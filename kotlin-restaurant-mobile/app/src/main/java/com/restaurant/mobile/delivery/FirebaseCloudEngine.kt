@@ -39,6 +39,7 @@ class FirebaseCloudEngine(
     private var addressesListenerReg: ListenerRegistration? = null
     private var catalogListenerReg: ListenerRegistration? = null
     private var riderLocationListenerReg: ListenerRegistration? = null
+    private var ridersListenerReg: ListenerRegistration? = null
 
     init {
         try {
@@ -87,6 +88,13 @@ class FirebaseCloudEngine(
                 "paymentMethod" to order.paymentMethod,
                 "paymentStatus" to order.paymentStatus,
                 "status" to order.status,
+                "riderId" to order.riderId,
+                "riderName" to order.riderName,
+                "riderPhone" to order.riderPhone,
+                "riderVehicle" to order.riderVehicle,
+                "riderRating" to order.riderRating,
+                "riderLatitude" to order.riderLatitude,
+                "riderLongitude" to order.riderLongitude,
                 "events" to gson.toJson(order.events),
                 "updatedAt" to System.currentTimeMillis()
             )
@@ -173,7 +181,14 @@ class FirebaseCloudEngine(
                                 paymentMethod = paymentMethod,
                                 paymentStatus = paymentStatus,
                                 status = status,
-                                events = events
+                                events = events,
+                                riderId = doc.getString("riderId") ?: "",
+                                riderName = doc.getString("riderName") ?: "",
+                                riderPhone = doc.getString("riderPhone") ?: "",
+                                riderVehicle = doc.getString("riderVehicle") ?: "",
+                                riderRating = doc.getDouble("riderRating") ?: 4.8,
+                                riderLatitude = doc.getDouble("riderLatitude") ?: 0.0,
+                                riderLongitude = doc.getDouble("riderLongitude") ?: 0.0
                             )
                             cloudOrders.add(order)
                             localSqlDb.saveOrder(order)
@@ -695,6 +710,104 @@ class FirebaseCloudEngine(
                     val eta = snapshot.getLong("etaMinutes")?.toInt() ?: 15
                     onLocationUpdated(lat, lng, eta)
                 }
+        } catch (_: Exception) {}
+    }
+
+    // --- RIDER FLEET CLOUD SYNC ---
+
+    fun seedRidersToCloud(
+        riders: List<Rider>,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            riders.forEach { rider ->
+                val riderMap = mapOf(
+                    "id" to rider.id,
+                    "name" to rider.name,
+                    "phone" to rider.phone,
+                    "vehicleNumber" to rider.vehicleNumber,
+                    "vehicleModel" to rider.vehicleModel,
+                    "rating" to rider.rating,
+                    "totalDeliveries" to rider.totalDeliveries,
+                    "latitude" to rider.latitude,
+                    "longitude" to rider.longitude,
+                    "isAvailable" to rider.isAvailable,
+                    "activeOrderId" to (rider.activeOrderId ?: ""),
+                    "batteryPercent" to rider.batteryPercent,
+                    "lastUpdated" to rider.lastUpdated
+                )
+                db.collection("riders").document(rider.id)
+                    .set(riderMap)
+            }
+            onSuccess()
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun observeRidersRealTime(
+        onRidersUpdated: (List<Rider>) -> Unit
+    ) {
+        ridersListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) return
+        try {
+            ridersListenerReg = db.collection("riders")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null) return@addSnapshotListener
+                    val ridersList = mutableListOf<Rider>()
+                    for (doc in snapshot.documents) {
+                        try {
+                            ridersList.add(
+                                Rider(
+                                    id = doc.getString("id") ?: doc.id,
+                                    name = doc.getString("name") ?: "Rider",
+                                    phone = doc.getString("phone") ?: "+91 98112 34567",
+                                    vehicleNumber = doc.getString("vehicleNumber") ?: "MH-02-EM-8821",
+                                    vehicleModel = doc.getString("vehicleModel") ?: "Hero Splendor Electric",
+                                    rating = doc.getDouble("rating") ?: 4.8,
+                                    totalDeliveries = doc.getLong("totalDeliveries")?.toInt() ?: 300,
+                                    latitude = doc.getDouble("latitude") ?: 19.1672,
+                                    longitude = doc.getDouble("longitude") ?: 72.8518,
+                                    isAvailable = doc.getBoolean("isAvailable") ?: true,
+                                    activeOrderId = doc.getString("activeOrderId")?.ifBlank { null },
+                                    batteryPercent = doc.getLong("batteryPercent")?.toInt() ?: 90,
+                                    lastUpdated = doc.getLong("lastUpdated") ?: System.currentTimeMillis()
+                                )
+                            )
+                        } catch (_: Exception) {}
+                    }
+                    if (ridersList.isNotEmpty()) {
+                        onRidersUpdated(ridersList)
+                    }
+                }
+        } catch (_: Exception) {}
+    }
+
+    fun updateRiderStatusInCloud(
+        riderId: String,
+        isAvailable: Boolean,
+        activeOrderId: String?,
+        currentLat: Double? = null,
+        currentLng: Double? = null
+    ) {
+        val db = firestore ?: return
+        try {
+            val updates = mutableMapOf<String, Any>(
+                "isAvailable" to isAvailable,
+                "activeOrderId" to (activeOrderId ?: ""),
+                "lastUpdated" to System.currentTimeMillis()
+            )
+            if (currentLat != null) updates["latitude"] = currentLat
+            if (currentLng != null) updates["longitude"] = currentLng
+
+            db.collection("riders").document(riderId).update(updates)
         } catch (_: Exception) {}
     }
 

@@ -294,6 +294,32 @@ class DeliveryApi {
                 val id = cleanPath.substringAfterLast("/")
                 eng.sqlDb.getDiningTab(id) ?: eng.sqlDb.getOpenTabForTable(id)
             }
+            cleanPath.endsWith("/payments/razorpay/create-order") && method == "POST" -> {
+                val orderId = "order_" + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+                mapOf(
+                    "success" to true,
+                    "order" to mapOf(
+                        "id" to orderId,
+                        "entity" to "order",
+                        "amount" to 50000L,
+                        "currency" to "INR",
+                        "status" to "created"
+                    ),
+                    "key_id" to com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID
+                )
+            }
+            cleanPath.endsWith("/payments/razorpay/verify") && method == "POST" -> {
+                mapOf(
+                    "success" to true,
+                    "verified" to true,
+                    "status" to "authorized",
+                    "message" to "Razorpay payment verified successfully."
+                )
+            }
+            cleanPath.endsWith("/cart/coupon") && method == "DELETE" -> {
+                inMemoryCart = inMemoryCart.copy(coupon = "")
+                mapOf("success" to true, "message" to "Coupon removed")
+            }
             else -> null
         }
     }
