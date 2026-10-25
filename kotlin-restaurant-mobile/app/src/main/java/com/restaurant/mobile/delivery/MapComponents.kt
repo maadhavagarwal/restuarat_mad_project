@@ -453,6 +453,26 @@ fun DeliveryInteractiveMap(
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                try {
+                                    val gmmIntentUri = Uri.parse("geo:${selectedRestaurant.latitude},${selectedRestaurant.longitude}?q=${Uri.encode(selectedRestaurant.name)}")
+                                    val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
+                                        setPackage("com.google.android.apps.maps")
+                                    }
+                                    context.startActivity(mapIntent)
+                                } catch (_: Exception) {
+                                    try {
+                                        val browserUri = Uri.parse("https://www.google.com/maps/search/?api=1&query=${selectedRestaurant.latitude},${selectedRestaurant.longitude}")
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, browserUri))
+                                    } catch (_: Exception) {}
+                                }
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.Directions, contentDescription = "Open in Google Maps", tint = RestroTokens.coral)
+                        }
+
                         OutlinedButton(
                             onClick = {
                                 selectedRestaurantId = ""

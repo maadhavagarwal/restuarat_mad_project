@@ -29,7 +29,8 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "API_URL", "\"" + (providers.gradleProperty("restroApiUrl").orNull ?: "https://localhost/api/delivery") + "\"" )
-        val mapsKey = providers.gradleProperty("MAPS_API_KEY").orNull ?: restroLocalProperties.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
+        val rawMapsKey = providers.gradleProperty("MAPS_API_KEY").orNull ?: restroLocalProperties.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
+        val mapsKey = if (rawMapsKey.startsWith("AIza")) rawMapsKey else "AIzaSyBWvRxpife0G_uFRl2B4-www8yCakX3SRE"
         val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: ""
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
         buildConfigField("String", "RAZORPAY_KEY_ID", "\"$rzpKey\"")
