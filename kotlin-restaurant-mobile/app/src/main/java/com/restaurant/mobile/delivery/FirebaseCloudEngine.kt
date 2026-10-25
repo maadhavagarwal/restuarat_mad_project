@@ -35,6 +35,10 @@ class FirebaseCloudEngine(
     private var ordersListenerReg: ListenerRegistration? = null
     private var tabListenerReg: ListenerRegistration? = null
     private var bookingsListenerReg: ListenerRegistration? = null
+    private var userListenerReg: ListenerRegistration? = null
+    private var addressesListenerReg: ListenerRegistration? = null
+    private var catalogListenerReg: ListenerRegistration? = null
+    private var riderLocationListenerReg: ListenerRegistration? = null
 
     init {
         try {
@@ -425,12 +429,402 @@ class FirebaseCloudEngine(
         }
     }
 
+    // --- USERS REAL-TIME CLOUD SYNC ---
+
+    fun saveUserToCloud(
+        profile: Profile,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        localSqlDb.saveUser(profile)
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val userMap = mapOf(
+                "id" to profile.id,
+                "name" to profile.name,
+                "email" to profile.email,
+                "phone" to profile.phone,
+                "role" to profile.role.name,
+                "isDarkMode" to profile.isDarkMode,
+                "reducedGlass" to profile.reducedGlass,
+                "updatedAt" to System.currentTimeMillis()
+            )
+            db.collection("users").document(profile.id)
+                .set(userMap)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun observeUserRealTime(
+        userId: String,
+        onUserUpdated: (Profile?) -> Unit
+    ) {
+        userListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onUserUpdated(localSqlDb.getUserById(userId))
+            return
+        }
+        try {
+            userListenerReg = db.collection("users").document(userId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null || !snapshot.exists()) {
+                        onUserUpdated(localSqlDb.getUserById(userId))
+                        return@addSnapshotListener
+                    }
+                    try {
+                        val name = snapshot.getString("name") ?: ""
+                        val email = snapshot.getString("email") ?: ""
+                        val phone = snapshot.getString("phone") ?: ""
+                        val roleStr = snapshot.getString("role") ?: UserRole.CUSTOMER.name
+                        val isDark = snapshot.getBoolean("isDarkMode") ?: true
+                        val reduced = snapshot.getBoolean("reducedGlass") ?: false
+                        val role = try { UserRole.valueOf(roleStr) } catch (_: Exception) { UserRole.CUSTOMER }
+                        val p = Profile(
+                            id = userId,
+                            name = name,
+                            email = email,
+                            phone = phone,
+                            role = role,
+                            reducedGlass = reduced,
+                            isDarkMode = isDark
+                        )
+                        localSqlDb.saveUser(p)
+                        onUserUpdated(p)
+                    } catch (_: Exception) {
+                        onUserUpdated(localSqlDb.getUserById(userId))
+                    }
+                }
+        } catch (_: Exception) {
+            onUserUpdated(localSqlDb.getUserById(userId))
+        }
+    }
+
+    // --- DELIVERY ADDRESSES REAL-TIME CLOUD SYNC ---
+
+    fun saveAddressToCloud(
+        userId: String,
+        address: Address,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        localSqlDb.saveAddress(address)
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val addrMap = mapOf(
+                "id" to address.id,
+                "userId" to userId,
+                "label" to address.label,
+                "line" to address.line,
+                "city" to address.city,
+                "postcode" to address.postcode,
+                "phone" to address.phone,
+                "latitude" to (address.latitude ?: 0.0),
+                "longitude" to (address.longitude ?: 0.0),
+                "updatedAt" to System.currentTimeMillis()
+            )
+            db.collection("users").document(userId)
+                .collection("addresses").document(address.id)
+                .set(addrMap)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun deleteAddressFromCloud(
+        userId: String,
+        addressId: String,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        localSqlDb.deleteAddress(addressId)
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            db.collection("users").document(userId)
+                .collection("addresses").document(addressId)
+                .delete()
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun observeAddressesRealTime(
+        userId: String,
+        onAddressesUpdated: (List<Address>) -> Unit
+    ) {
+        addressesListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onAddressesUpdated(localSqlDb.getAllAddresses())
+            return
+        }
+        try {
+            addressesListenerReg = db.collection("users").document(userId)
+                .collection("addresses")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null) {
+                        onAddressesUpdated(localSqlDb.getAllAddresses())
+                        return@addSnapshotListener
+                    }
+                    val list = mutableListOf<Address>()
+                    for (doc in snapshot.documents) {
+                        try {
+                            val id = doc.getString("id") ?: doc.id
+                            val label = doc.getString("label") ?: "Home"
+                            val line = doc.getString("line") ?: ""
+                            val city = doc.getString("city") ?: ""
+                            val postcode = doc.getString("postcode") ?: ""
+                            val phone = doc.getString("phone") ?: ""
+                            val lat = doc.getDouble("latitude")
+                            val lng = doc.getDouble("longitude")
+                            val addr = Address(id, label, line, city, postcode, phone, lat, lng)
+                            list.add(addr)
+                            localSqlDb.saveAddress(addr)
+                        } catch (_: Exception) {}
+                    }
+                    if (list.isNotEmpty()) {
+                        onAddressesUpdated(list)
+                    } else {
+                        onAddressesUpdated(localSqlDb.getAllAddresses())
+                    }
+                }
+        } catch (_: Exception) {
+            onAddressesUpdated(localSqlDb.getAllAddresses())
+        }
+    }
+
+    // --- REVIEWS REAL-TIME CLOUD SYNC ---
+
+    fun saveReviewToCloud(
+        review: Review,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        localSqlDb.saveReview(review)
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val revMap = mapOf(
+                "orderId" to review.orderId,
+                "restaurantId" to review.restaurantId,
+                "author" to review.author,
+                "rating" to review.rating,
+                "text" to review.text,
+                "timestamp" to System.currentTimeMillis()
+            )
+            db.collection("reviews").document(review.orderId)
+                .set(revMap)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    // --- RIDER REAL-TIME GPS CLOUD SYNC ---
+
+    fun saveRiderLocationToCloud(
+        orderId: String,
+        latitude: Double,
+        longitude: Double,
+        etaMinutes: Int,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val locMap = mapOf(
+                "orderId" to orderId,
+                "latitude" to latitude,
+                "longitude" to longitude,
+                "etaMinutes" to etaMinutes,
+                "updatedAt" to System.currentTimeMillis()
+            )
+            db.collection("rider_locations").document(orderId)
+                .set(locMap)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun observeRiderLocationRealTime(
+        orderId: String,
+        onLocationUpdated: (Double, Double, Int) -> Unit
+    ) {
+        riderLocationListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) return
+        try {
+            riderLocationListenerReg = db.collection("rider_locations").document(orderId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                    val lat = snapshot.getDouble("latitude") ?: return@addSnapshotListener
+                    val lng = snapshot.getDouble("longitude") ?: return@addSnapshotListener
+                    val eta = snapshot.getLong("etaMinutes")?.toInt() ?: 15
+                    onLocationUpdated(lat, lng, eta)
+                }
+        } catch (_: Exception) {}
+    }
+
+    // --- CATALOG CLOUD SYNC ---
+
+    fun seedCatalogToCloud(
+        catalog: Catalog,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            catalog.restaurants.forEach { rest ->
+                val restMap = mapOf(
+                    "id" to rest.id,
+                    "name" to rest.name,
+                    "cuisine" to rest.cuisine,
+                    "description" to rest.description,
+                    "image" to rest.image,
+                    "address" to rest.address,
+                    "latitude" to rest.latitude,
+                    "longitude" to rest.longitude,
+                    "deliveryMinutes" to rest.deliveryMinutes,
+                    "deliveryFee" to rest.deliveryFee,
+                    "open" to rest.open,
+                    "rating" to rest.rating,
+                    "tableBookingAvailable" to rest.tableBookingAvailable,
+                    "vibes" to rest.vibes
+                )
+                db.collection("restaurants").document(rest.id).set(restMap)
+            }
+            catalog.dishes.forEach { dish ->
+                val dishMap = mapOf(
+                    "id" to dish.id,
+                    "restaurantId" to dish.restaurantId,
+                    "name" to dish.name,
+                    "description" to dish.description,
+                    "price" to dish.price,
+                    "image" to dish.image,
+                    "category" to dish.category,
+                    "vegetarian" to dish.vegetarian,
+                    "available" to dish.available,
+                    "addons" to gson.toJson(dish.addons)
+                )
+                db.collection("dishes").document(dish.id).set(dishMap)
+            }
+            onSuccess()
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun observeCatalogRealTime(
+        onCatalogUpdated: (Catalog) -> Unit
+    ) {
+        catalogListenerReg?.remove()
+        val db = firestore
+        val fallbackCatalog = Catalog(localSqlDb.getAllRestaurants(), localSqlDb.getAllDishes())
+        if (db == null || !isFirebaseInitialized) {
+            onCatalogUpdated(fallbackCatalog)
+            return
+        }
+        try {
+            catalogListenerReg = db.collection("restaurants")
+                .addSnapshotListener { restSnap, restErr ->
+                    if (restErr != null || restSnap == null || restSnap.isEmpty) {
+                        onCatalogUpdated(fallbackCatalog)
+                        return@addSnapshotListener
+                    }
+                    val restaurants = mutableListOf<Restaurant>()
+                    for (doc in restSnap.documents) {
+                        try {
+                            val id = doc.getString("id") ?: doc.id
+                            val name = doc.getString("name") ?: ""
+                            val cuisine = doc.getString("cuisine") ?: ""
+                            val desc = doc.getString("description") ?: ""
+                            val image = doc.getString("image") ?: ""
+                            val address = doc.getString("address") ?: "Mumbai"
+                            val lat = doc.getDouble("latitude") ?: 19.1663
+                            val lng = doc.getDouble("longitude") ?: 72.8526
+                            val delMins = doc.getLong("deliveryMinutes")?.toInt() ?: 28
+                            val delFee = doc.getLong("deliveryFee") ?: 4000L
+                            val open = doc.getBoolean("open") ?: true
+                            val rating = doc.getDouble("rating") ?: 4.8
+                            val tableBooking = doc.getBoolean("tableBookingAvailable") ?: true
+                            val vibes = (doc.get("vibes") as? List<*>)?.mapNotNull { it as? String } ?: listOf("Fine Dining", "Romantic")
+                            restaurants.add(
+                                Restaurant(
+                                    id = id,
+                                    name = name,
+                                    cuisine = cuisine,
+                                    description = desc,
+                                    image = image,
+                                    address = address,
+                                    latitude = lat,
+                                    longitude = lng,
+                                    deliveryMinutes = delMins,
+                                    deliveryFee = delFee,
+                                    open = open,
+                                    rating = rating,
+                                    vibes = vibes,
+                                    tableBookingAvailable = tableBooking
+                                )
+                            )
+                        } catch (_: Exception) {}
+                    }
+                    if (restaurants.isNotEmpty()) {
+                        val currentDishes = localSqlDb.getAllDishes()
+                        onCatalogUpdated(Catalog(restaurants, currentDishes))
+                    }
+                }
+        } catch (_: Exception) {
+            onCatalogUpdated(fallbackCatalog)
+        }
+    }
+
     fun cleanUpListeners() {
         ordersListenerReg?.remove()
         tabListenerReg?.remove()
         bookingsListenerReg?.remove()
+        userListenerReg?.remove()
+        addressesListenerReg?.remove()
+        catalogListenerReg?.remove()
+        riderLocationListenerReg?.remove()
         ordersListenerReg = null
         tabListenerReg = null
         bookingsListenerReg = null
+        userListenerReg = null
+        addressesListenerReg = null
+        catalogListenerReg = null
+        riderLocationListenerReg = null
     }
 }

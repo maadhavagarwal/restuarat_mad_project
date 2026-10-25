@@ -1149,6 +1149,19 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+            cloudEngine.observeAddressesRealTime(currentUserId) { cloudAddrs ->
+                viewModelScope.launch(Dispatchers.Main) {
+                    if (cloudAddrs.isNotEmpty()) {
+                        addresses = cloudAddrs
+                    }
+                }
+            }
+            cloudEngine.observeCatalogRealTime { cloudCat ->
+                viewModelScope.launch(Dispatchers.Main) {
+                    catalog = cloudCat
+                }
+            }
+            cloudEngine.seedCatalogToCloud(catalog)
 
             if (api.token != null) refreshAccount()
         }
@@ -2192,6 +2205,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val updated: DeliveryOrder = api.call("/orders/$orderId")
             orders = orders.map { if (it.id == updated.id) updated else it }
+            cloudEngine.saveOrderToCloud(updated)
         } catch (_: Exception) {
             val current = orders.find { it.id == orderId }
             if (current != null) {
@@ -2203,11 +2217,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val updated = current.copy(status = nextStatus)
                 orders = orders.map { if (it.id == updated.id) updated else it }
+                cloudEngine.saveOrderToCloud(updated)
             }
         }
     }
 
     fun saveAddress(a: Address) = run {
+        cloudEngine.saveAddressToCloud(profile?.id ?: "guest", a)
         try {
             api.call<Address>("/addresses", "PUT", a)
             addresses = api.call("/addresses")
@@ -2218,6 +2234,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteAddress(id: String) = run {
+        cloudEngine.deleteAddressFromCloud(profile?.id ?: "guest", id)
         try {
             api.call<Unit>("/addresses/$id", "DELETE", null)
             addresses = api.call("/addresses")
@@ -2235,6 +2252,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveProfile(p: Profile) = run {
+        cloudEngine.saveUserToCloud(p)
         try {
             profile = api.call("/profile", "PUT", p)
         } catch (_: Exception) {
@@ -2244,6 +2262,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun review(rating: Int, text: String) = run {
+        val rev = Review(
+            orderId = orderId,
+            restaurantId = restaurantId,
+            author = profile?.name ?: "Guest Diner",
+            rating = rating,
+            text = text
+        )
+        cloudEngine.saveReviewToCloud(rev)
         try {
             api.call<Review>(
                 "/reviews/$orderId",
@@ -2251,13 +2277,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 mapOf("rating" to rating.toString(), "text" to text),
             )
         } catch (_: Exception) {
-            reviews = reviews + Review(
-                orderId = orderId,
-                restaurantId = restaurantId,
-                author = profile?.name ?: "Guest Diner",
-                rating = rating,
-                text = text
-            )
+            reviews = reviews + rev
         }
         route = "Orders"
     }
