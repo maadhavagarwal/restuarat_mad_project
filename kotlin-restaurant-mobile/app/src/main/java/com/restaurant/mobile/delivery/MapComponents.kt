@@ -541,7 +541,7 @@ fun OrderTrackingRouteMap(
 
     var proximityAlertFired by rememberSaveable(order?.id) { mutableStateOf(false) }
     var deliveredAlertFired by rememberSaveable(order?.id) { mutableStateOf(order?.status == "Delivered") }
-    var isOsmMode by rememberSaveable { mutableStateOf(true) }
+    var mapMode by rememberSaveable(order?.id) { mutableStateOf("GoogleMaps") }
 
     // 10-Second Auto-Updating Coroutine Heartbeat
     LaunchedEffect(order?.id) {
@@ -632,10 +632,16 @@ fun OrderTrackingRouteMap(
                 )
             }
 
-            // Map Style Switcher (OSM vs Dark)
+            // Map Style Switcher (Google Maps vs Street vs Dark)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Surface(
-                    onClick = { isOsmMode = !isOsmMode },
+                    onClick = {
+                        mapMode = when (mapMode) {
+                            "GoogleMaps" -> "Street"
+                            "Street" -> "DarkRoute"
+                            else -> "GoogleMaps"
+                        }
+                    },
                     shape = RoundedCornerShape(8.dp),
                     color = RestroTokens.surface
                 ) {
@@ -645,13 +651,21 @@ fun OrderTrackingRouteMap(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
-                            if (isOsmMode) Icons.Default.Map else Icons.Default.Nightlight,
+                            when (mapMode) {
+                                "GoogleMaps" -> Icons.Default.Place
+                                "Street" -> Icons.Default.Map
+                                else -> Icons.Default.Nightlight
+                            },
                             contentDescription = null,
                             tint = RestroTokens.coral,
                             modifier = Modifier.size(13.dp)
                         )
                         Text(
-                            text = if (isOsmMode) "Live Street Map" else "Dark Route GPS",
+                            text = when (mapMode) {
+                                "GoogleMaps" -> "Google Maps"
+                                "Street" -> "Street Map"
+                                else -> "Dark Route"
+                            },
                             fontSize = 11.sp,
                             color = RestroTokens.text,
                             fontWeight = FontWeight.Medium
@@ -660,6 +674,25 @@ fun OrderTrackingRouteMap(
                 }
 
                 Surface(
+                    onClick = {
+                        val selRest = vm?.catalog?.restaurants?.find { it.name == order?.restaurantName || it.id == order?.restaurantId }
+                        val targetRestLat = selRest?.latitude ?: (vm?.currentLatitude?.plus(0.0075) ?: 19.2288)
+                        val targetRestLng = selRest?.longitude ?: (vm?.currentLongitude?.plus(0.0055) ?: 72.8541)
+                        val targetUserLat = order?.address?.latitude ?: (vm?.currentLatitude ?: 19.2129)
+                        val targetUserLng = order?.address?.longitude ?: (vm?.currentLongitude ?: 72.8424)
+
+                        try {
+                            val gmmIntentUri = android.net.Uri.parse("https://www.google.com/maps/dir/?api=1&origin=$targetRestLat,$targetRestLng&destination=$targetUserLat,$targetUserLng&travelmode=driving")
+                            val mapIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, gmmIntentUri).apply {
+                                setPackage("com.google.android.apps.maps")
+                            }
+                            if (mapIntent.resolveActivity(context.packageManager) != null) {
+                                context.startActivity(mapIntent)
+                            } else {
+                                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, gmmIntentUri))
+                            }
+                        } catch (_: Exception) {}
+                    },
                     shape = RoundedCornerShape(8.dp),
                     color = RestroTokens.surface
                 ) {
@@ -669,47 +702,60 @@ fun OrderTrackingRouteMap(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
-                            Icons.Default.MyLocation,
-                            contentDescription = "In-App Tracking",
+                            Icons.Default.Navigation,
+                            contentDescription = "Open in Google Maps",
                             tint = RestroTokens.green,
                             modifier = Modifier.size(13.dp)
                         )
-                        Text("Live In-App GPS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
+                        Text("Google Maps App ↗", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
                     }
                 }
             }
         }
 
-        // Live Animated Map Canvas
+        // Live Animated Map Canvas / Google Maps WebView
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(230.dp)
                 .clip(RoundedCornerShape(20.dp))
-                .background(if (isOsmMode) Color(0xFFE8ECEF) else Color(0xFF14171D))
+                .background(if (mapMode == "Street") Color(0xFFE8ECEF) else Color(0xFF14171D))
         ) {
-            if (isOsmMode) {
-                val selRest = vm?.catalog?.restaurants?.find { it.name == order?.restaurantName || it.id == order?.restaurantId }
-                val targetRestLat = selRest?.latitude ?: (vm?.currentLatitude?.plus(0.0075) ?: 19.2288)
-                val targetRestLng = selRest?.longitude ?: (vm?.currentLongitude?.plus(0.0055) ?: 72.8541)
-                val targetUserLat = order?.address?.latitude ?: (vm?.currentLatitude ?: 19.2129)
-                val targetUserLng = order?.address?.longitude ?: (vm?.currentLongitude ?: 72.8424)
+            val selRest = vm?.catalog?.restaurants?.find { it.name == order?.restaurantName || it.id == order?.restaurantId }
+            val targetRestLat = selRest?.latitude ?: (vm?.currentLatitude?.plus(0.0075) ?: 19.2288)
+            val targetRestLng = selRest?.longitude ?: (vm?.currentLongitude?.plus(0.0055) ?: 72.8541)
+            val targetUserLat = order?.address?.latitude ?: (vm?.currentLatitude ?: 19.2129)
+            val targetUserLng = order?.address?.longitude ?: (vm?.currentLongitude ?: 72.8424)
 
-                RealOrderTrackingOsmWebView(
-                    restaurantLat = targetRestLat,
-                    restaurantLng = targetRestLng,
-                    restaurantName = order?.restaurantName ?: "Restaurant",
-                    userLat = targetUserLat,
-                    userLng = targetUserLng,
-                    riderProgress = animatedProgress,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                Canvas(modifier = Modifier.fillMaxSize()) {
+            when (mapMode) {
+                "GoogleMaps" -> {
+                    RealOrderTrackingGoogleMapsWebView(
+                        restaurantLat = targetRestLat,
+                        restaurantLng = targetRestLng,
+                        restaurantName = order?.restaurantName ?: "Restaurant",
+                        userLat = targetUserLat,
+                        userLng = targetUserLng,
+                        riderProgress = animatedProgress,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                "Street" -> {
+                    RealOrderTrackingOsmWebView(
+                        restaurantLat = targetRestLat,
+                        restaurantLng = targetRestLng,
+                        restaurantName = order?.restaurantName ?: "Restaurant",
+                        userLat = targetUserLat,
+                        userLng = targetUserLng,
+                        riderProgress = animatedProgress,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                else -> {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
                 val w = size.width
                 val h = size.height
 
-                if (isOsmMode) {
+                if (mapMode == "Street") {
                     // OpenStreetMap Style Background
                     drawRect(color = Color(0xFFEDE9E3)) // OSM land surface
 
@@ -774,7 +820,7 @@ fun OrderTrackingRouteMap(
                 // Route Track Underlay (Casing)
                 drawPath(
                     path = fullPath,
-                    color = if (isOsmMode) Color(0xFFBDC3C7) else Color(0xFF2E3440),
+                    color = if (mapMode == "Street") Color(0xFFBDC3C7) else Color(0xFF2E3440),
                     style = Stroke(width = 9f, cap = StrokeCap.Round)
                 )
 
@@ -833,7 +879,8 @@ fun OrderTrackingRouteMap(
                     )
                 }
             }
-            }
+        }
+    }
 
             // Real-Time Countdown Timer & Distance Remaining Badges
             Row(
@@ -922,11 +969,11 @@ fun OrderTrackingRouteMap(
                 }
             }
 
-            // OpenStreetMap Attribution Banner
+            // Attribution Banner
             Text(
-                text = "© OpenStreetMap contributors · Live GPS",
+                text = if (mapMode == "GoogleMaps") "Google Maps · Live GPS" else "© OpenStreetMap contributors · Live GPS",
                 fontSize = 9.sp,
-                color = if (isOsmMode) Color(0xFF7F8C8D) else RestroTokens.muted,
+                color = if (mapMode == "Street") Color(0xFF7F8C8D) else RestroTokens.muted,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 8.dp, bottom = 4.dp)
@@ -1373,6 +1420,168 @@ fun RealOrderTrackingOsmWebView(
         },
         update = { webView ->
             // Smoothly update marker coordinates without reloading the page every frame!
+            webView.evaluateJavascript("if (window.updateRider) { window.updateRider($currentRiderLat, $currentRiderLng); }", null)
+        },
+        modifier = modifier
+    )
+}
+
+/**
+ * Real Google Maps live route tracking WebView.
+ * Powered by Google Maps JavaScript API with the provided Maps API key.
+ * Shows restaurant pin, delivery destination, dashed polyline route,
+ * and live moving delivery rider marker without reloading!
+ */
+@android.annotation.SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun RealOrderTrackingGoogleMapsWebView(
+    restaurantLat: Double,
+    restaurantLng: Double,
+    restaurantName: String,
+    userLat: Double,
+    userLng: Double,
+    riderProgress: Float,
+    modifier: Modifier = Modifier
+) {
+    val apiKey = com.restaurant.mobile.BuildConfig.MAPS_API_KEY
+    val currentRiderLat = restaurantLat + (userLat - restaurantLat) * riderProgress
+    val currentRiderLng = restaurantLng + (userLng - restaurantLng) * riderProgress
+    val safeRestName = restaurantName.replace("'", "\\'")
+
+    val initialHtml = remember(restaurantLat, restaurantLng, userLat, userLng, apiKey) {
+        val midLat = (restaurantLat + userLat) / 2.0
+        val midLng = (restaurantLng + userLng) / 2.0
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey"></script>
+            <style>
+                body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171D; }
+                .gm-style-iw { color: #111; font-family: sans-serif; font-size: 12px; }
+            </style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script>
+                var map;
+                var riderMarker;
+                try {
+                    map = new google.maps.Map(document.getElementById('map'), {
+                        center: { lat: $midLat, lng: $midLng },
+                        zoom: 14,
+                        disableDefaultUI: true,
+                        zoomControl: false,
+                        styles: [
+                            { "elementType": "geometry", "stylers": [{ "color": "#1D212A" }] },
+                            { "elementType": "labels.text.fill", "stylers": [{ "color": "#8EC3B9" }] },
+                            { "elementType": "labels.text.stroke", "stylers": [{ "color": "#1A1D24" }] },
+                            { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#2C3240" }] },
+                            { "featureType": "road", "elementType": "geometry.stroke", "stylers": [{ "color": "#212530" }] },
+                            { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#3D4456" }] },
+                            { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#11141A" }] }
+                        ]
+                    });
+
+                    // Restaurant Marker (Coral)
+                    var restMarker = new google.maps.Marker({
+                        position: { lat: $restaurantLat, lng: $restaurantLng },
+                        map: map,
+                        title: '$safeRestName',
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: '#FF5722',
+                            fillOpacity: 1,
+                            strokeColor: '#FFFFFF',
+                            strokeWeight: 2
+                        }
+                    });
+                    var restInfo = new google.maps.InfoWindow({
+                        content: '<div style="color:#111;font-weight:bold;padding:2px;">🏪 $safeRestName</div>'
+                    });
+                    restMarker.addListener('click', function() { restInfo.open(map, restMarker); });
+
+                    // Customer Destination Marker (Green)
+                    var userMarker = new google.maps.Marker({
+                        position: { lat: $userLat, lng: $userLng },
+                        map: map,
+                        title: 'Delivery Address',
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: '#10B981',
+                            fillOpacity: 1,
+                            strokeColor: '#FFFFFF',
+                            strokeWeight: 2
+                        }
+                    });
+                    var userInfo = new google.maps.InfoWindow({
+                        content: '<div style="color:#111;font-weight:bold;padding:2px;">📍 Delivery Location</div>'
+                    });
+                    userMarker.addListener('click', function() { userInfo.open(map, userMarker); });
+
+                    // Route Polyline
+                    new google.maps.Polyline({
+                        path: [
+                            { lat: $restaurantLat, lng: $restaurantLng },
+                            { lat: $userLat, lng: $userLng }
+                        ],
+                        geodesic: true,
+                        strokeColor: '#FF5722',
+                        strokeOpacity: 0.85,
+                        strokeWeight: 4,
+                        map: map
+                    });
+
+                    // Moving Rider Marker (Blue Scooter)
+                    riderMarker = new google.maps.Marker({
+                        position: { lat: $restaurantLat, lng: $restaurantLng },
+                        map: map,
+                        title: 'Delivery Partner',
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 10,
+                            fillColor: '#3B82F6',
+                            fillOpacity: 1,
+                            strokeColor: '#FFFFFF',
+                            strokeWeight: 3
+                        }
+                    });
+                    var riderInfo = new google.maps.InfoWindow({
+                        content: '<div style="color:#111;font-weight:bold;padding:2px;">🛵 Delivery Partner (Live)</div>'
+                    });
+                    riderMarker.addListener('click', function() { riderInfo.open(map, riderMarker); });
+
+                    window.updateRider = function(lat, lng) {
+                        if (riderMarker) {
+                            riderMarker.setPosition(new google.maps.LatLng(lat, lng));
+                        }
+                    };
+                } catch(e) {
+                    console.error("Google Maps load error", e);
+                }
+            </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    androidx.compose.ui.viewinterop.AndroidView(
+        factory = { ctx ->
+            android.webkit.WebView(ctx).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                webViewClient = object : android.webkit.WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): Boolean {
+                        return false
+                    }
+                }
+                loadDataWithBaseURL("https://maps.google.com", initialHtml, "text/html", "UTF-8", null)
+            }
+        },
+        update = { webView ->
             webView.evaluateJavascript("if (window.updateRider) { window.updateRider($currentRiderLat, $currentRiderLng); }", null)
         },
         modifier = modifier

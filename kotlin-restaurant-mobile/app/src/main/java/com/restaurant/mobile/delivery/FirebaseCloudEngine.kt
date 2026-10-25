@@ -77,8 +77,11 @@ class FirebaseCloudEngine(
         try {
             val orderMap = mapOf(
                 "id" to order.id,
+                "userId" to order.userId.ifBlank { "guest" },
                 "restaurantId" to order.restaurantId,
                 "restaurantName" to order.restaurantName,
+                "total" to (order.quote.total / 100),
+                "deliveryAddress" to order.address.line,
                 "address" to gson.toJson(order.address),
                 "quote" to gson.toJson(order.quote),
                 "paymentMethod" to order.paymentMethod,
@@ -136,23 +139,24 @@ class FirebaseCloudEngine(
                             val eventsJson = doc.getString("events") ?: ""
 
                             val address = try {
-                                gson.fromJson(addrJson, Address::class.java)
+                                if (addrJson.isNotBlank()) gson.fromJson(addrJson, Address::class.java) else null
                             } catch (_: Exception) {
-                                Address("addr-default", "Home", "Current Location", "City", "000000", "+91 98765 43210")
-                            }
+                                null
+                            } ?: Address("addr-default", "Home", doc.getString("deliveryAddress") ?: "Goregaon West, Mumbai", "Mumbai", "400062", "+91 98765 43210")
+
                             val quote = try {
-                                gson.fromJson(quoteJson, Quote::class.java)
+                                if (quoteJson.isNotBlank()) gson.fromJson(quoteJson, Quote::class.java) else null
                             } catch (_: Exception) {
-                                Quote(
-                                    restaurantId = restId,
-                                    lines = emptyList(),
-                                    subtotal = 50000L,
-                                    tax = 2500L,
-                                    delivery = 3500L,
-                                    discount = 0L,
-                                    total = 56000L
-                                )
-                            }
+                                null
+                            } ?: Quote(
+                                restaurantId = restId,
+                                lines = emptyList(),
+                                subtotal = (doc.getLong("total") ?: 500L) * 100L,
+                                tax = 2500L,
+                                delivery = 3500L,
+                                discount = 0L,
+                                total = (doc.getLong("total") ?: 560L) * 100L
+                            )
                             val eventsType = object : TypeToken<List<Event>>() {}.type
                             val events: List<Event> = try {
                                 gson.fromJson(eventsJson, eventsType) ?: listOf(Event(status))
