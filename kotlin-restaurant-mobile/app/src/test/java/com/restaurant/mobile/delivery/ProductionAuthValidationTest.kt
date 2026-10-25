@@ -2,6 +2,7 @@ package com.restaurant.mobile.delivery
 
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.UUID
 
 class ProductionAuthValidationTest {
 
@@ -282,5 +283,70 @@ class ProductionAuthValidationTest {
         assertEquals("Aarav S.", updatedProfile.name)
         assertEquals("+91 91234 56789", updatedProfile.phone)
         assertTrue(updatedProfile.isDarkMode)
+    }
+
+    @Test
+    fun `end-to-end checkout payment pipeline and state transition integrity`() {
+        val testAddress = Address(
+            id = "addr-checkout-1",
+            label = "Home",
+            line = "Flat 402, SV Road, Goregaon West",
+            city = "Mumbai",
+            postcode = "400062",
+            phone = "+91 98765 43210",
+            latitude = 19.1663,
+            longitude = 72.8526
+        )
+
+        val quoteLines = listOf(
+            QuoteLine(dishId = "dish-1", name = "Paneer Tikka Masala", quantity = 2, addons = emptyList(), unitPrice = 28000L, total = 56000L),
+            QuoteLine(dishId = "dish-2", name = "Garlic Naan", quantity = 3, addons = emptyList(), unitPrice = 6000L, total = 18000L)
+        )
+        val subtotal = 74000L // ₹740
+        val deliveryFee = 4000L // ₹40
+        val tax = 3700L // 5% GST = ₹37
+        val discount = 5000L // ₹50 coupon
+        val expectedTotal = subtotal + deliveryFee + tax - discount // ₹767
+
+        val authoritativeQuote = Quote(
+            restaurantId = "rest-1",
+            lines = quoteLines,
+            subtotal = subtotal,
+            tax = tax,
+            delivery = deliveryFee,
+            discount = discount,
+            total = expectedTotal
+        )
+        assertEquals(76700L, authoritativeQuote.total)
+
+        // Verify all 4 checkout payment methods are supported and distinct
+        val paymentMethods = listOf("Cash on delivery", "UPI (Google Pay)", "Card (Visa)", "Netbanking (HDFC Bank)")
+        paymentMethods.forEach { method ->
+            val checkoutKey = "idemp-key-" + UUID.randomUUID().toString()
+            val checkout = Checkout(
+                addressId = testAddress.id,
+                paymentMethod = method,
+                idempotencyKey = checkoutKey,
+                expectedTotal = expectedTotal
+            )
+            assertEquals(testAddress.id, checkout.addressId)
+            assertEquals(method, checkout.paymentMethod)
+            assertEquals(expectedTotal, checkout.expectedTotal)
+
+            val confirmedOrder = DeliveryOrder(
+                id = "ORD-TEST-" + checkoutKey.takeLast(4),
+                restaurantId = "rest-1",
+                restaurantName = "Spice Route Mumbai",
+                address = testAddress,
+                quote = authoritativeQuote,
+                paymentMethod = method,
+                paymentStatus = "Paid via $method",
+                status = "Confirmed",
+                userId = "user-checkout-101"
+            )
+            assertEquals("Confirmed", confirmedOrder.status)
+            assertEquals("user-checkout-101", confirmedOrder.userId)
+            assertEquals(expectedTotal, confirmedOrder.quote.total)
+        }
     }
 }

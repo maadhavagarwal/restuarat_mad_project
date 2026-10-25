@@ -230,7 +230,7 @@ fun PaymentGatewayBottomSheet(
                         // Tab Switcher (UPI vs Card vs Netbanking)
                         TabRow(
                             selectedTabIndex = selectedTab,
-                            containerColor = Color(0xFF16191F),
+                            containerColor = RestroTokens.surfaceElevated,
                             contentColor = RestroTokens.coral,
                             divider = {}
                         ) {
@@ -292,7 +292,7 @@ fun PaymentGatewayBottomSheet(
                                     val isSelected = selectedUpiApp == appName
                                     Surface(
                                         onClick = { selectedUpiApp = appName },
-                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else Color(0xFF1A1D24),
+                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else RestroTokens.surfaceElevated,
                                         shape = RoundedCornerShape(14.dp),
                                         border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, RestroTokens.coral) else null,
                                         modifier = Modifier.fillMaxWidth()
@@ -486,7 +486,7 @@ fun PaymentGatewayBottomSheet(
                                     val isSelected = selectedBank == bankName
                                     Surface(
                                         onClick = { selectedBank = bankName },
-                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else Color(0xFF1A1D24),
+                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else RestroTokens.surfaceElevated,
                                         shape = RoundedCornerShape(14.dp),
                                         border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, RestroTokens.coral) else null,
                                         modifier = Modifier.fillMaxWidth()
@@ -591,7 +591,7 @@ fun PaymentGatewayBottomSheet(
                             color = RestroTokens.muted
                         )
                         Surface(
-                            color = Color(0xFF1B222E),
+                            color = RestroTokens.surfaceElevated,
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Text(

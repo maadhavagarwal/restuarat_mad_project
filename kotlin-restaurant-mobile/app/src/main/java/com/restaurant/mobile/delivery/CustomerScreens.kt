@@ -328,10 +328,10 @@ fun CartScreen(vm: DeliveryViewModel) {
             }
         }
 
-        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+        HorizontalDivider(color = RestroTokens.border)
 
         // Bill Breakdown
-        Text("Bill Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("Bill Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = RestroTokens.text)
 
         val q = vm.quote ?: vm.computeQuote()
 
@@ -342,7 +342,7 @@ fun CartScreen(vm: DeliveryViewModel) {
             val couponName = if (vm.cart.coupon.isNotBlank()) " (${vm.cart.coupon})" else ""
             BillRow("Coupon Discount$couponName", -q.discount)
         }
-        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+        HorizontalDivider(color = RestroTokens.border)
         BillRow("To Pay", q.total)
 
         Spacer(Modifier.height(8.dp))
@@ -356,6 +356,26 @@ fun CartScreen(vm: DeliveryViewModel) {
 // 3. Checkout Screen
 @Composable
 fun CheckoutScreen(vm: DeliveryViewModel) {
+    if (vm.cart.lines.isEmpty()) {
+        Page {
+            Column(
+                Modifier.fillMaxWidth().padding(top = 40.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Icon(
+                    Icons.Default.ShoppingBag,
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp),
+                    tint = RestroTokens.muted
+                )
+                Heading("Your cart is empty", "Add delicious dishes to your bag before checking out.")
+                Action("Browse Menus") { vm.route = "Home" }
+            }
+        }
+        return
+    }
+
     var selectedAddressId by rememberSaveable {
         mutableStateOf(vm.addresses.firstOrNull()?.id ?: "addr-default")
     }
@@ -431,9 +451,9 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
             }
         }
 
-        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+        HorizontalDivider(color = RestroTokens.border)
 
-        Text("Select Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("Select Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = RestroTokens.text)
 
         val paymentOptions = listOf(
             Triple("Cash on delivery", "Cash or UPI on Delivery", Icons.Default.Payments),
@@ -471,7 +491,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
             }
         }
 
-        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+        HorizontalDivider(color = RestroTokens.border)
 
         val effectiveQuote = vm.quote ?: vm.computeQuote()
         val quoteTotal = effectiveQuote.total
