@@ -1,44 +1,26 @@
 {
   "project_info": {
-    "project_number": "104938201948",
-    "project_id": "restro-mobile-production",
-    "storage_bucket": "restro-mobile-production.appspot.com"
+    "project_number": "303645052740",
+    "project_id": "restro-42877",
+    "storage_bucket": "restro-42877.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:104938201948:android:8f4c19a0e64c8d2a1b9f7a",
+        "mobilesdk_app_id": "1:303645052740:android:b276b26328ed13927b9111",
         "android_client_info": {
           "package_name": "com.restaurant.mobile"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "104938201948-abcdef1234567890abcdef1234567890.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.restaurant.mobile",
-            "certificate_hash": "249d94943969e25d207ec18cd49f693246eb7678"
-          }
-        },
-        {
-          "client_id": "104938201948-webclient1234567890abcdef123456789.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyD-sampleProductionRestroKeyAbc12345"
+          "current_key": "AIzaSyBWvRxpife0G_uFRl2B4-www8yCakX3SRE"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "104938201948-webclient1234567890abcdef123456789.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }
