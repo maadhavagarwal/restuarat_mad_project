@@ -1129,7 +1129,15 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Icon(Icons.Default.ReceiptLong, null, modifier = Modifier.size(48.dp), tint = RestroTokens.muted)
-                        Text("No orders placed yet", color = RestroTokens.muted)
+                        Text(if (vm.profile == null) "Sign in to view synced past orders" else "No orders placed yet", color = RestroTokens.muted)
+                        if (vm.profile == null) {
+                            OutlinedButton(
+                                onClick = { vm.isGuestMode = false },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Sign In to Account", color = RestroTokens.coral, fontWeight = FontWeight.Bold)
+                            }
+                        }
                         Action("Explore Restaurants") { vm.route = "Home" }
                     }
                 } else {
@@ -1448,7 +1456,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        val initial = (p?.name?.firstOrNull() ?: 'U').uppercaseChar()
+                        val initial = (p?.name?.firstOrNull() ?: if (p == null) 'G' else 'U').uppercaseChar()
                         Text(
                             text = initial.toString(),
                             color = Color.White,
@@ -1459,7 +1467,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = p?.name?.ifBlank { "Valued Diner" } ?: "Valued Diner",
+                            text = if (p != null) p.name.ifBlank { "Valued Diner" } else "Guest Diner",
                             fontWeight = FontWeight.Bold,
                             fontSize = 19.sp,
                             color = RestroTokens.text,
@@ -1469,13 +1477,16 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         Spacer(Modifier.height(4.dp))
 
                         Surface(
-                            color = if (p?.role?.isStaff == true) RestroTokens.green.copy(alpha = 0.2f)
+                            color = if (p == null) RestroTokens.muted.copy(alpha = 0.2f)
+                            else if (p.role.isStaff) RestroTokens.green.copy(alpha = 0.2f)
                             else RestroTokens.coral.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
-                                text = (p?.role?.label ?: "CUSTOMER").uppercase(),
-                                color = if (p?.role?.isStaff == true) RestroTokens.green else RestroTokens.coral,
+                                text = (p?.role?.label ?: "GUEST MODE").uppercase(),
+                                color = if (p == null) RestroTokens.muted
+                                else if (p.role.isStaff) RestroTokens.green
+                                else RestroTokens.coral,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -1483,63 +1494,85 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         }
                     }
 
-                    IconButton(
-                        onClick = {
-                            editName = p?.name ?: ""
-                            editPhone = p?.phone ?: ""
-                            showEditProfileDialog = true
-                        },
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(RestroTokens.surfaceElevated)
-                    ) {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = "Edit Profile",
-                            tint = RestroTokens.coral,
-                            modifier = Modifier.size(18.dp)
-                        )
+                    if (p != null) {
+                        IconButton(
+                            onClick = {
+                                editName = p.name
+                                editPhone = p.phone
+                                showEditProfileDialog = true
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(RestroTokens.surfaceElevated)
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit Profile",
+                                tint = RestroTokens.coral,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
 
                 HorizontalDivider(color = RestroTokens.border)
 
-                // Contact Details
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (!p?.email.isNullOrBlank()) {
+                // Contact Details or Guest Prompt
+                if (p != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (p.email.isNotBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Email,
+                                    contentDescription = null,
+                                    tint = RestroTokens.muted,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = p.email,
+                                    fontSize = 13.sp,
+                                    color = RestroTokens.text
+                                )
+                            }
+                        }
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(
-                                Icons.Default.Email,
+                                Icons.Default.Phone,
                                 contentDescription = null,
                                 tint = RestroTokens.muted,
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                text = p?.email ?: "",
+                                text = if (p.phone.isNotBlank()) p.phone else "Add mobile number for delivery tracking",
                                 fontSize = 13.sp,
-                                color = RestroTokens.text
+                                color = if (p.phone.isNotBlank()) RestroTokens.text else RestroTokens.muted
                             )
                         }
                     }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Phone,
-                            contentDescription = null,
-                            tint = RestroTokens.muted,
-                            modifier = Modifier.size(16.dp)
-                        )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            text = if (!p?.phone.isNullOrBlank()) p?.phone ?: "" else "Add mobile number for delivery tracking",
-                            fontSize = 13.sp,
-                            color = if (!p?.phone.isNullOrBlank()) RestroTokens.text else RestroTokens.muted
+                            "You are currently browsing as a guest. Sign in to save addresses, track live deliveries, and collect dining rewards.",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
                         )
+                        Button(
+                            onClick = { vm.isGuestMode = false },
+                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Sign In or Register", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
                     }
                 }
             }
@@ -1925,21 +1958,36 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
         Spacer(Modifier.height(4.dp))
 
-        // 9. Sign Out Button
-        OutlinedButton(
-            onClick = { showLogoutConfirmDialog = true },
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = Color(0xFFEF4444)
-            ),
-            border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-        ) {
-            Icon(Icons.Default.Logout, null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Sign Out of Restro", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        // 9. Sign Out / Sign In Button
+        if (p != null) {
+            OutlinedButton(
+                onClick = { showLogoutConfirmDialog = true },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = Color(0xFFEF4444)
+                ),
+                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                Icon(Icons.Default.Logout, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Sign Out of Restro", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+        } else {
+            Button(
+                onClick = { vm.isGuestMode = false },
+                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+            ) {
+                Icon(Icons.Default.Login, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Sign In or Register", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
         }
 
         // Space for floating bottom navigation bar

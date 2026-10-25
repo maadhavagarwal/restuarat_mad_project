@@ -46,7 +46,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                         CircularProgressIndicator(Modifier.padding(24.dp))
                     }
                 }
-            else if (vm.profile == null)
+            else if (vm.profile == null && !vm.isGuestMode)
                 Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                     Column(Modifier.fillMaxSize()) {
                         Row(
@@ -62,7 +62,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        "AUTH LOCKED",
+                                        "BISTRO & DINING",
                                         color = RestroTokens.coral,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
@@ -71,10 +71,10 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                 }
                             }
                             Icon(
-                                Icons.Default.Lock,
-                                contentDescription = "Authentication Required",
+                                Icons.Default.RestaurantMenu,
+                                contentDescription = "Restro Dining",
                                 tint = RestroTokens.coral,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                         if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -413,7 +413,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                         )
                     }
 
-                    if (vm.profile != null)
+                    if (vm.profile != null || vm.isGuestMode)
                         Glass(
                             Modifier.align(Alignment.BottomCenter)
                                 .padding(12.dp)

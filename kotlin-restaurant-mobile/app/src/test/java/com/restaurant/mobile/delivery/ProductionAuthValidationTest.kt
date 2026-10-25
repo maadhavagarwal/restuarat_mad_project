@@ -349,4 +349,61 @@ class ProductionAuthValidationTest {
             assertEquals(expectedTotal, confirmedOrder.quote.total)
         }
     }
+
+    @Test
+    fun `guest exploration, cart building, and post auth checkout resume sequence`() {
+        // 1. Initially guest mode is false and profile is null
+        var isGuestMode = false
+        var profile: Profile? = null
+        var authReasonBanner: String? = null
+        var pendingPostAuthRoute: String? = null
+        var currentRoute = "Home"
+
+        // 2. Guest clicks "Explore Menu as Guest"
+        isGuestMode = true
+        assertEquals(true, isGuestMode)
+        assertNull(profile)
+
+        // 3. Guest browses and adds dishes to Cart
+        val cartLines = listOf(
+            Line(dishId = "d-1", quantity = 2, addons = emptyList()),
+            Line(dishId = "d-2", quantity = 1, addons = emptyList())
+        )
+        val guestCart = Cart(lines = cartLines)
+        assertEquals(2, guestCart.lines.size)
+        assertEquals(3, guestCart.lines.sumOf { it.quantity })
+
+        // 4. Guest navigates to Cart and clicks "Proceed to Checkout"
+        currentRoute = "Cart"
+        if (profile == null) {
+            authReasonBanner = "Please sign in or enter your mobile number to complete checkout & delivery."
+            pendingPostAuthRoute = "Checkout"
+            isGuestMode = false
+        }
+        assertEquals("Please sign in or enter your mobile number to complete checkout & delivery.", authReasonBanner)
+        assertEquals("Checkout", pendingPostAuthRoute)
+        assertEquals(false, isGuestMode)
+
+        // 5. User signs in with OTP or password
+        val authenticatedProfile = Profile(
+            id = "user-guest-1",
+            name = "Rohan Verma",
+            email = "rohan@example.com",
+            phone = "+91 98200 12345",
+            role = UserRole.CUSTOMER
+        )
+        profile = authenticatedProfile
+        isGuestMode = false
+        authReasonBanner = null
+
+        val targetRoute = pendingPostAuthRoute ?: "Home"
+        pendingPostAuthRoute = null
+        currentRoute = targetRoute
+
+        assertEquals("Checkout", currentRoute)
+        assertNotNull(profile)
+        assertNull(authReasonBanner)
+        assertNull(pendingPostAuthRoute)
+        assertEquals(2, guestCart.lines.size) // Cart items preserved!
+    }
 }

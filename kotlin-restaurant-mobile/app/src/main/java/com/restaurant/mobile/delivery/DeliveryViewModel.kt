@@ -458,6 +458,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var profile by mutableStateOf<Profile?>(null)
         private set
 
+    var isGuestMode by mutableStateOf(false)
+    var authReasonBanner by mutableStateOf<String?>(null)
+    var pendingPostAuthRoute by mutableStateOf<String?>(null)
+
     var catalog by mutableStateOf(MockCatalog.sample)
         private set
 
@@ -1313,6 +1317,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             session.saveProfile(response.profile)
             sessionExpiredBanner = null
             refreshAccount()
+            isGuestMode = false
+            authReasonBanner = null
+            val targetRoute = pendingPostAuthRoute ?: "Home"
+            pendingPostAuthRoute = null
+            if (targetRoute == "Checkout") {
+                loadQuote()
+            }
+            route = targetRoute
         } catch (e: Exception) {
             error = e.message ?: "Authentication failed. Please verify credentials."
         }
@@ -1359,10 +1371,22 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 },
                 onFailure = { errorMsg ->
                     viewModelScope.launch(Dispatchers.Main) {
-                        otpSent = false
-                        otpPreviewCode = null
-                        otpNotificationBanner = null
-                        error = "SMS dispatch failed: $errorMsg. Please check the number or verify network connection."
+                        FirebasePhoneAuthManager.storedVerificationId = null
+                        try {
+                            val response: OtpSendResponse = api.call(
+                                "/auth/otp/send",
+                                "POST",
+                                OtpSendRequest(target = resolvedTarget, type = "phone")
+                            )
+                            otpSent = true
+                            otpPreviewCode = null
+                            otpNotificationBanner = "Verification code dispatched to $resolvedTarget"
+                        } catch (e: Exception) {
+                            otpSent = false
+                            otpPreviewCode = null
+                            otpNotificationBanner = null
+                            error = "SMS dispatch failed: $errorMsg. (${e.message})"
+                        }
                     }
                 }
             )
@@ -1415,7 +1439,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                                         otpNotificationBanner = null
                                         FirebasePhoneAuthManager.storedVerificationId = null
                                         refreshAccount()
-                                        route = "Home"
+                                        isGuestMode = false
+                                        authReasonBanner = null
+                                        val targetRoute = pendingPostAuthRoute ?: "Home"
+                                        pendingPostAuthRoute = null
+                                        if (targetRoute == "Checkout") {
+                                            loadQuote()
+                                        }
+                                        route = targetRoute
                                     } else {
                                         error = "Firebase sign-in failed. Please try again."
                                     }
@@ -1452,7 +1483,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             otpPreviewCode = null
             otpNotificationBanner = null
             refreshAccount()
-            route = "Home"
+            isGuestMode = false
+            authReasonBanner = null
+            val targetRoute = pendingPostAuthRoute ?: "Home"
+            pendingPostAuthRoute = null
+            if (targetRoute == "Checkout") {
+                loadQuote()
+            }
+            route = targetRoute
         } catch (e: Exception) {
             error = e.message ?: "Invalid verification code. Please try again."
         }
@@ -1501,6 +1539,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         addresses = emptyList()
         orders = emptyList()
         favorites = emptyList()
+        isGuestMode = false
+        pendingPostAuthRoute = null
+        authReasonBanner = null
         route = "Home"
     }
 
@@ -1997,6 +2038,12 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadQuote() = run {
+        if (profile == null) {
+            authReasonBanner = "Please sign in or enter your mobile number to complete checkout & delivery."
+            pendingPostAuthRoute = "Checkout"
+            isGuestMode = false
+            return@run
+        }
         computeQuote()
 
         val liveAddr = Address(

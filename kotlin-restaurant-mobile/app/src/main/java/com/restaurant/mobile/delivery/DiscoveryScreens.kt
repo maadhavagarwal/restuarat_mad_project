@@ -57,6 +57,35 @@ fun AuthScreen(vm: DeliveryViewModel) {
             )
         }
 
+        vm.authReasonBanner?.let { reason ->
+            Surface(
+                color = RestroTokens.coral.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        tint = RestroTokens.coral,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        reason,
+                        color = RestroTokens.text,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
         vm.sessionExpiredBanner?.let { expiredMsg ->
             Surface(
                 color = Color(0xFFDC2626).copy(alpha = 0.18f),
@@ -391,6 +420,39 @@ fun AuthScreen(vm: DeliveryViewModel) {
             modifier = Modifier.padding(vertical = 4.dp)
         )
 
+        // Guest Exploration Action
+        OutlinedButton(
+            onClick = {
+                vm.isGuestMode = true
+                if (vm.pendingPostAuthRoute == null) {
+                    vm.route = "Home"
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.7f))
+        ) {
+            Icon(Icons.Default.Explore, contentDescription = null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Explore Menu as Guest", color = RestroTokens.coral, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+
+        if (vm.cart.lines.isNotEmpty()) {
+            TextButton(
+                onClick = {
+                    vm.isGuestMode = true
+                    vm.route = "Cart"
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "← Return to Cart (${vm.getCartTotalItems()} items · ${money(vm.getCartTotalAmount())})",
+                    color = RestroTokens.muted,
+                    fontSize = 13.sp
+                )
+            }
+        }
+
         Surface(
             color = RestroTokens.surface,
             shape = RoundedCornerShape(14.dp),
@@ -526,50 +588,10 @@ fun Discovery(vm: DeliveryViewModel) {
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        // Live Dine-In Tab Card (Prompt 10)
+        // Live Dine-In Tab Card (if customer has an active seated session)
         vm.activeTableTab?.let { tab ->
             item(key = "live-dine-in-tab") {
                 LiveDineInTabCard(tab = tab, onPayClick = { showTabPaymentSheet = true })
-            }
-        } ?: run {
-            // Horizontal quick-action card when activeTableTab == null (Prompt 11)
-            item(key = "walk-in-pay-bill-card") {
-                WalkInPayBillActionCard(onClick = {
-                    vm.walkInTableError = null
-                    showWalkInSheet = true
-                })
-            }
-        }
-
-        // Error notice if walk-in table bill lookup failed
-        if (vm.activeTableTab == null && vm.walkInTableError != null) {
-            item(key = "walk-in-error-notice") {
-                Surface(
-                    color = Color(0xFFEF4444).copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFFEF4444)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Default.Info, null, tint = Color(0xFFEF4444), modifier = Modifier.size(20.dp))
-                        Text(
-                            vm.walkInTableError ?: "",
-                            color = Color(0xFFFCA5A5),
-                            fontSize = 13.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = { vm.walkInTableError = null },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Close, "Dismiss error", tint = RestroTokens.muted, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
             }
         }
 
