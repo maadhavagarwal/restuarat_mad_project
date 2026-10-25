@@ -94,7 +94,7 @@ fun DeliveryInteractiveMap(
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            "OSM" -> {
+            "OSM", "Street" -> {
                 RealOpenStreetMapWebView(
                     latitude = vm.currentLatitude,
                     longitude = vm.currentLongitude,
@@ -319,8 +319,8 @@ fun DeliveryInteractiveMap(
                 Surface(
                     onClick = {
                         mapEngine = when (mapEngine) {
-                            "GMaps" -> "OSM"
-                            "OSM" -> "Canvas"
+                            "GMaps" -> "Street"
+                            "Street" -> "Vector"
                             else -> "GMaps"
                         }
                     },
@@ -333,7 +333,16 @@ fun DeliveryInteractiveMap(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(Icons.Default.Layers, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
-                        Text(mapEngine, fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(
+                            when (mapEngine) {
+                                "GMaps" -> "Google Maps"
+                                "Street" -> "Street Map"
+                                else -> "Vector Map"
+                            },
+                            fontSize = 11.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 
@@ -642,7 +651,7 @@ fun OrderTrackingRouteMap(
                             modifier = Modifier.size(13.dp)
                         )
                         Text(
-                            text = if (isOsmMode) "OSM Street" else "Dark Route",
+                            text = if (isOsmMode) "Live Street Map" else "Dark Route GPS",
                             fontSize = 11.sp,
                             color = RestroTokens.text,
                             fontWeight = FontWeight.Medium
@@ -1161,7 +1170,7 @@ fun RealOpenStreetMapWebView(
     onSelectRestaurant: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val htmlContent = remember(latitude, longitude, restaurants, selectedRestaurantId) {
+    val htmlContent = remember(latitude, longitude, restaurants.size, selectedRestaurantId) {
         val markersJs = restaurants.map { r ->
             val isSelected = r.id == selectedRestaurantId
             val markerColor = if (isSelected) "#FF5722" else "#1976D2"
@@ -1194,7 +1203,7 @@ fun RealOpenStreetMapWebView(
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
                 body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171C; }
-                .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 12px; }
+                .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 12px; font-family: sans-serif; }
                 .leaflet-popup-tip { background: #1E232B; }
             </style>
         </head>
@@ -1202,8 +1211,9 @@ fun RealOpenStreetMapWebView(
             <div id="map"></div>
             <script>
                 var map = L.map('map', { zoomControl: false }).setView([$latitude, $longitude], 13);
-                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                     maxZoom: 19,
+                    subdomains: 'abcd',
                     attribution: '&copy; OpenStreetMap'
                 }).addTo(map);
 
@@ -1239,6 +1249,7 @@ fun RealOpenStreetMapWebView(
             android.webkit.WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.userAgentString = "RestroMobile/1.0 (Android; com.restaurant.mobile)"
                 addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onRestaurantClicked(restId: String) {
@@ -1250,11 +1261,11 @@ fun RealOpenStreetMapWebView(
                         return false
                     }
                 }
-                loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+                loadDataWithBaseURL("https://cartocdn.com", htmlContent, "text/html", "UTF-8", null)
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+            webView.loadDataWithBaseURL("https://cartocdn.com", htmlContent, "text/html", "UTF-8", null)
         },
         modifier = modifier
     )
@@ -1262,7 +1273,7 @@ fun RealOpenStreetMapWebView(
 
 /**
  * Real OpenStreetMap live route tracking WebView.
- * Displays restaurant pin, delivery destination, and a live moving rider marker.
+ * Displays restaurant pin, delivery destination, and a live moving rider marker without reloading!
  */
 @android.annotation.SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1279,7 +1290,7 @@ fun RealOrderTrackingOsmWebView(
     val currentRiderLng = restaurantLng + (userLng - restaurantLng) * riderProgress
     val safeRestName = restaurantName.replace("'", "\\'")
 
-    val htmlContent = remember(restaurantLat, restaurantLng, userLat, userLng, currentRiderLat, currentRiderLng) {
+    val initialHtml = remember(restaurantLat, restaurantLng, userLat, userLng) {
         val midLat = (restaurantLat + userLat) / 2.0
         val midLng = (restaurantLng + userLng) / 2.0
         """
@@ -1291,15 +1302,16 @@ fun RealOrderTrackingOsmWebView(
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
                 body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171C; }
-                .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 10px; }
+                .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 10px; font-family: sans-serif; font-size: 12px; }
             </style>
         </head>
         <body>
             <div id="map"></div>
             <script>
                 var map = L.map('map', { zoomControl: false }).setView([$midLat, $midLng], 14);
-                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                     maxZoom: 19,
+                    subdomains: 'abcd',
                     attribution: '&copy; OpenStreetMap'
                 }).addTo(map);
 
@@ -1323,16 +1335,22 @@ fun RealOrderTrackingOsmWebView(
 
                 // Route Polyline
                 var latlngs = [[$restaurantLat, $restaurantLng], [$userLat, $userLng]];
-                L.polyline(latlngs, { color: '#FF5722', weight: 4, dashArray: '8, 8' }).addTo(map);
+                L.polyline(latlngs, { color: '#FF5722', weight: 4, dashArray: '6, 6' }).addTo(map);
 
                 // Moving Rider Marker
-                L.circleMarker([$currentRiderLat, $currentRiderLng], {
-                    radius: 10,
+                var riderMarker = L.circleMarker([$restaurantLat, $restaurantLng], {
+                    radius: 9,
                     fillColor: '#3B82F6',
                     color: '#FFF',
                     weight: 3,
                     fillOpacity: 1
-                }).addTo(map).bindPopup('<b>🛵 Delivery Partner (Moving)</b>');
+                }).addTo(map).bindPopup('<b>🛵 Delivery Partner (Live)</b>');
+
+                window.updateRider = function(lat, lng) {
+                    if (riderMarker) {
+                        riderMarker.setLatLng([lat, lng]);
+                    }
+                };
             </script>
         </body>
         </html>
@@ -1344,16 +1362,18 @@ fun RealOrderTrackingOsmWebView(
             android.webkit.WebView(ctx).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.userAgentString = "RestroMobile/1.0 (Android; com.restaurant.mobile)"
                 webViewClient = object : android.webkit.WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                         return false
                     }
                 }
-                loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+                loadDataWithBaseURL("https://cartocdn.com", initialHtml, "text/html", "UTF-8", null)
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL("https://openstreetmap.org", htmlContent, "text/html", "UTF-8", null)
+            // Smoothly update marker coordinates without reloading the page every frame!
+            webView.evaluateJavascript("if (window.updateRider) { window.updateRider($currentRiderLat, $currentRiderLng); }", null)
         },
         modifier = modifier
     )

@@ -1225,18 +1225,49 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun refresh() = run {
-        try {
-            val remoteCatalog: Catalog = api.call("/catalog")
-            if (remoteCatalog.restaurants.isNotEmpty()) {
-                catalog = remoteCatalog
+    fun refresh() {
+        viewModelScope.launch {
+            busy = true
+            try {
+                // 1. Reload local SQLite catalog
+                val localRestaurants = withContext(Dispatchers.IO) { sqlDb.getAllRestaurants() }
+                val localDishes = withContext(Dispatchers.IO) { sqlDb.getAllDishes() }
+                if (localRestaurants.isNotEmpty()) {
+                    catalog = Catalog(localRestaurants, localDishes)
+                }
+
+                // 2. Fetch from Cloud Firestore if available
+                cloudEngine.observeCatalogRealTime(
+                    onCatalogUpdated = { cat ->
+                        if (cat.restaurants.isNotEmpty()) {
+                            catalog = cat
+                        }
+                    }
+                )
+
+                // 3. Refresh user bookings and orders
+                val currentUserId = profile?.id ?: "guest"
+                userTableBookings = withContext(Dispatchers.IO) { sqlDb.getTableBookingsForUser(currentUserId) }
+                orders = withContext(Dispatchers.IO) { sqlDb.getOrdersForUser(currentUserId).ifEmpty { sqlDb.getAllOrders() } }
+                profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
+                observeActiveTableTab()
+
+                // 4. Try remote backend if configured
+                try {
+                    val remoteCatalog: Catalog = api.call("/catalog")
+                    if (remoteCatalog.restaurants.isNotEmpty()) {
+                        catalog = remoteCatalog
+                    }
+                } catch (_: Exception) {}
+
+                if (api.token != null) refreshAccount()
+            } catch (e: Exception) {
+                // Keep current state gracefully
+            } finally {
+                kotlinx.coroutines.delay(600)
+                busy = false
             }
-        } catch (_: Exception) {
-            catalog = MockCatalog.sample
         }
-        profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
-        observeActiveTableTab()
-        if (api.token != null) refreshAccount()
     }
 
     var payrollRecords by mutableStateOf<List<StaffPayrollRecord>>(emptyList())

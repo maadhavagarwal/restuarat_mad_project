@@ -559,53 +559,50 @@ fun Discovery(vm: DeliveryViewModel) {
     var showLandmarkSheet by rememberSaveable { mutableStateOf(false) }
     val restaurant = vm.catalog.restaurants.find { it.id == vm.restaurantId }
     val detail = vm.route == "Restaurant"
-    val dishes =
-        vm.catalog.dishes
-            .filter {
-                (!detail || it.restaurantId == vm.restaurantId) &&
-                    (!vm.vegetarian || it.vegetarian) &&
-                    (vm.category.isBlank() || it.category == vm.category) &&
-                    (vm.query.isBlank() || it.name.contains(vm.query, true))
-            }
-            .let { if (vm.sortPrice) it.sortedBy { d -> d.price } else it }
 
-    val nearestRestaurants =
+    // Search query matching: searches dishes across name, description, and category
+    val matchingDishes = remember(vm.query, vm.vegetarian, vm.category, vm.sortPrice, vm.catalog.dishes, detail, vm.restaurantId) {
+        if (vm.query.isBlank() && !detail) emptyList()
+        else {
+            vm.catalog.dishes.filter { d ->
+                (!detail || d.restaurantId == vm.restaurantId) &&
+                (!vm.vegetarian || d.vegetarian) &&
+                (vm.category.isBlank() || d.category == vm.category) &&
+                (vm.query.isBlank() ||
+                    d.name.contains(vm.query, ignoreCase = true) ||
+                    d.description.contains(vm.query, ignoreCase = true) ||
+                    d.category.contains(vm.query, ignoreCase = true))
+            }.let { if (vm.sortPrice) it.sortedBy { d -> d.price } else it }
+        }
+    }
+
+    val nearestRestaurants = remember(vm.route, vm.favorites, vm.query, vm.currentLatitude, vm.currentLongitude, vm.catalog) {
         vm.getNearestRestaurants().filter {
             (vm.route != "Favorites" || it.id in vm.favorites) &&
-                (vm.query.isBlank() ||
-                    it.name.contains(vm.query, true) ||
-                    it.cuisine.contains(vm.query, true) ||
-                    vm.catalog.dishes.any { d ->
-                        d.restaurantId == it.id && d.name.contains(vm.query, true)
-                    })
+            (vm.query.isBlank() ||
+                it.name.contains(vm.query, ignoreCase = true) ||
+                it.cuisine.contains(vm.query, ignoreCase = true) ||
+                vm.catalog.dishes.any { d ->
+                    d.restaurantId == it.id && (d.name.contains(vm.query, ignoreCase = true) || d.category.contains(vm.query, ignoreCase = true))
+                })
         }
+    }
 
     var showTabPaymentSheet by rememberSaveable { mutableStateOf(false) }
     var showWalkInSheet by rememberSaveable { mutableStateOf(false) }
 
-    LazyColumn(
-        Modifier.fillMaxSize().testTag("discovery-list"),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+    Column(
+        modifier = Modifier.fillMaxSize()
     ) {
-        // Live Dine-In Tab Card (if customer has an active seated session)
-        vm.activeTableTab?.let { tab ->
-            item(key = "live-dine-in-tab") {
-                LiveDineInTabCard(tab = tab, onPayClick = { showTabPaymentSheet = true })
-            }
-        }
-
-        item {
-            Heading(
-                if (detail) restaurant?.name ?: "Restaurant"
-                else if (vm.route == "Favorites") "Your favourites" else "What sounds\ngood today?",
-                if (detail) restaurant?.description else "Discover restaurants delivering near you.",
-            )
-        }
-
-        // 1. Dynamic Delivery Landmark Header Pill
-        if (!detail && vm.route != "Favorites") {
-            item {
+        // Sticky Header: Address/Back Navigation + Permanent Search Bar + Filter Chips
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Landmark address or Restaurant Back bar
+            if (!detail && vm.route != "Favorites") {
                 Surface(
                     onClick = { showLandmarkSheet = true },
                     color = RestroTokens.surface,
@@ -613,18 +610,18 @@ fun Discovery(vm: DeliveryViewModel) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
+                                .size(36.dp)
                                 .clip(CircleShape)
                                 .background(RestroTokens.coral.copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -645,149 +642,62 @@ fun Discovery(vm: DeliveryViewModel) {
                             Text(
                                 text = vm.currentLandmark,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
+                                fontSize = 13.sp,
                                 color = RestroTokens.text,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                         Icon(Icons.Default.KeyboardArrowDown, "Change Landmark", tint = RestroTokens.muted)
                     }
                 }
-            }
-        }
-
-        if (detail && restaurant != null)
-            item {
-                RestaurantCard(restaurant, vm, false)
+            } else if (detail) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = { vm.route = "Reviews" },
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Default.Star, null, tint = Color(0xFFFFB800), modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Reviews (${vm.reviews.size})")
+                    IconButton(onClick = { vm.route = "Home" }) {
+                        Icon(Icons.Default.ArrowBack, "Back to Home", tint = RestroTokens.text)
                     }
-                    Button(
-                        onClick = { vm.route = "Map" },
-                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surface),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Icon(Icons.Default.Map, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("View on Map", color = RestroTokens.text)
-                    }
-                }
-                Button(
-                    onClick = {
-                        vm.resetTableBookingDraft(restaurant.id, restaurant.name)
-                        vm.route = "BookTable"
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                    shape = RoundedCornerShape(14.dp)
-                ) {
-                    Icon(
-                        Icons.Default.CalendarToday,
-                        contentDescription = null,
-                        tint = RestroTokens.canvas,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
                     Text(
-                        "Book a Table",
-                        color = RestroTokens.canvas,
-                        fontWeight = FontWeight.Bold
+                        text = restaurant?.name ?: "Restaurant Menu",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = RestroTokens.text,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
             }
 
-        // 2. Frequently Ordered / Quick Reorder Carousel
-        if (!detail && vm.route != "Favorites" && vm.query.isBlank()) {
-            val frequentlyOrdered = vm.getFrequentlyOrderedDishes()
-            if (frequentlyOrdered.isNotEmpty()) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text("Frequently Ordered / Quick Reorder", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                Text("Tap to reorder your cravings with 1 tap", fontSize = 12.sp, color = RestroTokens.muted)
-                            }
-                            Icon(Icons.Default.Bolt, null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
-                        }
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            contentPadding = PaddingValues(horizontal = 2.dp)
-                        ) {
-                            items(frequentlyOrdered) { (dish, restName) ->
-                                QuickReorderCard(dish = dish, restaurantName = restName, vm = vm)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!detail && vm.route != "Favorites") {
-            item {
-                Surface(
-                    onClick = { vm.route = "Map" },
-                    color = RestroTokens.surface,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(RestroTokens.coral.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Explore, null, tint = RestroTokens.coral, modifier = Modifier.size(22.dp))
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Interactive City Food Map", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Explore restaurants & delivery radius live on map", fontSize = 12.sp, color = RestroTokens.muted)
-                        }
-                        Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
-                    }
-                }
-            }
-        }
-
-        item {
+            // Fixed Permanent Search Bar (Always stays mounted, never loses focus on keystroke!)
             OutlinedTextField(
                 value = vm.query,
                 onValueChange = { vm.query = it },
                 placeholder = {
-                    Text(if (detail) "Search this menu" else "Restaurants, dishes, cravings")
+                    Text(if (detail) "Search this menu (e.g. Biryani, Burger)..." else "Restaurants, dishes, cravings...")
                 },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
+                leadingIcon = { Icon(Icons.Default.Search, null, tint = RestroTokens.coral) },
                 trailingIcon = {
-                    if (vm.query.isNotEmpty())
+                    if (vm.query.isNotEmpty()) {
                         IconButton(onClick = { vm.query = "" }) {
-                            Icon(Icons.Default.Close, "Clear search")
+                            Icon(Icons.Default.Close, "Clear search", tint = RestroTokens.muted)
                         }
+                    }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = RestroTokens.coral,
+                    unfocusedBorderColor = Color(0xFF2C323E),
+                    focusedContainerColor = RestroTokens.surface,
+                    unfocusedContainerColor = RestroTokens.surface
+                )
             )
-        }
 
-        item {
+            // Category & Preference Filter Chips
             val availableCategories = if (detail) {
                 vm.catalog.dishes.filter { it.restaurantId == vm.restaurantId }.map { it.category }.distinct()
             } else {
@@ -798,14 +708,14 @@ fun Discovery(vm: DeliveryViewModel) {
                     FilterChip(
                         selected = vm.vegetarian,
                         onClick = { vm.vegetarian = !vm.vegetarian },
-                        label = { Text("Vegetarian") },
+                        label = { Text("Veg Only 🌱") },
                     )
                 }
                 item {
                     FilterChip(
                         selected = vm.sortPrice,
                         onClick = { vm.sortPrice = !vm.sortPrice },
-                        label = { Text("Price: low to high") },
+                        label = { Text("Price: Low ↗") },
                     )
                 }
                 item {
@@ -818,212 +728,277 @@ fun Discovery(vm: DeliveryViewModel) {
                 items(availableCategories) { category ->
                     FilterChip(
                         selected = vm.category == category,
-                        onClick = { vm.category = category },
+                        onClick = { vm.category = if (vm.category == category) "" else category },
                         label = { Text(category) },
                     )
                 }
             }
         }
 
-        // 3. Nearest Restaurants Section Sorted by Distance
-        if (!detail) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
+        // Scrollable Results List
+        LazyColumn(
+            Modifier.fillMaxSize().testTag("discovery-list"),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            // Live Dine-In Tab Card (if customer has an active seated session)
+            vm.activeTableTab?.let { tab ->
+                item(key = "live-dine-in-tab") {
+                    LiveDineInTabCard(tab = tab, onPayClick = { showTabPaymentSheet = true })
+                }
+            }
+
+            if (detail && restaurant != null) {
+                item(key = "restaurant-detail-header") {
+                    RestaurantCard(restaurant, vm, false)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { vm.route = "Reviews" },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Star, null, tint = Color(0xFFFFB800), modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Reviews (${vm.reviews.size})")
+                        }
+                        Button(
+                            onClick = { vm.route = "Map" },
+                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surface),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Map, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("View on Map", color = RestroTokens.text)
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            vm.resetTableBookingDraft(restaurant.id, restaurant.name)
+                            vm.route = "BookTable"
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.CalendarToday,
+                            contentDescription = null,
+                            tint = RestroTokens.canvas,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            if (vm.route == "Favorites") "Your Saved Favorites" else "Nearest Restaurants",
-                            style = MaterialTheme.typography.titleMedium,
+                            "Book a Table",
+                            color = RestroTokens.canvas,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            "Sorted by real-time distance from ${vm.currentLandmark.substringBefore(",")}",
-                            fontSize = 12.sp,
-                            color = RestroTokens.muted
-                        )
-                    }
-                    Surface(
-                        color = RestroTokens.surface,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            "${nearestRestaurants.size} places",
-                            fontSize = 11.sp,
-                            color = RestroTokens.muted,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
                     }
                 }
             }
 
-            items(nearestRestaurants, key = { "restaurant-${it.id}" }) { RestaurantCard(it, vm, true) }
-            if (nearestRestaurants.isEmpty())
-                item {
-                    Text(
-                        if (vm.route == "Favorites")
-                            "Save a restaurant using its heart button to find it here."
-                        else "No restaurants found. Try another search.",
-                        color = RestroTokens.muted,
-                    )
-                }
-        }
-
-        // 4. In-Menu Dish List with Inline Quantity Stepper (No Jarring Redirect!)
-        if (detail) {
-            item {
-                Text(
-                    "On the menu",
-                    style = MaterialTheme.typography.headlineMedium,
-                )
-            }
-            items(dishes, key = { "dish-${it.id}" }) { dish ->
-                val inCartQty = vm.getDishQuantityInCart(dish.id)
-
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                if (dish.vegetarian) "● VEGETARIAN" else "NON-VEGETARIAN",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (dish.vegetarian) RestroTokens.green else RestroTokens.muted,
-                            )
-                            if (dish.addons.isNotEmpty()) {
-                                Text("· Customisable", fontSize = 10.sp, color = RestroTokens.coral)
-                            }
-                        }
-                        Text(
-                            dish.name,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            modifier = Modifier.clickable {
-                                vm.dishId = dish.id
-                                vm.restaurantId = dish.restaurantId
-                                vm.route = "Food"
-                            }
+            // WHEN QUERY IS BLANK: Normal Discovery Feed
+            if (vm.query.isBlank()) {
+                if (!detail) {
+                    item(key = "discovery-heading") {
+                        Heading(
+                            if (vm.route == "Favorites") "Your favourites" else "What sounds\ngood today?",
+                            "Discover restaurants delivering near you."
                         )
-                        Text(
-                            dish.description,
-                            color = RestroTokens.muted,
-                            maxLines = 2,
-                            fontSize = 12.sp,
-                        )
-                        Text(money(dish.price), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-
-                        if (dish.addons.isNotEmpty()) {
-                            Text(
-                                "Customize Add-ons +",
-                                color = RestroTokens.coral,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.clickable {
-                                    vm.dishId = dish.id
-                                    vm.restaurantId = dish.restaurantId
-                                    vm.route = "Food"
-                                }
-                            )
-                        }
                     }
 
-                    // Image + Inline Stepper
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Photo(
-                            dish.image,
-                            dish.name,
-                            Modifier.size(100.dp)
-                                .clip(RestroTokens.shape)
-                                .clickable {
-                                    vm.dishId = dish.id
-                                    vm.restaurantId = dish.restaurantId
-                                    vm.route = "Food"
+                    // Frequently Ordered Carousel
+                    if (vm.route != "Favorites") {
+                        val frequentlyOrdered = vm.getFrequentlyOrderedDishes()
+                        if (frequentlyOrdered.isNotEmpty()) {
+                            item(key = "frequently-ordered-carousel") {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("Frequently Ordered / Quick Reorder", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Text("Tap to reorder your cravings with 1 tap", fontSize = 12.sp, color = RestroTokens.muted)
+                                        }
+                                        Icon(Icons.Default.Bolt, null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
+                                    }
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        contentPadding = PaddingValues(horizontal = 2.dp)
+                                    ) {
+                                        items(frequentlyOrdered) { (dish, restName) ->
+                                            QuickReorderCard(dish = dish, restaurantName = restName, vm = vm)
+                                        }
+                                    }
                                 }
-                        )
+                            }
+                        }
 
-                        if (!dish.available) {
+                        // Interactive City Food Map Banner
+                        item(key = "city-map-banner") {
                             Surface(
-                                color = Color(0xFF262A32),
+                                onClick = { vm.route = "Map" },
+                                color = RestroTokens.surface,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(RestroTokens.coral.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(Icons.Default.Explore, null, tint = RestroTokens.coral, modifier = Modifier.size(22.dp))
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Interactive City Food Map", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        Text("Explore restaurants & delivery radius live on map", fontSize = 12.sp, color = RestroTokens.muted)
+                                    }
+                                    Icon(Icons.Default.ChevronRight, null, tint = RestroTokens.muted)
+                                }
+                            }
+                        }
+                    }
+
+                    // Nearest Restaurants Header
+                    item(key = "nearest-restaurants-header") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    if (vm.route == "Favorites") "Your Saved Favorites" else "Nearest Restaurants",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Sorted by real-time distance from ${vm.currentLandmark.substringBefore(",")}",
+                                    fontSize = 12.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                            Surface(
+                                color = RestroTokens.surface,
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(
-                                    "Unavailable",
+                                    "${nearestRestaurants.size} places",
                                     fontSize = 11.sp,
                                     color = RestroTokens.muted,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
                             }
-                        } else if (inCartQty == 0) {
-                            // Inline "ADD +" Button (No jarring redirect!)
-                            Button(
+                        }
+                    }
+
+                    items(nearestRestaurants, key = { "restaurant-${it.id}" }) {
+                        RestaurantCard(it, vm, true)
+                    }
+
+                    if (nearestRestaurants.isEmpty()) {
+                        item(key = "empty-restaurants") {
+                            Text(
+                                if (vm.route == "Favorites") "Save a restaurant using its heart button to find it here."
+                                else "No restaurants found nearby.",
+                                color = RestroTokens.muted
+                            )
+                        }
+                    }
+                } else {
+                    // Detail in-menu dish list
+                    item(key = "on-menu-header") {
+                        Text("On the menu", style = MaterialTheme.typography.headlineMedium)
+                    }
+                    items(matchingDishes, key = { "dish-${it.id}" }) { dish ->
+                        DiscoveryDishRow(dish = dish, vm = vm, showRestaurantBadge = false)
+                    }
+                    if (matchingDishes.isEmpty()) {
+                        item(key = "empty-menu-dish") {
+                            Text("No dishes match these filters.")
+                            TextButton(
                                 onClick = {
-                                    vm.tryAddDish(dish, emptyList(), 1, redirectToCart = false)
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                modifier = Modifier.height(34.dp)
-                            ) {
-                                Text("ADD +", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = RestroTokens.canvas)
-                            }
-                        } else {
-                            // Inline Quantity Stepper [-]  qty  [+]
-                            Surface(
-                                color = RestroTokens.surface,
-                                shape = RoundedCornerShape(10.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, RestroTokens.coral)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                ) {
-                                    IconButton(
-                                        onClick = { vm.decrementDish(dish) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Default.Remove, null, tint = RestroTokens.coral, modifier = Modifier.size(15.dp))
-                                    }
-                                    Text(
-                                        inCartQty.toString(),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = RestroTokens.text
-                                    )
-                                    IconButton(
-                                        onClick = { vm.incrementDish(dish) },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(Icons.Default.Add, null, tint = RestroTokens.coral, modifier = Modifier.size(15.dp))
-                                    }
+                                    vm.query = ""
+                                    vm.category = ""
+                                    vm.vegetarian = false
                                 }
+                            ) {
+                                Text("Clear filters")
                             }
                         }
                     }
                 }
-                HorizontalDivider(color = Color.White.copy(alpha = .08f))
-            }
-            if (dishes.isEmpty())
-                item {
-                    Text("No dishes match these filters.")
-                    TextButton(
-                        onClick = {
-                            vm.query = ""
-                            vm.category = ""
-                            vm.vegetarian = false
+            } else {
+                // WHEN SEARCH QUERY IS ACTIVE:
+                // Section 1: Matching Dishes (with 1-tap ADD TO CART!)
+                if (matchingDishes.isNotEmpty()) {
+                    item(key = "search-matching-dishes-header") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Dishes (${matchingDishes.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text("Tap to add directly", fontSize = 12.sp, color = RestroTokens.coral)
                         }
-                    ) {
-                        Text("Clear filters")
+                    }
+                    items(matchingDishes, key = { "search-dish-${it.id}" }) { dish ->
+                        DiscoveryDishRow(dish = dish, vm = vm, showRestaurantBadge = !detail)
                     }
                 }
+
+                // Section 2: Matching Restaurants
+                if (!detail && nearestRestaurants.isNotEmpty()) {
+                    item(key = "search-matching-restaurants-header") {
+                        Text("Restaurants (${nearestRestaurants.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                    items(nearestRestaurants, key = { "search-restaurant-${it.id}" }) {
+                        RestaurantCard(it, vm, true)
+                    }
+                }
+
+                // If both are empty:
+                if (matchingDishes.isEmpty() && (detail || nearestRestaurants.isEmpty())) {
+                    item(key = "search-no-results") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Search, null, tint = RestroTokens.muted, modifier = Modifier.size(44.dp))
+                            Text(
+                                "No dishes or restaurants found for \"${vm.query}\"",
+                                fontWeight = FontWeight.SemiBold,
+                                color = RestroTokens.text,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Text(
+                                "Try searching for Biryani, Pizza, Burger, Noodles, or Paneer",
+                                fontSize = 12.sp,
+                                color = RestroTokens.muted,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Button(
+                                onClick = { vm.query = "" },
+                                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surface),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Clear Search", color = RestroTokens.coral)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1070,6 +1045,155 @@ fun Discovery(vm: DeliveryViewModel) {
             onDismiss = { vm.dismissDineInReceipt() }
         )
     }
+}
+
+@Composable
+fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boolean = false) {
+    val inCartQty = vm.getDishQuantityInCart(dish.id)
+    val restaurantName = remember(dish.restaurantId, vm.catalog.restaurants) {
+        vm.catalog.restaurants.find { it.id == dish.restaurantId }?.name
+    }
+
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    if (dish.vegetarian) "● VEGETARIAN" else "NON-VEGETARIAN",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (dish.vegetarian) RestroTokens.green else RestroTokens.muted,
+                )
+                if (dish.addons.isNotEmpty()) {
+                    Text("· Customisable", fontSize = 10.sp, color = RestroTokens.coral)
+                }
+            }
+            if (showRestaurantBadge && restaurantName != null) {
+                Surface(
+                    color = RestroTokens.surface,
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        "📍 $restaurantName",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RestroTokens.coral,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+            Text(
+                dish.name,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                modifier = Modifier.clickable {
+                    vm.dishId = dish.id
+                    vm.restaurantId = dish.restaurantId
+                    vm.route = "Food"
+                }
+            )
+            Text(
+                dish.description,
+                color = RestroTokens.muted,
+                maxLines = 2,
+                fontSize = 12.sp,
+            )
+            Text(money(dish.price), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+
+            if (dish.addons.isNotEmpty()) {
+                Text(
+                    "Customize Add-ons +",
+                    color = RestroTokens.coral,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable {
+                        vm.dishId = dish.id
+                        vm.restaurantId = dish.restaurantId
+                        vm.route = "Food"
+                    }
+                )
+            }
+        }
+
+        // Image + Inline Stepper
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Photo(
+                dish.image,
+                dish.name,
+                Modifier.size(96.dp)
+                    .clip(RestroTokens.shape)
+                    .clickable {
+                        vm.dishId = dish.id
+                        vm.restaurantId = dish.restaurantId
+                        vm.route = "Food"
+                    }
+            )
+
+            if (!dish.available) {
+                Surface(
+                    color = Color(0xFF262A32),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        "Unavailable",
+                        fontSize = 11.sp,
+                        color = RestroTokens.muted,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            } else if (inCartQty == 0) {
+                Button(
+                    onClick = {
+                        vm.tryAddDish(dish, emptyList(), 1, redirectToCart = false)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Text("ADD +", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = RestroTokens.canvas)
+                }
+            } else {
+                Surface(
+                    color = RestroTokens.surface,
+                    shape = RoundedCornerShape(10.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, RestroTokens.coral)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        IconButton(
+                            onClick = { vm.decrementDish(dish) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Remove, null, tint = RestroTokens.coral, modifier = Modifier.size(15.dp))
+                        }
+                        Text(
+                            inCartQty.toString(),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = RestroTokens.text
+                        )
+                        IconButton(
+                            onClick = { vm.incrementDish(dish) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, tint = RestroTokens.coral, modifier = Modifier.size(15.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    HorizontalDivider(color = Color.White.copy(alpha = .08f))
 }
 
 /**
