@@ -164,6 +164,7 @@ object FirestoreModelMapper {
             val id = (data["id"] as? String)?.ifBlank { null } ?: docId
             val restId = (data["restaurantId"] as? String) ?: ""
             val restName = (data["restaurantName"] as? String) ?: ""
+            val tableId = (data["tableId"] as? String) ?: ""
             val tableNum = (data["tableNumber"] as? String) ?: "T1"
             val uid = (data["userId"] as? String) ?: "guest"
             val uName = (data["userName"] as? String) ?: "Guest"
@@ -175,11 +176,13 @@ object FirestoreModelMapper {
             val special = (data["specialRequests"] as? String) ?: ""
             val statusStr = (data["status"] as? String) ?: TableBookingStatus.CONFIRMED
             val createdAt = (data["createdAt"] as? String) ?: Instant.now().toString()
+            val updatedAt = (data["updatedAt"] as? String) ?: ""
 
             TableBooking(
                 id = id,
                 restaurantId = restId,
                 restaurantName = restName,
+                tableId = tableId,
                 tableNumber = tableNum,
                 userId = uid,
                 userName = uName,
@@ -190,7 +193,117 @@ object FirestoreModelMapper {
                 seatingArea = area,
                 specialRequests = special,
                 status = statusStr,
-                createdAt = createdAt
+                createdAt = createdAt,
+                updatedAt = updatedAt
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // -------------------------------------------------------------
+    // DINING TABS
+    // -------------------------------------------------------------
+
+    fun mapToDiningTab(docId: String, data: Map<String, Any?>): DiningTab? {
+        return try {
+            val id = (data["id"] as? String)?.ifBlank { null } ?: docId
+            val tableNum = (data["tableNumber"] as? String) ?: return null
+            val tableId = (data["tableId"] as? String) ?: tableNum
+            val customerId = (data["customerId"] as? String) ?: (data["userId"] as? String)
+            val customerName = (data["customerName"] as? String) ?: (data["userName"] as? String)
+            val customerPhone = (data["customerPhone"] as? String)
+            val bookingId = (data["bookingId"] as? String)
+            val restId = (data["restaurantId"] as? String) ?: ""
+            val status = (data["status"] as? String) ?: DiningTabStatus.OPEN
+            val paymentMethod = data["paymentMethod"] as? String
+            val paymentTxnId = (data["paymentTransactionId"] as? String) ?: ""
+            val guestCount = (data["guestCount"] as? Number)?.toInt() ?: 0
+            val seatedAt = (data["seatedAt"] as? String) ?: ""
+            val billedAt = (data["billedAt"] as? String) ?: ""
+            val createdAt = (data["createdAt"] as? String) ?: Instant.now().toString()
+            val updatedAt = (data["updatedAt"] as? String) ?: Instant.now().toString()
+
+            val subtotal = (data["subtotal"] as? Number)?.toLong() ?: 0L
+            val tax = (data["tax"] as? Number)?.toLong() ?: 0L
+            val serviceCharge = (data["serviceCharge"] as? Number)?.toLong() ?: 0L
+            val tip = (data["tip"] as? Number)?.toLong() ?: 0L
+            val isOptedOut = (data["isServiceChargeOptedOut"] as? Boolean) ?: false
+            val total = (data["total"] as? Number)?.toLong() ?: 0L
+
+            val items: List<TableBillItem> = when (val rawItems = data["items"] ?: data["itemsJson"]) {
+                is String -> {
+                    if (rawItems.isNotBlank()) {
+                        val listType = object : TypeToken<List<TableBillItem>>() {}.type
+                        runCatching { gson.fromJson<List<TableBillItem>>(rawItems, listType) }.getOrNull() ?: emptyList()
+                    } else emptyList()
+                }
+                is List<*> -> {
+                    rawItems.mapNotNull { item ->
+                        when (item) {
+                            is Map<*, *> -> {
+                                val itemName = item["name"] as? String ?: return@mapNotNull null
+                                val itemQty = (item["quantity"] as? Number)?.toInt() ?: 1
+                                val itemPrice = (item["price"] as? Number)?.toLong() ?: 0L
+                                val itemTotal = (item["total"] as? Number)?.toLong() ?: (itemPrice * itemQty)
+                                val itemDishId = (item["dishId"] as? String) ?: ""
+                                val itemOrderedAt = (item["orderedAt"] as? String) ?: createdAt
+                                val itemId = (item["id"] as? String) ?: java.util.UUID.randomUUID().toString()
+                                val menuItemId = (item["menuItemId"] as? Number)?.toLong() ?: 0L
+                                val taxRate = (item["taxRate"] as? Number)?.toDouble() ?: 5.0
+                                val special = (item["specialInstructions"] as? String) ?: ""
+                                val addedAt = (item["addedAt"] as? String) ?: itemOrderedAt
+                                val round = (item["round"] as? Number)?.toInt() ?: 1
+                                val roundName = (item["roundName"] as? String) ?: ""
+                                TableBillItem(
+                                    dishId = itemDishId,
+                                    name = itemName,
+                                    quantity = itemQty,
+                                    price = itemPrice,
+                                    total = itemTotal,
+                                    orderedAt = itemOrderedAt,
+                                    id = itemId,
+                                    menuItemId = menuItemId,
+                                    taxRate = taxRate,
+                                    specialInstructions = special,
+                                    addedAt = addedAt,
+                                    round = round,
+                                    roundName = roundName
+                                )
+                            }
+                            else -> null
+                        }
+                    }
+                }
+                else -> emptyList()
+            }
+
+            DiningTab(
+                id = id,
+                tableId = tableId,
+                tableNumber = tableNum,
+                customerId = customerId,
+                customerName = customerName,
+                customerPhone = customerPhone,
+                bookingId = bookingId,
+                userId = customerId,
+                userName = customerName ?: "Guest Diner",
+                items = items,
+                subtotal = subtotal,
+                tax = tax,
+                serviceCharge = serviceCharge,
+                tip = tip,
+                isServiceChargeOptedOut = isOptedOut,
+                total = total,
+                status = status,
+                paymentMethod = paymentMethod,
+                createdAt = createdAt,
+                updatedAt = updatedAt,
+                restaurantId = restId,
+                guestCount = guestCount,
+                seatedAt = seatedAt,
+                billedAt = billedAt,
+                paymentTransactionId = paymentTxnId
             )
         } catch (_: Exception) {
             null

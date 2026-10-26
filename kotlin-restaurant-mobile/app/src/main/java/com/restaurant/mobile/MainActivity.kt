@@ -332,6 +332,12 @@ fun RestaurantMobileApp(
         deliveryVm?.cloudEngine?.observeKotTicketsRealTime("rest-1") { updatedKots ->
             kots = updatedKots
         }
+        deliveryVm?.cloudEngine?.observeDiningTabsRealTime("rest-1") {
+            refreshAll()
+        }
+        deliveryVm?.cloudEngine?.observeTableBookingsRealTime(restaurantId = "rest-1", isStaff = true) {
+            refreshAll()
+        }
     }
 
     MaterialTheme(

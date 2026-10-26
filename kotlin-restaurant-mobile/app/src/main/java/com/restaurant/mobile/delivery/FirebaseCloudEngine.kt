@@ -38,6 +38,7 @@ class FirebaseCloudEngine(
 
     private var ordersListenerReg: ListenerRegistration? = null
     private var tabListenerReg: ListenerRegistration? = null
+    private var diningTabsListenerReg: ListenerRegistration? = null
     private var bookingsListenerReg: ListenerRegistration? = null
     private var userListenerReg: ListenerRegistration? = null
     private var addressesListenerReg: ListenerRegistration? = null
@@ -363,7 +364,7 @@ class FirebaseCloudEngine(
 
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
-            onSuccess()
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
             return
         }
 
@@ -372,6 +373,7 @@ class FirebaseCloudEngine(
                 "id" to booking.id,
                 "restaurantId" to booking.restaurantId,
                 "restaurantName" to booking.restaurantName,
+                "tableId" to booking.tableId,
                 "tableNumber" to booking.tableNumber,
                 "userId" to booking.userId,
                 "userName" to booking.userName,
@@ -383,7 +385,7 @@ class FirebaseCloudEngine(
                 "specialRequests" to booking.specialRequests,
                 "status" to booking.status,
                 "createdAt" to booking.createdAt,
-                "updatedAt" to Instant.now().toString()
+                "updatedAt" to (if (booking.updatedAt.isNotBlank()) booking.updatedAt else Instant.now().toString())
             )
             db.collection("table_bookings").document(booking.id)
                 .set(bookingMap)
@@ -401,21 +403,42 @@ class FirebaseCloudEngine(
     }
 
     fun observeTableBookingsRealTime(
-        userId: String,
+        userId: String = "",
+        restaurantId: String = "",
+        isStaff: Boolean = false,
         onBookingsUpdated: (List<TableBooking>) -> Unit
     ) {
-        val channelId = "bookings:$userId"
+        val channelId = if (isStaff && restaurantId.isNotBlank()) {
+            "bookings:rest:$restaurantId"
+        } else if (isStaff) {
+            "bookings:staff"
+        } else if (userId.isNotBlank() && userId != "guest") {
+            "bookings:user:$userId"
+        } else {
+            "bookings:all"
+        }
+
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
-            onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
+            val fallback = if (isStaff) {
+                if (restaurantId.isNotBlank()) localSqlDb.getAllTableBookings().filter { it.restaurantId == restaurantId } else localSqlDb.getAllTableBookings()
+            } else {
+                localSqlDb.getTableBookingsForUser(userId)
+            }
+            onBookingsUpdated(fallback)
             return
         }
 
         try {
-            val query = if (userId.isNotBlank() && userId != "guest") {
-                db.collection("table_bookings").whereEqualTo("userId", userId)
-            } else {
-                db.collection("table_bookings")
+            val query: Query = when {
+                isStaff && restaurantId.isNotBlank() ->
+                    db.collection("table_bookings").whereEqualTo("restaurantId", restaurantId)
+                isStaff ->
+                    db.collection("table_bookings")
+                userId.isNotBlank() && userId != "guest" ->
+                    db.collection("table_bookings").whereEqualTo("userId", userId)
+                else ->
+                    db.collection("table_bookings")
             }
 
             bookingsListenerReg = subscriptionManager.attachQueryListener(
@@ -423,28 +446,39 @@ class FirebaseCloudEngine(
                 scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
                 query = query,
                 onSnapshot = { snapshot, _ ->
-                    val bookings = mutableListOf<TableBooking>()
-                    for (doc in snapshot.documents) {
-                        val parsed = FirestoreModelMapper.mapToTableBooking(doc.id, doc.data ?: emptyMap())
-                        if (parsed != null) {
-                            bookings.add(parsed)
-                            localSqlDb.saveTableBooking(parsed)
-                        }
-                    }
+                    subscriptionManager.processDocumentChanges(
+                        channelId = channelId,
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToTableBooking(id, data) },
+                        onAdded = { booking -> localSqlDb.upsertTableBookingFromCloud(booking) },
+                        onModified = { booking -> localSqlDb.upsertTableBookingFromCloud(booking) },
+                        onRemoved = { docId -> localSqlDb.deleteTableBookingFromCloud(docId) }
+                    )
 
-                    if (bookings.isNotEmpty()) {
-                        onBookingsUpdated(bookings)
+                    val updated = if (isStaff) {
+                        if (restaurantId.isNotBlank()) localSqlDb.getAllTableBookings().filter { it.restaurantId == restaurantId } else localSqlDb.getAllTableBookings()
                     } else {
-                        onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
+                        localSqlDb.getTableBookingsForUser(userId)
                     }
+                    onBookingsUpdated(updated)
                 },
                 onError = { err ->
                     Log.w(tag, "Table bookings subscription error: ${err.message}")
-                    onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
+                    val fallback = if (isStaff) {
+                        if (restaurantId.isNotBlank()) localSqlDb.getAllTableBookings().filter { it.restaurantId == restaurantId } else localSqlDb.getAllTableBookings()
+                    } else {
+                        localSqlDb.getTableBookingsForUser(userId)
+                    }
+                    onBookingsUpdated(fallback)
                 }
             )
         } catch (_: Exception) {
-            onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
+            val fallback = if (isStaff) {
+                if (restaurantId.isNotBlank()) localSqlDb.getAllTableBookings().filter { it.restaurantId == restaurantId } else localSqlDb.getAllTableBookings()
+            } else {
+                localSqlDb.getTableBookingsForUser(userId)
+            }
+            onBookingsUpdated(fallback)
         }
     }
 
@@ -459,33 +493,98 @@ class FirebaseCloudEngine(
 
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
-            onSuccess()
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
             return
         }
 
         try {
+            val effectiveId = if (tab.id.isNotBlank()) tab.id else java.util.UUID.randomUUID().toString()
+            val updatedAt = if (tab.updatedAt.isNotBlank()) tab.updatedAt else Instant.now().toString()
             val tabMap = mapOf(
-                "id" to tab.id,
-                "tableNumber" to tab.tableNumber,
-                "customerName" to (tab.customerName ?: "Guest"),
-                "userId" to (tab.userId ?: "guest"),
+                "id" to effectiveId,
+                "tableId" to tab.tableId.ifBlank { tab.tableNumber.trim() },
+                "tableNumber" to tab.tableNumber.trim(),
+                "bookingId" to (tab.bookingId ?: ""),
+                "userId" to (tab.userId ?: tab.customerId ?: "guest"),
+                "userName" to (tab.userName.ifBlank { tab.customerName ?: "Guest Diner" }),
+                "customerId" to (tab.customerId ?: tab.userId ?: ""),
+                "customerName" to (tab.customerName ?: tab.userName),
+                "customerPhone" to (tab.customerPhone ?: ""),
                 "itemsJson" to gson.toJson(tab.items),
                 "subtotal" to tab.subtotal,
                 "tax" to tab.tax,
                 "serviceCharge" to tab.serviceCharge,
                 "tip" to tab.tip,
+                "isServiceChargeOptedOut" to tab.isServiceChargeOptedOut,
                 "total" to tab.total,
                 "status" to tab.status,
                 "paymentMethod" to (tab.paymentMethod ?: ""),
-                "createdAt" to tab.createdAt,
-                "updatedAt" to Instant.now().toString()
+                "paymentTransactionId" to tab.paymentTransactionId,
+                "guestCount" to tab.guestCount,
+                "seatedAt" to tab.seatedAt,
+                "billedAt" to tab.billedAt,
+                "restaurantId" to tab.restaurantId,
+                "createdAt" to tab.createdAt.ifBlank { updatedAt },
+                "updatedAt" to updatedAt
             )
-            db.collection("dining_tabs").document(tab.id)
+            db.collection("dining_tabs").document(effectiveId)
                 .set(tabMap)
-                .addOnSuccessListener { onSuccess() }
-                .addOnFailureListener { onError(it) }
+                .addOnSuccessListener {
+                    Log.d(tag, "Dining tab $effectiveId synced to Cloud Firestore.")
+                    onSuccess()
+                }
+                .addOnFailureListener { err ->
+                    Log.w(tag, "Dining tab saved locally; Firestore sync pending: ${err.message}")
+                    onError(err)
+                }
         } catch (e: Exception) {
             onError(e)
+        }
+    }
+
+    fun observeDiningTabsRealTime(
+        restaurantId: String = "",
+        onTabsUpdated: (List<DiningTab>) -> Unit
+    ) {
+        val channelId = if (restaurantId.isNotBlank()) "dining_tabs:rest:$restaurantId" else "dining_tabs:all"
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            val fallback = localSqlDb.getAllDiningTabs().filter { restaurantId.isBlank() || it.restaurantId == restaurantId }
+            onTabsUpdated(fallback)
+            return
+        }
+
+        try {
+            val query: Query = if (restaurantId.isNotBlank()) {
+                db.collection("dining_tabs").whereEqualTo("restaurantId", restaurantId)
+            } else {
+                db.collection("dining_tabs")
+            }
+
+            diningTabsListenerReg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
+                    subscriptionManager.processDocumentChanges(
+                        channelId = channelId,
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToDiningTab(id, data) },
+                        onAdded = { tab -> localSqlDb.upsertDiningTabFromCloud(tab) },
+                        onModified = { tab -> localSqlDb.upsertDiningTabFromCloud(tab) },
+                        onRemoved = { docId -> localSqlDb.deleteDiningTabFromCloud(docId) }
+                    )
+
+                    val updated = localSqlDb.getAllDiningTabs().filter { restaurantId.isBlank() || it.restaurantId == restaurantId }
+                    onTabsUpdated(updated)
+                },
+                onError = { err ->
+                    Log.w(tag, "Dining tabs subscription error: ${err.message}")
+                    onTabsUpdated(localSqlDb.getAllDiningTabs().filter { restaurantId.isBlank() || it.restaurantId == restaurantId })
+                }
+            )
+        } catch (_: Exception) {
+            onTabsUpdated(localSqlDb.getAllDiningTabs().filter { restaurantId.isBlank() || it.restaurantId == restaurantId })
         }
     }
 
@@ -493,77 +592,57 @@ class FirebaseCloudEngine(
         tableNumber: String,
         onTabUpdated: (DiningTab?) -> Unit
     ) {
-        tabListenerReg?.remove()
+        val cleanTable = tableNumber.trim()
+        if (cleanTable.isBlank()) {
+            onTabUpdated(null)
+            return
+        }
 
+        val channelId = "dining_tab:table:$cleanTable"
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
-            onTabUpdated(localSqlDb.getOpenTabForTable(tableNumber))
+            onTabUpdated(localSqlDb.getOpenTabForTable(cleanTable))
             return
         }
 
         try {
-            tabListenerReg = db.collection("dining_tabs")
-                .whereEqualTo("tableNumber", tableNumber)
-                .whereEqualTo("status", DiningTabStatus.OPEN)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null || snapshot.isEmpty) {
-                        onTabUpdated(localSqlDb.getOpenTabForTable(tableNumber))
-                        return@addSnapshotListener
-                    }
+            val query = db.collection("dining_tabs")
+                .whereEqualTo("tableNumber", cleanTable)
 
-                    val doc = snapshot.documents.firstOrNull() ?: run {
-                        onTabUpdated(null)
-                        return@addSnapshotListener
-                    }
+            tabListenerReg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
+                    subscriptionManager.processDocumentChanges(
+                        channelId = channelId,
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToDiningTab(id, data) },
+                        onAdded = { tab -> localSqlDb.upsertDiningTabFromCloud(tab) },
+                        onModified = { tab -> localSqlDb.upsertDiningTabFromCloud(tab) },
+                        onRemoved = { docId -> localSqlDb.deleteDiningTabFromCloud(docId) }
+                    )
 
-                    try {
-                        val id = doc.getString("id") ?: doc.id
-                        val tNum = doc.getString("tableNumber") ?: tableNumber
-                        val custName = doc.getString("customerName") ?: "Guest"
-                        val uid = doc.getString("userId") ?: "guest"
-                        val itemsJson = doc.getString("itemsJson") ?: ""
-                        val itemsType = object : TypeToken<List<TableBillItem>>() {}.type
-                        val items: List<TableBillItem> = try {
-                            gson.fromJson(itemsJson, itemsType) ?: emptyList()
-                        } catch (_: Exception) {
-                            emptyList()
-                        }
-                        val subtotal = doc.getLong("subtotal") ?: 0L
-                        val tax = doc.getLong("tax") ?: 0L
-                        val serviceCharge = doc.getLong("serviceCharge") ?: 0L
-                        val tip = doc.getLong("tip") ?: 0L
-                        val total = doc.getLong("total") ?: 0L
-                        val pMethod = doc.getString("paymentMethod")
-                        val createdAt = doc.getString("createdAt") ?: Instant.now().toString()
-                        val updatedAt = doc.getString("updatedAt") ?: Instant.now().toString()
-
-                        val tab = DiningTab(
-                            id = id,
-                            tableNumber = tNum,
-                            customerId = uid,
-                            customerName = custName,
-                            userId = uid,
-                            userName = custName,
-                            items = items,
-                            subtotal = subtotal,
-                            tax = tax,
-                            serviceCharge = serviceCharge,
-                            tip = tip,
-                            total = total,
-                            status = DiningTabStatus.OPEN,
-                            paymentMethod = pMethod,
-                            createdAt = createdAt,
-                            updatedAt = updatedAt
-                        )
-                        localSqlDb.saveOrUpdateTab(tab)
-                        onTabUpdated(tab)
-                    } catch (e: Exception) {
-                        Log.w(tag, "Failed parsing cloud dining tab: ${e.message}")
-                        onTabUpdated(localSqlDb.getOpenTabForTable(tableNumber))
-                    }
+                    val openTab = localSqlDb.getOpenTabForTable(cleanTable)
+                    onTabUpdated(openTab)
+                },
+                onError = { err ->
+                    Log.w(tag, "Live dining tab subscription error: ${err.message}")
+                    onTabUpdated(localSqlDb.getOpenTabForTable(cleanTable))
                 }
+            )
         } catch (_: Exception) {
-            onTabUpdated(localSqlDb.getOpenTabForTable(tableNumber))
+            onTabUpdated(localSqlDb.getOpenTabForTable(cleanTable))
+        }
+    }
+
+    fun stopObservingLiveDiningTab(tableNumber: String) {
+        val cleanTable = tableNumber.trim()
+        if (cleanTable.isNotBlank()) {
+            subscriptionManager.cancelSubscription("dining_tab:table:$cleanTable")
+            if (tabListenerReg != null) {
+                tabListenerReg = null
+            }
         }
     }
 
@@ -1124,6 +1203,7 @@ class FirebaseCloudEngine(
         ordersListenerReg = null
         kotTicketsListenerReg = null
         tabListenerReg = null
+        diningTabsListenerReg = null
         bookingsListenerReg = null
         userListenerReg = null
         addressesListenerReg = null
@@ -1139,6 +1219,7 @@ class FirebaseCloudEngine(
         ordersListenerReg = null
         kotTicketsListenerReg = null
         tabListenerReg = null
+        diningTabsListenerReg = null
         bookingsListenerReg = null
         userListenerReg = null
         addressesListenerReg = null

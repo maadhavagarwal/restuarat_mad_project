@@ -719,8 +719,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Connects activeTableTab to the reactive Flow from RestroFirebaseBackendEngine.
-     * Observes real-time additions of dishes/items by waiters without requiring an app restart.
+     * Connects activeTableTab to the real-time Firestore subscription via FirebaseCloudEngine.
+     * Observes real-time additions of dishes/items by waiters without requiring polling loops or an app restart.
      */
     fun observeActiveTableTab(explicitTableNumber: String? = null) {
         val user = profile
@@ -736,38 +736,37 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             ?: bookingTable
 
         if (targetTable.isNullOrBlank()) {
-            tableTabObservationJob?.cancel()
-            tableTabObservationJob = null
+            if (!observedTableNumber.isNullOrBlank()) {
+                cloudEngine.stopObservingLiveDiningTab(observedTableNumber!!)
+            }
             observedTableNumber = null
             return
         }
 
-        if (observedTableNumber.equals(targetTable, ignoreCase = true) && tableTabObservationJob?.isActive == true) {
+        if (observedTableNumber.equals(targetTable, ignoreCase = true)) {
             return
         }
 
-        tableTabObservationJob?.cancel()
+        if (!observedTableNumber.isNullOrBlank()) {
+            cloudEngine.stopObservingLiveDiningTab(observedTableNumber!!)
+        }
         observedTableNumber = targetTable
 
-        tableTabObservationJob = viewModelScope.launch {
-            try {
-                backend.listenToTableTab(targetTable).collect { updatedTab ->
-                    if (updatedTab.status == "SETTLED") {
-                        activeTableTab = null
-                        tableTabObservationJob?.cancel()
-                        tableTabObservationJob = null
-                        observedTableNumber = null
-                    } else {
-                        activeTableTab = updatedTab
-                        if (updatedTab.total > 0L && updatedTab.items.isNotEmpty()) {
-                            notifyTableBillReadyIfEligible(updatedTab)
-                        }
-                    }
+        // Emit initial local SQLite tab immediately to keep UI responsive
+        val initial = sqlDb.getOpenTabForTable(targetTable)
+        if (initial != null && !DineInPaymentRules.isSettledOrPaid(initial.status)) {
+            activeTableTab = initial
+        }
+
+        // Attach managed real-time subscription
+        cloudEngine.observeLiveDiningTabRealTime(targetTable) { updatedTab ->
+            if (updatedTab == null || DineInPaymentRules.isSettledOrPaid(updatedTab.status)) {
+                activeTableTab = null
+            } else {
+                activeTableTab = updatedTab
+                if (updatedTab.total > 0L && updatedTab.items.isNotEmpty()) {
+                    notifyTableBillReadyIfEligible(updatedTab)
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // Keep active tab state on network/transient failure
             }
         }
     }
@@ -953,15 +952,16 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         val currentUserId = profile?.id ?: "guest"
         isLoadingBookings = true
         bookingManagementError = null
-        viewModelScope.launch {
-            try {
-                val list = sqlDb.getTableBookingsForUser(currentUserId)
-                userTableBookings = list
-            } catch (e: Exception) {
-                bookingManagementError = e.message ?: "Failed to load table bookings."
-            } finally {
-                isLoadingBookings = false
-            }
+        try {
+            userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
+        } catch (e: Exception) {
+            bookingManagementError = e.message ?: "Failed to load table bookings."
+        } finally {
+            isLoadingBookings = false
+        }
+
+        cloudEngine.observeTableBookingsRealTime(userId = currentUserId) { updatedList ->
+            userTableBookings = updatedList
         }
     }
 

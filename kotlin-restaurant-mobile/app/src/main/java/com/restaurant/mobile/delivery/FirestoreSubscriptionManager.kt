@@ -119,6 +119,14 @@ class FirestoreSubscriptionManager {
     }
 
     /**
+     * Test helper for unit tests verifying subscription scoping and channel cancellation.
+     */
+    fun registerTestSubscription(channelId: String, scope: ChannelScope) {
+        val dummyRegistration = ListenerRegistration { }
+        activeSubscriptions[channelId] = SubscriptionRecord(channelId, scope, dummyRegistration)
+    }
+
+    /**
      * Attaches a query listener with deduplication, lifecycle tracking, and error handling.
      * If [channelId] is already active, the previous listener is cleanly detached first.
      */

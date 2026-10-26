@@ -1598,7 +1598,68 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             put("updated_at", booking.updatedAt)
         }
         val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        if (rowId != -1L) {
+            syncToFirebaseFirestore(
+                "table_bookings",
+                booking.id,
+                mapOf(
+                    "id" to booking.id,
+                    "restaurantId" to booking.restaurantId,
+                    "restaurantName" to booking.restaurantName,
+                    "tableId" to booking.tableId,
+                    "tableNumber" to booking.tableNumber,
+                    "userId" to booking.userId,
+                    "userName" to booking.userName,
+                    "userPhone" to booking.userPhone,
+                    "partySize" to booking.partySize,
+                    "bookingDate" to booking.bookingDate,
+                    "timeSlot" to booking.timeSlot,
+                    "seatingArea" to booking.seatingArea,
+                    "specialRequests" to booking.specialRequests,
+                    "status" to booking.status,
+                    "createdAt" to booking.createdAt,
+                    "updatedAt" to (booking.updatedAt.ifBlank { Instant.now().toString() })
+                )
+            )
+        }
         return rowId != -1L
+    }
+
+    fun upsertTableBookingFromCloud(booking: TableBooking): Boolean {
+        if (!TableBookingStatus.ALL.contains(booking.status) || booking.partySize <= 0) {
+            return false
+        }
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("id", booking.id)
+            put("user_id", booking.userId)
+            put("user_name", booking.userName)
+            put("user_phone", booking.userPhone)
+            put("table_id", booking.tableId)
+            put("table_number", booking.tableNumber)
+            put("booking_date", booking.bookingDate)
+            put("time_slot", booking.timeSlot)
+            put("party_size", booking.partySize)
+            put("seating_area", booking.seatingArea)
+            put("special_requests", booking.specialRequests)
+            put("status", booking.status)
+            put("created_at", booking.createdAt)
+            put("restaurant_id", booking.restaurantId)
+            put("restaurant_name", booking.restaurantName)
+            put("updated_at", booking.updatedAt)
+        }
+        val rowId = db.insertWithOnConflict(TABLE_BOOKINGS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        return rowId != -1L
+    }
+
+    fun deleteTableBookingFromCloud(bookingId: String): Boolean {
+        if (bookingId.isBlank()) return false
+        val db = writableDatabase
+        return try {
+            db.delete(TABLE_BOOKINGS, "id = ?", arrayOf(bookingId.trim())) > 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun saveTableBookingsBatch(bookings: List<TableBooking>): Boolean {
@@ -1765,6 +1826,16 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             put("status", newStatus)
         }
         val affected = db.update(TABLE_BOOKINGS, cv, "id = ?", arrayOf(id))
+        if (affected > 0) {
+            syncToFirebaseFirestore(
+                "table_bookings",
+                id.trim(),
+                mapOf(
+                    "status" to newStatus,
+                    "updatedAt" to Instant.now().toString()
+                )
+            )
+        }
         return affected > 0
     }
 
@@ -1789,6 +1860,29 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             put("restaurant_name", booking.restaurantName)
         }
         val affected = db.update(TABLE_BOOKINGS, cv, "id = ?", arrayOf(booking.id))
+        if (affected > 0) {
+            syncToFirebaseFirestore(
+                "table_bookings",
+                booking.id,
+                mapOf(
+                    "id" to booking.id,
+                    "restaurantId" to booking.restaurantId,
+                    "restaurantName" to booking.restaurantName,
+                    "tableId" to booking.tableId,
+                    "tableNumber" to booking.tableNumber,
+                    "userId" to booking.userId,
+                    "userName" to booking.userName,
+                    "userPhone" to booking.userPhone,
+                    "partySize" to booking.partySize,
+                    "bookingDate" to booking.bookingDate,
+                    "timeSlot" to booking.timeSlot,
+                    "seatingArea" to booking.seatingArea,
+                    "specialRequests" to booking.specialRequests,
+                    "status" to booking.status,
+                    "updatedAt" to Instant.now().toString()
+                )
+            )
+        }
         return affected > 0
     }
 
@@ -1873,6 +1967,14 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 }
 
                 db.setTransactionSuccessful()
+                syncToFirebaseFirestore(
+                    "table_bookings",
+                    bookingId.trim(),
+                    mapOf(
+                        "status" to TableBookingStatus.CANCELLED,
+                        "updatedAt" to Instant.now().toString()
+                    )
+                )
                 return validation
             } catch (e: Exception) {
                 return TableCancellationResult.Failure(e.message ?: "Database error during cancellation.")
@@ -1885,6 +1987,9 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
     fun deleteTableBooking(id: String): Boolean {
         val db = writableDatabase
         val affected = db.delete(TABLE_BOOKINGS, "id = ?", arrayOf(id))
+        if (affected > 0) {
+            deleteFromFirebaseFirestore("table_bookings", id.trim())
+        }
         return affected > 0
     }
 
@@ -2256,7 +2361,91 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         } catch (_: Exception) {
             -1L
         }
+        if (rowId != -1L) {
+            syncToFirebaseFirestore(
+                "dining_tabs",
+                effectiveId,
+                mapOf(
+                    "id" to effectiveId,
+                    "tableId" to tab.tableId.ifBlank { tab.tableNumber.trim() },
+                    "tableNumber" to tab.tableNumber.trim(),
+                    "bookingId" to (tab.bookingId ?: ""),
+                    "userId" to (tab.userId ?: tab.customerId ?: "guest"),
+                    "userName" to (tab.userName.ifBlank { tab.customerName ?: "Guest Diner" }),
+                    "customerId" to (tab.customerId ?: tab.userId ?: ""),
+                    "customerName" to (tab.customerName ?: tab.userName),
+                    "customerPhone" to (tab.customerPhone ?: ""),
+                    "itemsJson" to gson.toJson(tab.items),
+                    "subtotal" to tab.subtotal,
+                    "tax" to tab.tax,
+                    "serviceCharge" to tab.serviceCharge,
+                    "tip" to tab.tip,
+                    "isServiceChargeOptedOut" to tab.isServiceChargeOptedOut,
+                    "total" to tab.total,
+                    "status" to tab.status,
+                    "paymentMethod" to (tab.paymentMethod ?: ""),
+                    "createdAt" to tab.createdAt.ifBlank { updatedAt },
+                    "updatedAt" to updatedAt,
+                    "restaurantId" to tab.restaurantId,
+                    "guestCount" to tab.guestCount,
+                    "seatedAt" to tab.seatedAt,
+                    "billedAt" to tab.billedAt,
+                    "paymentTransactionId" to tab.paymentTransactionId
+                )
+            )
+        }
         return rowId != -1L
+    }
+
+    fun upsertDiningTabFromCloud(tab: DiningTab): Boolean {
+        if (tab.tableNumber.isBlank()) return false
+        val db = writableDatabase
+        val effectiveId = if (tab.id.isNotBlank()) tab.id else UUID.randomUUID().toString()
+        val updatedAt = if (tab.updatedAt.isNotBlank()) tab.updatedAt else Instant.now().toString()
+        val cv = ContentValues().apply {
+            put("id", effectiveId)
+            put("table_id", tab.tableId.ifBlank { tab.tableNumber.trim() })
+            put("table_number", tab.tableNumber.trim())
+            put("booking_id", tab.bookingId)
+            put("user_id", tab.userId ?: tab.customerId)
+            put("user_name", tab.userName.ifBlank { tab.customerName ?: "Guest Diner" })
+            put("customer_id", tab.customerId ?: tab.userId)
+            put("customer_name", tab.customerName ?: tab.userName)
+            put("customer_phone", tab.customerPhone)
+            put("items_json", gson.toJson(tab.items))
+            put("subtotal", tab.subtotal)
+            put("tax", tab.tax)
+            put("gst", tab.tax)
+            put("service_charge", tab.serviceCharge)
+            put("tip", tab.tip)
+            put("is_service_charge_opted_out", if (tab.isServiceChargeOptedOut) 1 else 0)
+            put("total", tab.total)
+            put("status", tab.status)
+            put("payment_method", tab.paymentMethod)
+            put("created_at", tab.createdAt.ifBlank { updatedAt })
+            put("updated_at", updatedAt)
+            put("restaurant_id", tab.restaurantId)
+            put("guest_count", tab.guestCount)
+            put("seated_at", tab.seatedAt)
+            put("billed_at", tab.billedAt)
+            put("payment_transaction_id", tab.paymentTransactionId)
+        }
+        val rowId = try {
+            db.insertWithOnConflict(TABLE_DINING_TABS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        } catch (_: Exception) {
+            -1L
+        }
+        return rowId != -1L
+    }
+
+    fun deleteDiningTabFromCloud(tabId: String): Boolean {
+        if (tabId.isBlank()) return false
+        val db = writableDatabase
+        return try {
+            db.delete(TABLE_DINING_TABS, "id = ?", arrayOf(tabId.trim())) > 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun markTabSettled(tabId: String, paymentMethod: String, transactionId: String = ""): Boolean {
@@ -2280,6 +2469,16 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             0
         }
         if (affected > 0) {
+            syncToFirebaseFirestore(
+                "dining_tabs",
+                tabId.trim(),
+                mapOf(
+                    "status" to "SETTLED",
+                    "paymentMethod" to paymentMethod,
+                    "paymentTransactionId" to transactionId.trim(),
+                    "updatedAt" to Instant.now().toString()
+                )
+            )
             recordAuditLog(
                 action = "DINE_IN_SETTLED",
                 actorEmail = existing?.customerName?.ifBlank { null } ?: "guest@restro.com",

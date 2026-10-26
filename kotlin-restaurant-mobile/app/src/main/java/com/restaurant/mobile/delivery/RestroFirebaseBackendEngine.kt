@@ -687,8 +687,8 @@ class RestroFirebaseBackendEngine(
 
     /**
      * Real-time reactive listener for active dine-in table tab.
-     * Continuously emits updates for the specified table from the SQLite / Firebase storage engine.
-     * Automatically handles coroutine cancellation and listener lifecycle management.
+     * Emits initial state immediately for the specified table from the SQLite / Firebase storage engine.
+     * Polling is eliminated in favor of managed Firestore subscriptions in FirebaseCloudEngine.
      */
     fun listenToTableTab(tableNumber: String, pollIntervalMs: Long = 1000L): Flow<DiningTab> = flow {
         val cleanTable = tableNumber.trim()
@@ -697,7 +697,7 @@ class RestroFirebaseBackendEngine(
         }
 
         // 1. Resolve initial active tab or initialize if none exists yet
-        var currentTab = sqlDb.getOpenTabForTable(cleanTable) ?: run {
+        val currentTab = sqlDb.getOpenTabForTable(cleanTable) ?: run {
             val activeBooking = sqlDb.getAllTableBookings().firstOrNull {
                 it.tableNumber.equals(cleanTable, ignoreCase = true) &&
                     (it.status == TableBookingStatus.CONFIRMED || it.status == TableBookingStatus.SEATED)
@@ -715,20 +715,6 @@ class RestroFirebaseBackendEngine(
         }
 
         emit(currentTab)
-
-        // 2. Stream subsequent tab updates until cancelled
-        var lastEmittedTab = currentTab
-        while (currentCoroutineContext().isActive) {
-            delay(pollIntervalMs)
-
-            val latest = sqlDb.getOpenTabForTable(cleanTable)
-                ?: (lastEmittedTab.id.takeIf { it.isNotBlank() }?.let { sqlDb.getDiningTab(it) })
-
-            if (latest != null && latest != lastEmittedTab) {
-                lastEmittedTab = latest
-                emit(latest)
-            }
-        }
     }
 
     // -------------------------------------------------------------
