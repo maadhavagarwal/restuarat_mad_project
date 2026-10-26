@@ -397,11 +397,8 @@ router.post("/auth/login", (req, res) => {
   if (userAccount.password !== password) {
     return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "Incorrect password. Please verify your credentials and try again." });
   }
+  // Role is strictly authoritative from account record; client-supplied role cannot escalate privileges
   const user = userAccount;
-
-  if (role && ["CUSTOMER", "WAITER", "CHEF_KDS", "ADMIN", "RIDER", "KIOSK", "MASTER_ADMIN"].includes(role)) {
-    user.role = role;
-  }
 
   const token = "jwt-" + crypto.randomUUID();
   db.sessions.set(token, user.id);
@@ -442,7 +439,10 @@ router.post("/auth/register", (req, res) => {
     return res.status(409).json({ error: "USER_EXISTS", message: "An account with this email already exists." });
   }
 
-  const resolvedRole = ["CUSTOMER", "WAITER", "CHEF_KDS", "ADMIN", "RIDER", "KIOSK"].includes(role) ? role : "CUSTOMER";
+  // Self-registration is restricted to Customers and Partner Onboarding (Riders, Restaurant Admins)
+  // Privileged staff roles (WAITER, CHEF_KDS, KIOSK, MASTER_ADMIN) cannot be self-assigned anonymously
+  const allowedSelfRegistration = ["CUSTOMER", "RIDER", "ADMIN"];
+  const resolvedRole = allowedSelfRegistration.includes(role) ? role : "CUSTOMER";
 
   const newUser = {
     id: "usr-" + (db.users.length + 1),
@@ -785,9 +785,7 @@ router.post("/auth/otp/verify", (req, res) => {
   // Verification successful! Invalidate OTP
   db.otps.delete(target.trim());
 
-  const resolvedRole = ["CUSTOMER", "WAITER", "CHEF_KDS", "ADMIN"].includes(role) ? role : "CUSTOMER";
-
-  // Find or auto-provision user profile
+  // Find or auto-provision user profile (role defaults strictly to CUSTOMER)
   let user = db.users.find(u => u.phone === target.trim() || u.email.toLowerCase() === target.trim().toLowerCase());
   if (!user) {
     const isEmail = target.includes("@");
@@ -796,12 +794,10 @@ router.post("/auth/otp/verify", (req, res) => {
       email: isEmail ? target.trim() : `${target.replace(/\D/g, "")}@restro.in`,
       name: name || (isEmail ? target.split("@")[0] : `Diner ${target.slice(-4)}`),
       phone: isEmail ? "+91 98765 43210" : target.trim(),
-      role: resolvedRole,
+      role: "CUSTOMER",
       password: crypto.randomUUID()
     };
     db.users.push(user);
-  } else {
-    user.role = resolvedRole;
   }
 
   const token = "jwt-" + crypto.randomUUID();

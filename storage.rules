@@ -1,0 +1,106 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // =============================================================
+    // RESTRO UP LEAST-PRIVILEGE STORAGE SECURITY ARCHITECTURE
+    // =============================================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return isSignedIn() && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        ? firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data
+        : null;
+    }
+
+    function getUserRole() {
+      return !isSignedIn() ? "GUEST" :
+        (request.auth.token.role != null ? request.auth.token.role :
+        (getUserData() != null && getUserData().role != null ? getUserData().role : "CUSTOMER"));
+    }
+
+    function getUserRestaurantId() {
+      return !isSignedIn() ? null :
+        (request.auth.token.restaurantId != null ? request.auth.token.restaurantId :
+        (getUserData() != null && getUserData().restaurantId != null ? getUserData().restaurantId : null));
+    }
+
+    function isAdmin() {
+      return getUserRole() in ["ADMIN", "MASTER_ADMIN"];
+    }
+
+    function isMasterAdmin() {
+      return getUserRole() == "MASTER_ADMIN";
+    }
+
+    function isAdminOfRestaurant(restId) {
+      return isMasterAdmin() || (isAdmin() && (getUserRestaurantId() == restId || getUserRestaurantId() == null));
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isPdfOrImage() {
+      return request.resource.contentType == 'application/pdf' || request.resource.contentType.matches('image/.*');
+    }
+
+    // =============================================================
+    // 1. PUBLIC MEDIA (LOGOS & DISH IMAGES)
+    // =============================================================
+
+    // Restaurant Logos: Public read, Admin write <= 5MB
+    match /restaurants/{restaurantId}/logos/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn() && isAdminOfRestaurant(restaurantId)
+                   && isImage()
+                   && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    // Dish Images: Public read, Admin write <= 10MB
+    match /restaurants/{restaurantId}/dishes/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn() && isAdminOfRestaurant(restaurantId)
+                   && isImage()
+                   && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // =============================================================
+    // 2. PRIVATE COMPLIANCE DOCUMENTS (CONFIDENTIAL)
+    // =============================================================
+
+    // Rider Driving Licences: Private to rider & admin <= 10MB
+    match /documents/riders/{riderId}/dl/{fileName} {
+      allow read: if isSignedIn() && (request.auth.uid == riderId || isAdmin());
+      allow write: if isSignedIn() && (request.auth.uid == riderId || isMasterAdmin())
+                   && isPdfOrImage()
+                   && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // Restaurant FSSAI Certificates: Private to restaurant admin <= 10MB
+    match /documents/restaurants/{restaurantId}/fssai/{fileName} {
+      allow read: if isSignedIn() && isAdminOfRestaurant(restaurantId);
+      allow write: if isSignedIn() && isAdminOfRestaurant(restaurantId)
+                   && isPdfOrImage()
+                   && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // Restaurant GST Certificates: Private to restaurant admin <= 10MB
+    match /documents/restaurants/{restaurantId}/gst/{fileName} {
+      allow read: if isSignedIn() && isAdminOfRestaurant(restaurantId);
+      allow write: if isSignedIn() && isAdminOfRestaurant(restaurantId)
+                   && isPdfOrImage()
+                   && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // =============================================================
+    // 3. DEFAULT DENY
+    // =============================================================
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
