@@ -3169,6 +3169,114 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             }
     }
 
+    var isSubmittingPayout by mutableStateOf(false)
+        private set
+    var payoutError by mutableStateOf<String?>(null)
+    var selectedPayoutReceipt by mutableStateOf<RiderPayoutReceipt?>(null)
+
+    suspend fun requestRiderPayout(
+        riderId: String,
+        amountRupees: Long,
+        destination: String,
+        method: String = "UPI",
+        idempotencyKey: String = UUID.randomUUID().toString()
+    ): Result<RiderPayoutRecord> {
+        if (isSubmittingPayout) {
+            return Result.failure(IllegalStateException("A payout request is already in progress"))
+        }
+        val amountCheck = RiderPayoutRules.validatePayoutAmount(amountRupees)
+        if (!amountCheck.isValid) {
+            val msg = amountCheck.errorMessage ?: "Invalid payout amount"
+            payoutError = msg
+            return Result.failure(IllegalArgumentException(msg))
+        }
+        if (method == "UPI") {
+            val vpaCheck = RiderPayoutRules.validateVpa(destination)
+            if (!vpaCheck.isValid) {
+                val msg = vpaCheck.errorMessage ?: "Invalid UPI ID"
+                payoutError = msg
+                return Result.failure(IllegalArgumentException(msg))
+            }
+        }
+
+        isSubmittingPayout = true
+        payoutError = null
+        return try {
+            val payload = mapOf(
+                "riderId" to riderId,
+                "amount" to amountRupees,
+                "amountRupees" to amountRupees,
+                "destination" to destination,
+                "accountDestination" to destination,
+                "payoutMethod" to method,
+                "method" to method,
+                "idempotencyKey" to idempotencyKey
+            )
+            val res = api.call<Map<String, Any?>>(
+                "/api/delivery/rider/payouts",
+                "POST",
+                payload
+            )
+            val payoutJson = res["payout"]
+            val payoutRecord: RiderPayoutRecord = if (payoutJson != null) {
+                api.gson.fromJson(api.gson.toJson(payoutJson), RiderPayoutRecord::class.java)
+            } else {
+                RiderPayoutRecord(
+                    id = "payout-${System.currentTimeMillis()}",
+                    riderId = riderId,
+                    amountRupees = amountRupees,
+                    accountDestination = RiderPayoutRules.maskDestination(destination),
+                    payoutMethod = method,
+                    status = "PROCESSED",
+                    idempotencyKey = idempotencyKey,
+                    timestampMs = System.currentTimeMillis()
+                )
+            }
+            sqlDb.recordRiderPayout(payoutRecord)
+            cloudEngine.saveRiderPayoutToCloud(payoutRecord)
+            Result.success(payoutRecord)
+        } catch (e: Exception) {
+            val msg = e.message ?: "Failed to process payout"
+            payoutError = msg
+            Result.failure(e)
+        } finally {
+            isSubmittingPayout = false
+        }
+    }
+
+    suspend fun fetchRiderPayoutReceipt(payoutId: String): RiderPayoutReceipt? {
+        return try {
+            val receipt = api.call<RiderPayoutReceipt>(
+                "/api/delivery/rider/payouts/$payoutId/receipt",
+                "GET",
+                null
+            )
+            selectedPayoutReceipt = receipt
+            receipt
+        } catch (_: Exception) {
+            val local = sqlDb.getRiderPayouts(profile?.id ?: "usr-rider").find { it.id == payoutId }
+            if (local != null) {
+                val fallbackReceipt = RiderPayoutReceipt(
+                    receiptNumber = local.receiptNumber.ifBlank { "REC-${local.id}" },
+                    payoutId = local.id,
+                    riderId = local.riderId,
+                    amountRupees = local.amountRupees,
+                    payoutMethod = local.payoutMethod,
+                    destinationMasked = local.accountDestination,
+                    status = local.status,
+                    referenceId = local.referenceId,
+                    utr = local.utr,
+                    timestampMs = local.timestampMs,
+                    receiptText = RiderPayoutRules.generateReceiptText(local)
+                )
+                selectedPayoutReceipt = fallbackReceipt
+                fallbackReceipt
+            } else {
+                null
+            }
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         cloudEngine.cleanUpListeners()

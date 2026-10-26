@@ -409,6 +409,110 @@ class DeliveryApi {
                 inMemoryCart = inMemoryCart.copy(coupon = "")
                 mapOf("success" to true, "message" to "Coupon removed")
             }
+            (cleanPath == "/delivery/rider/payouts" || cleanPath == "/api/delivery/rider/payouts") && method == "POST" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                val rawAmount = req["amount"] ?: req["amountRupees"]
+                val amount = when (rawAmount) {
+                    is Number -> rawAmount.toLong()
+                    is String -> rawAmount.toLongOrNull() ?: 0L
+                    else -> 0L
+                }
+                val riderId = (req["riderId"] as? String)?.trim().orEmpty().ifBlank { "usr-rider" }
+                val destination = (req["destination"] as? String ?: req["accountDestination"] as? String).orEmpty().trim()
+                val methodStr = (req["payoutMethod"] as? String ?: req["method"] as? String ?: "UPI").trim().uppercase()
+                val idempotencyKey = (req["idempotencyKey"] as? String ?: req["x-payout-idempotency"] as? String).orEmpty().trim()
+
+                // Validations using RiderPayoutRules
+                val amountValidation = RiderPayoutRules.validatePayoutAmount(amount)
+                if (!amountValidation.isValid) {
+                    throw ApiFailure(400, amountValidation.errorMessage ?: "Invalid payout amount")
+                }
+                if (methodStr != "UPI" && methodStr != "IMPS") {
+                    throw ApiFailure(400, "Unsupported payout method: $methodStr. Only UPI and IMPS are supported.")
+                }
+                if (methodStr == "UPI") {
+                    val vpaValidation = RiderPayoutRules.validateVpa(destination)
+                    if (!vpaValidation.isValid) {
+                        throw ApiFailure(400, vpaValidation.errorMessage ?: "Invalid UPI ID format")
+                    }
+                } else if (methodStr == "IMPS") {
+                    if (destination.isBlank() || destination.length < 9) {
+                        throw ApiFailure(400, "A valid bank account number is required for IMPS payout")
+                    }
+                }
+
+                val existingPayouts = eng.sqlDb.getRiderPayouts(riderId)
+                if (idempotencyKey.isNotBlank()) {
+                    val existing = existingPayouts.firstOrNull { it.idempotencyKey == idempotencyKey }
+                    if (existing != null) {
+                        return@dispatchToKotlinEngine mapOf(
+                            "success" to true,
+                            "duplicate" to true,
+                            "message" to "Payout request already processed with this idempotency key",
+                            "payout" to existing
+                        )
+                    }
+                }
+
+                // Balance check
+                val totalDeducted = existingPayouts.filter { it.status == "PROCESSED" || it.status == "PROCESSING" || it.status == "PENDING" }
+                    .sumOf { it.amountRupees }
+                val initialBalance = 5000L
+                val availableBalance = (initialBalance - totalDeducted).coerceAtLeast(0L)
+                if (amount > availableBalance) {
+                    throw ApiFailure(422, "Insufficient balance: available ₹$availableBalance, requested ₹$amount")
+                }
+
+                val payoutId = "pout_" + java.util.UUID.randomUUID().toString().replace("-", "").take(14)
+                val refId = "rpz_pout_" + java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+                val utr = "UTR" + System.currentTimeMillis().toString().takeLast(10) + "99"
+                val receiptNo = "REC-POUT-${System.currentTimeMillis().toString().takeLast(6)}"
+
+                val payout = RiderPayoutRecord(
+                    id = payoutId,
+                    riderId = riderId,
+                    amountRupees = amount,
+                    accountDestination = RiderPayoutRules.maskDestination(destination),
+                    payoutMethod = methodStr,
+                    status = "PROCESSED",
+                    referenceId = refId,
+                    utr = utr,
+                    failureReason = "",
+                    idempotencyKey = idempotencyKey,
+                    receiptNumber = receiptNo,
+                    timestampMs = System.currentTimeMillis()
+                )
+                eng.sqlDb.recordRiderPayout(payout)
+
+                mapOf(
+                    "success" to true,
+                    "payout" to payout,
+                    "message" to "Payout processed successfully"
+                )
+            }
+            (cleanPath == "/delivery/rider/payouts" || cleanPath == "/api/delivery/rider/payouts") && method == "GET" -> {
+                val riderId = "usr-rider"
+                eng.sqlDb.getRiderPayouts(riderId)
+            }
+            (cleanPath.contains("/delivery/rider/payouts/") && cleanPath.endsWith("/receipt")) && method == "GET" -> {
+                val payoutId = cleanPath.substringAfter("/delivery/rider/payouts/").substringBefore("/receipt")
+                val riderId = "usr-rider"
+                val payout = eng.sqlDb.getRiderPayouts(riderId).find { it.id == payoutId }
+                    ?: throw ApiFailure(404, "Payout record not found")
+                RiderPayoutReceipt(
+                    receiptNumber = payout.receiptNumber.ifBlank { "REC-${payout.id}" },
+                    payoutId = payout.id,
+                    riderId = payout.riderId,
+                    amountRupees = payout.amountRupees,
+                    payoutMethod = payout.payoutMethod,
+                    destinationMasked = payout.accountDestination,
+                    status = payout.status,
+                    referenceId = payout.referenceId,
+                    utr = payout.utr,
+                    timestampMs = payout.timestampMs,
+                    receiptText = RiderPayoutRules.generateReceiptText(payout)
+                )
+            }
             else -> null
         }
     }

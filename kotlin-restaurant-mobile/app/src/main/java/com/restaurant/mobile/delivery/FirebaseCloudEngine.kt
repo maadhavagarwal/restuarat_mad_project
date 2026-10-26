@@ -1317,7 +1317,13 @@ class FirebaseCloudEngine(
                 "riderId" to payout.riderId,
                 "amountRupees" to payout.amountRupees,
                 "accountDestination" to payout.accountDestination,
+                "payoutMethod" to payout.payoutMethod,
                 "status" to payout.status,
+                "referenceId" to payout.referenceId,
+                "utr" to payout.utr,
+                "failureReason" to payout.failureReason,
+                "idempotencyKey" to payout.idempotencyKey,
+                "receiptNumber" to payout.receiptNumber,
                 "timestampMs" to payout.timestampMs
             )
             db.collection("rider_payouts").document(payout.id)

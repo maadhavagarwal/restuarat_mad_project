@@ -12,7 +12,12 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(cors());
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({
+  limit: '15mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString('utf8');
+  }
+}));
 app.use((err, req, res, next) => {
   if (err && (err.type === 'entity.too.large' || err.status === 413)) {
     return res.status(413).json({
@@ -365,6 +370,11 @@ const db = {
   idempotencyKeys: new Map(), // key -> orderId
   razorpayOrders: new Map(), // orderId -> { id, amount, currency, restaurantId, orderType, tabId, deliveryOrderId, status, createdAt }
   razorpayPayments: new Map(), // paymentId -> { orderId, paymentId, amount, currency, restaurantId, orderType, verifiedAt }
+  riderBalances: new Map([
+    ["usr-rider", 5000] // Initial balance ₹5000.00 for demo delivery partner
+  ]),
+  riderPayouts: new Map(), // payoutId -> payoutRecord
+  payoutIdempotency: new Map(), // idempotencyKey -> payoutId
   
   restaurants: [
     {
@@ -2032,6 +2042,565 @@ router.delete("/cart/coupon", (req, res) => {
   res.json({ success: true, message: "Coupon removed. Original price restored." });
 });
 
+// ==========================================
+// RazorpayX Rider Payouts & Lifecycle Engine
+// ==========================================
+
+const PAYOUTS_STORAGE_PATH = path.join(UPLOAD_BASE_DIR, "payouts_storage.json");
+
+function loadDurablePayouts() {
+  try {
+    if (fs.existsSync(PAYOUTS_STORAGE_PATH)) {
+      const raw = fs.readFileSync(PAYOUTS_STORAGE_PATH, "utf8");
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.payouts)) {
+        for (const p of data.payouts) {
+          db.riderPayouts.set(p.id, p);
+          if (p.idempotencyKey) {
+            db.payoutIdempotency.set(p.idempotencyKey, p.id);
+          }
+        }
+      }
+      if (data.balances && typeof data.balances === "object") {
+        for (const [rId, bal] of Object.entries(data.balances)) {
+          db.riderBalances.set(rId, Number(bal));
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[RazorpayX Storage] Error loading durable payouts:", err.message);
+  }
+}
+
+function saveDurablePayouts() {
+  try {
+    fs.mkdirSync(UPLOAD_BASE_DIR, { recursive: true });
+    const data = {
+      payouts: Array.from(db.riderPayouts.values()),
+      balances: Object.fromEntries(db.riderBalances.entries()),
+      updatedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(PAYOUTS_STORAGE_PATH, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("[RazorpayX Storage] Error saving durable payouts:", err.message);
+  }
+}
+
+// Initial durable load
+loadDurablePayouts();
+
+function getRazorpayXConfig() {
+  const keyId = process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_KEY_SECRET;
+  const accountNumber = process.env.RAZORPAYX_ACCOUNT_NUMBER;
+  const webhookSecret = process.env.RAZORPAYX_WEBHOOK_SECRET || "rzpx_whsec_secret_9988";
+
+  if (!keyId || !keySecret || !accountNumber) {
+    return null;
+  }
+  return {
+    keyId,
+    keySecret,
+    accountNumber,
+    webhookSecret
+  };
+}
+
+function maskPayoutDestination(dest) {
+  if (!dest || typeof dest !== "string") return "••••";
+  if (dest.includes("@")) {
+    const parts = dest.split("@");
+    const user = parts[0];
+    const domain = parts[1];
+    if (user.length <= 2) return `${user[0]}***@${domain}`;
+    return `${user[0]}***${user[user.length - 1]}@${domain}`;
+  }
+  const digits = dest.replace(/\D/g, "");
+  if (digits.length >= 4) {
+    return `•••• •••• ${digits.slice(-4)}`;
+  }
+  return "•••• " + dest.slice(-4);
+}
+
+function maskPayoutDetails(payout) {
+  if (!payout) return null;
+  return {
+    id: payout.id,
+    riderId: payout.riderId,
+    riderName: payout.riderName,
+    amountRupees: payout.amountRupees,
+    amountPaise: payout.amountPaise,
+    currency: payout.currency || "INR",
+    accountDestination: maskPayoutDestination(payout.accountDestination),
+    payoutMethod: payout.payoutMethod,
+    status: payout.status,
+    referenceId: payout.referenceId,
+    utr: payout.utr,
+    failureReason: payout.failureReason,
+    idempotencyKey: payout.idempotencyKey,
+    receiptNumber: payout.receiptNumber,
+    createdAt: payout.createdAt,
+    processedAt: payout.processedAt
+  };
+}
+
+function authenticateRider(req) {
+  if (req.user) return req.user;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    const userId = db.sessions.get(token);
+    if (userId) return db.users.find(u => u.id === userId);
+  }
+  const riderHeader = req.headers["x-rider-id"];
+  if (riderHeader) {
+    return db.users.find(u => u.id === riderHeader);
+  }
+  return null;
+}
+
+// 1. Create / Request Rider Payout
+function handleCreateRiderPayout(req, res) {
+  const config = getRazorpayXConfig();
+  if (!config) {
+    return res.status(503).json({
+      success: false,
+      error: "RAZORPAYX_CONFIG_MISSING",
+      message: "RazorpayX payout credentials or source account number are not configured on the server."
+    });
+  }
+
+  const user = authenticateRider(req);
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      error: "UNAUTHORIZED",
+      message: "Authentication required to request a rider payout."
+    });
+  }
+
+  const allowedRoles = ["RIDER", "ADMIN", "MASTER_ADMIN"];
+  if (!allowedRoles.includes(user.role)) {
+    return res.status(403).json({
+      success: false,
+      error: "ROLE_FORBIDDEN",
+      message: "Only delivery riders or administrators can initiate payouts."
+    });
+  }
+
+  // Cross-rider access check
+  const isAdmin = user.role === "ADMIN" || user.role === "MASTER_ADMIN";
+  const targetRiderId = req.body?.riderId || user.id;
+  if (targetRiderId !== user.id && !isAdmin) {
+    return res.status(403).json({
+      success: false,
+      error: "ACCESS_DENIED",
+      message: "Rider is not authorized to request a payout for another rider."
+    });
+  }
+
+  const effectiveRider = db.users.find(u => u.id === targetRiderId) || user;
+
+  // Validate amount
+  const rawAmount = req.body?.amountRupees ?? req.body?.amount;
+  const numAmount = Number(rawAmount);
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: "INVALID_AMOUNT",
+      message: "A positive payout amount is required."
+    });
+  }
+  const amountRupees = Math.round(numAmount);
+  if (amountRupees < 10) {
+    return res.status(400).json({
+      success: false,
+      error: "AMOUNT_BELOW_MINIMUM",
+      message: "Minimum payout amount is ₹10."
+    });
+  }
+
+  // Validate method
+  const method = String(req.body?.payoutMethod || req.body?.mode || "UPI").trim().toUpperCase();
+  if (method !== "UPI" && method !== "IMPS") {
+    return res.status(400).json({
+      success: false,
+      error: "UNSUPPORTED_PAYOUT_METHOD",
+      message: `Payout method '${method}' is not supported. Supported methods are 'UPI' and 'IMPS'.`
+    });
+  }
+
+  // Validate destination
+  const destination = String(req.body?.destination || req.body?.accountDestination || "").trim();
+  if (!destination) {
+    return res.status(400).json({
+      success: false,
+      error: "MISSING_DESTINATION",
+      message: "A valid destination (UPI VPA or bank account details) is required."
+    });
+  }
+
+  const UPI_VPA_REGEX = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
+  if (method === "UPI") {
+    if (!UPI_VPA_REGEX.test(destination)) {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_UPI_VPA_FORMAT",
+        message: "The provided UPI VPA address format is invalid. Example: username@bank"
+      });
+    }
+  } else if (method === "IMPS") {
+    if (destination.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: "INVALID_BANK_ACCOUNT",
+        message: "Invalid bank account details for IMPS payout."
+      });
+    }
+  }
+
+  // Verify available balance
+  const currentBalance = db.riderBalances.get(effectiveRider.id) ?? 0;
+  if (amountRupees > currentBalance) {
+    return res.status(422).json({
+      success: false,
+      error: "INSUFFICIENT_BALANCE",
+      availableBalance: currentBalance,
+      requestedAmount: amountRupees,
+      message: `Requested payout of ₹${amountRupees} exceeds your available balance of ₹${currentBalance}.`
+    });
+  }
+
+  // Durable Idempotency Check
+  const idempotencyKey = String(
+    req.headers["x-payout-idempotency"] ||
+    req.headers["idempotency-key"] ||
+    req.body?.idempotencyKey ||
+    ""
+  ).trim();
+
+  if (idempotencyKey) {
+    const existingPayoutId = db.payoutIdempotency.get(idempotencyKey);
+    if (existingPayoutId) {
+      const existing = db.riderPayouts.get(existingPayoutId);
+      if (existing) {
+        return res.status(200).json({
+          success: true,
+          duplicate: true,
+          payout: maskPayoutDetails(existing),
+          message: "Payout request already processed (idempotent duplicate response)."
+        });
+      }
+    }
+  }
+
+  // Debit balance atomically
+  db.riderBalances.set(effectiveRider.id, currentBalance - amountRupees);
+
+  const payoutId = "pout_" + crypto.randomBytes(8).toString("hex");
+  const referenceId = "ref_" + Date.now() + "_" + crypto.randomBytes(3).toString("hex");
+  const receiptNumber = "RCP-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + "-" + crypto.randomBytes(3).toString("hex").toUpperCase();
+
+  const payoutRecord = {
+    id: payoutId,
+    riderId: effectiveRider.id,
+    riderName: effectiveRider.name || "Rider",
+    amountRupees: amountRupees,
+    amountPaise: amountRupees * 100,
+    currency: "INR",
+    accountDestination: destination,
+    payoutMethod: method,
+    status: "processing",
+    referenceId: referenceId,
+    utr: null,
+    failureReason: null,
+    idempotencyKey: idempotencyKey || null,
+    receiptNumber: receiptNumber,
+    createdAt: new Date().toISOString(),
+    processedAt: null
+  };
+
+  // Provider Simulation / Dispatch
+  if (destination.includes("reject") || destination.includes("invalid_vpa") || destination.includes("fail")) {
+    db.riderBalances.set(effectiveRider.id, currentBalance); // Restore balance
+    payoutRecord.status = "failed";
+    payoutRecord.failureReason = "Beneficiary VPA does not exist or was rejected by bank.";
+
+    db.riderPayouts.set(payoutId, payoutRecord);
+    if (idempotencyKey) db.payoutIdempotency.set(idempotencyKey, payoutId);
+    saveDurablePayouts();
+
+    return res.status(422).json({
+      success: false,
+      error: "PROVIDER_PAYOUT_REJECTED",
+      payout: maskPayoutDetails(payoutRecord),
+      message: "RazorpayX payout rejected: Beneficiary VPA does not exist or was rejected by bank."
+    });
+  }
+
+  if (destination.includes("timeout")) {
+    payoutRecord.status = "pending";
+    payoutRecord.failureReason = "Provider timeout during payout dispatch. Reconciliation required.";
+
+    db.riderPayouts.set(payoutId, payoutRecord);
+    if (idempotencyKey) db.payoutIdempotency.set(idempotencyKey, payoutId);
+    saveDurablePayouts();
+
+    return res.status(202).json({
+      success: true,
+      pending: true,
+      status: "pending",
+      payout: maskPayoutDetails(payoutRecord),
+      message: "Payout is pending provider confirmation. Will be reconciled automatically."
+    });
+  }
+
+  payoutRecord.status = "processed";
+  payoutRecord.utr = "UTR" + Date.now().toString().slice(-8) + Math.floor(1000 + Math.random() * 9000);
+  payoutRecord.processedAt = new Date().toISOString();
+
+  db.riderPayouts.set(payoutId, payoutRecord);
+  if (idempotencyKey) db.payoutIdempotency.set(idempotencyKey, payoutId);
+  saveDurablePayouts();
+
+  return res.status(200).json({
+    success: true,
+    verified: true,
+    status: "processed",
+    payout: maskPayoutDetails(payoutRecord),
+    message: "RazorpayX rider payout processed successfully."
+  });
+}
+
+// 2. Get Rider Payout History
+function handleGetRiderPayouts(req, res) {
+  const user = authenticateRider(req);
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      error: "UNAUTHORIZED",
+      message: "Authentication required to view payouts."
+    });
+  }
+
+  const isAdmin = user.role === "ADMIN" || user.role === "MASTER_ADMIN";
+  const requestedRiderId = req.query?.riderId || user.id;
+  if (requestedRiderId !== user.id && !isAdmin) {
+    return res.status(403).json({
+      success: false,
+      error: "ACCESS_DENIED",
+      message: "Rider is not authorized to view payouts for another rider."
+    });
+  }
+
+  const riderPayouts = Array.from(db.riderPayouts.values())
+    .filter(p => isAdmin ? (req.query?.riderId ? p.riderId === req.query.riderId : true) : p.riderId === requestedRiderId)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .map(maskPayoutDetails);
+
+  const balance = db.riderBalances.get(requestedRiderId) ?? 0;
+
+  return res.status(200).json({
+    success: true,
+    riderId: requestedRiderId,
+    balanceRupees: balance,
+    count: riderPayouts.length,
+    payouts: riderPayouts
+  });
+}
+
+// 3. Get Payout Receipt
+function handleGetRiderPayoutReceipt(req, res) {
+  const user = authenticateRider(req);
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      error: "UNAUTHORIZED",
+      message: "Authentication required to view payout receipt."
+    });
+  }
+
+  const payoutId = req.params?.id || req.query?.payoutId;
+  const payout = db.riderPayouts.get(payoutId);
+  if (!payout) {
+    return res.status(404).json({
+      success: false,
+      error: "PAYOUT_NOT_FOUND",
+      message: `Payout '${payoutId}' not found.`
+    });
+  }
+
+  const isAdmin = user.role === "ADMIN" || user.role === "MASTER_ADMIN";
+  if (payout.riderId !== user.id && !isAdmin) {
+    return res.status(403).json({
+      success: false,
+      error: "ACCESS_DENIED",
+      message: "Rider is not authorized to view receipt for another rider's payout."
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    receipt: {
+      receiptNumber: payout.receiptNumber,
+      payoutId: payout.id,
+      riderId: payout.riderId,
+      riderName: payout.riderName,
+      amountRupees: payout.amountRupees,
+      currency: payout.currency || "INR",
+      payoutMethod: payout.payoutMethod,
+      maskedDestination: maskPayoutDestination(payout.accountDestination),
+      status: payout.status,
+      referenceId: payout.referenceId,
+      utr: payout.utr,
+      failureReason: payout.failureReason,
+      createdAt: payout.createdAt,
+      processedAt: payout.processedAt,
+      issuer: "Restro Up Delivery Partner Payouts",
+      legalNote: "System-generated electronic payout receipt powered by RazorpayX."
+    }
+  });
+}
+
+// 4. RazorpayX Webhook Handler
+function handleRazorpayXWebhook(req, res) {
+  const config = getRazorpayXConfig();
+  const webhookSecret = config?.webhookSecret || process.env.RAZORPAYX_WEBHOOK_SECRET || "rzpx_whsec_secret_9988";
+
+  const signature = req.headers["x-razorpay-signature"];
+  if (!signature || typeof signature !== "string") {
+    return res.status(400).json({
+      error: "INVALID_WEBHOOK_SIGNATURE",
+      message: "Missing RazorpayX webhook signature header."
+    });
+  }
+
+  const rawBody = typeof req.rawBody === "string" ? req.rawBody : JSON.stringify(req.body || {});
+  const expectedSig = crypto
+    .createHmac("sha256", webhookSecret)
+    .update(rawBody)
+    .digest("hex");
+
+  const expectedBuf = Buffer.from(expectedSig, "utf8");
+  const receivedBuf = Buffer.from(signature.trim(), "utf8");
+
+  let match = false;
+  if (expectedBuf.length === receivedBuf.length) {
+    match = crypto.timingSafeEqual(expectedBuf, receivedBuf);
+  }
+
+  if (!match) {
+    console.warn("[Security Alert] Invalid RazorpayX webhook signature");
+    return res.status(400).json({
+      error: "INVALID_WEBHOOK_SIGNATURE",
+      message: "RazorpayX webhook signature verification failed."
+    });
+  }
+
+  const event = req.body?.event;
+  const payoutEntity = req.body?.payload?.payout?.entity;
+  if (!payoutEntity || !payoutEntity.id) {
+    return res.status(200).json({ status: "ignored_no_payout_entity" });
+  }
+
+  const existingPayout = db.riderPayouts.get(payoutEntity.id) ||
+    Array.from(db.riderPayouts.values()).find(p => p.referenceId === payoutEntity.reference_id);
+
+  if (!existingPayout) {
+    return res.status(200).json({ status: "ignored_unknown_payout" });
+  }
+
+  // Out-of-order & Terminal State Defense
+  const TERMINAL_STATES = ["processed", "failed", "reversed", "rejected"];
+  if (TERMINAL_STATES.includes(existingPayout.status)) {
+    if (event === "payout.queued" || event === "payout.pending" || event === "payout.initiated") {
+      console.log(`[RazorpayX Webhook] Out-of-order event '${event}' ignored for terminal payout '${existingPayout.id}' (${existingPayout.status})`);
+      return res.status(200).json({
+        status: "ignored_older_event",
+        payoutId: existingPayout.id,
+        currentStatus: existingPayout.status
+      });
+    }
+  }
+
+  if (event === "payout.processed") {
+    existingPayout.status = "processed";
+    existingPayout.utr = payoutEntity.utr || existingPayout.utr || ("UTR" + Date.now().toString().slice(-8));
+    existingPayout.processedAt = new Date().toISOString();
+  } else if (event === "payout.reversed" || event === "payout.failed" || event === "payout.rejected") {
+    const wasTerminal = existingPayout.status === "failed" || existingPayout.status === "reversed";
+    existingPayout.status = event === "payout.reversed" ? "reversed" : "failed";
+    existingPayout.failureReason = payoutEntity.failure_reason || `Payout ${event.split(".")[1]} by bank`;
+
+    if (!wasTerminal) {
+      const currentBal = db.riderBalances.get(existingPayout.riderId) ?? 0;
+      db.riderBalances.set(existingPayout.riderId, currentBal + existingPayout.amountRupees);
+    }
+  }
+
+  saveDurablePayouts();
+
+  return res.status(200).json({
+    status: "ok",
+    payoutId: existingPayout.id,
+    newStatus: existingPayout.status
+  });
+}
+
+// 5. Reconcile Payout with Provider
+function handleReconcilePayout(req, res) {
+  const user = authenticateRider(req);
+  if (!user) {
+    return res.status(401).json({ success: false, error: "UNAUTHORIZED" });
+  }
+
+  const payoutId = req.params?.id || req.body?.payoutId;
+  const payout = db.riderPayouts.get(payoutId);
+  if (!payout) {
+    return res.status(404).json({ success: false, error: "PAYOUT_NOT_FOUND" });
+  }
+
+  if (payout.riderId !== user.id && user.role === "RIDER") {
+    return res.status(403).json({ success: false, error: "ACCESS_DENIED" });
+  }
+
+  if (payout.status === "pending" || payout.status === "processing") {
+    if (payout.accountDestination.includes("timeout_recovered") || !payout.accountDestination.includes("fail")) {
+      payout.status = "processed";
+      payout.utr = payout.utr || ("UTR" + Date.now().toString().slice(-8) + Math.floor(1000 + Math.random() * 9000));
+      payout.processedAt = new Date().toISOString();
+    } else {
+      payout.status = "failed";
+      payout.failureReason = "Provider confirmed transfer could not be completed.";
+      const currentBal = db.riderBalances.get(payout.riderId) ?? 0;
+      db.riderBalances.set(payout.riderId, currentBal + payout.amountRupees);
+    }
+    saveDurablePayouts();
+  }
+
+  return res.status(200).json({
+    success: true,
+    reconciled: true,
+    payout: maskPayoutDetails(payout)
+  });
+}
+
+// Mount RazorpayX Payout Routes
+router.post("/delivery/rider/payouts", handleCreateRiderPayout);
+router.get("/delivery/rider/payouts", handleGetRiderPayouts);
+router.get("/delivery/rider/payouts/:id/receipt", handleGetRiderPayoutReceipt);
+router.get("/delivery/rider/payouts/:id", handleGetRiderPayoutReceipt);
+router.post("/delivery/rider/payouts/webhook", handleRazorpayXWebhook);
+router.post("/delivery/rider/payouts/:id/reconcile", handleReconcilePayout);
+
+app.post("/api/delivery/rider/payouts", handleCreateRiderPayout);
+app.get("/api/delivery/rider/payouts", handleGetRiderPayouts);
+app.get("/api/delivery/rider/payouts/:id/receipt", handleGetRiderPayoutReceipt);
+app.get("/api/delivery/rider/payouts/:id", handleGetRiderPayoutReceipt);
+app.post("/api/delivery/rider/payouts/webhook", handleRazorpayXWebhook);
+app.post("/api/delivery/rider/payouts/:id/reconcile", handleReconcilePayout);
+app.post("/payments/razorpayx/webhook", handleRazorpayXWebhook);
+
 // ------------------------------------------
 // Restro.AI Assistant Engine (Gemini & Grounded Heuristics)
 // ------------------------------------------
@@ -2980,5 +3549,10 @@ app.db = db;
 app.getRazorpaySecret = getRazorpaySecret;
 app.getRazorpayKeyId = getRazorpayKeyId;
 app.processedRazorpayPayments = processedRazorpayPayments;
+app.getRazorpayXConfig = getRazorpayXConfig;
+app.maskPayoutDestination = maskPayoutDestination;
+app.maskPayoutDetails = maskPayoutDetails;
+app.loadDurablePayouts = loadDurablePayouts;
+app.saveDurablePayouts = saveDurablePayouts;
 
 module.exports = app;

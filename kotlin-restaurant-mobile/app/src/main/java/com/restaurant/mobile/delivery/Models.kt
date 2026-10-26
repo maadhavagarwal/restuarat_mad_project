@@ -105,9 +105,140 @@ data class RiderPayoutRecord(
     val riderId: String,
     val amountRupees: Long,
     val accountDestination: String,
-    val status: String = "COMPLETED",
-    val timestampMs: Long = System.currentTimeMillis()
+    val status: String = "PENDING",
+    val timestampMs: Long = System.currentTimeMillis(),
+    val payoutMethod: String = "UPI",
+    val referenceId: String = "",
+    val utr: String = "",
+    val failureReason: String = "",
+    val idempotencyKey: String = "",
+    val receiptNumber: String = ""
 )
+
+data class PayoutValidationResult(val isValid: Boolean, val errorMessage: String? = null)
+
+data class RiderPayoutReceipt(
+    val receiptNumber: String,
+    val payoutId: String,
+    val riderId: String,
+    val riderName: String = "Rider",
+    val amountRupees: Long,
+    val currency: String = "INR",
+    val payoutMethod: String = "UPI",
+    val maskedDestination: String = "",
+    val destinationMasked: String = maskedDestination,
+    val status: String = "PROCESSED",
+    val referenceId: String = "",
+    val utr: String = "",
+    val failureReason: String = "",
+    val createdAt: String = "",
+    val processedAt: String = "",
+    val timestampMs: Long = System.currentTimeMillis(),
+    val receiptText: String = "",
+    val issuer: String = "Restro Up Delivery Partner Payouts",
+    val legalNote: String = "System-generated electronic payout receipt powered by RazorpayX."
+)
+
+object RiderPayoutRules {
+    private val UPI_VPA_REGEX = Regex("^[a-zA-Z0-9.\\-_]{2,256}@[a-zA-Z]{2,64}$")
+
+    fun validateVpa(vpa: String): PayoutValidationResult {
+        val trimmed = vpa.trim()
+        if (trimmed.isBlank()) {
+            return PayoutValidationResult(false, "UPI ID cannot be blank.")
+        }
+        if (!trimmed.contains("@")) {
+            return PayoutValidationResult(false, "UPI ID must contain '@' handle (e.g. name@okaxis).")
+        }
+        if (!UPI_VPA_REGEX.matches(trimmed)) {
+            return PayoutValidationResult(false, "Invalid UPI VPA format. Must be like rider@bank.")
+        }
+        return PayoutValidationResult(true)
+    }
+
+    fun validatePayoutAmount(amount: Long, availableBalance: Long = 100_000L): PayoutValidationResult {
+        if (amount <= 0L) {
+            return PayoutValidationResult(false, "Payout amount must be positive.")
+        }
+        if (amount < 10L) {
+            return PayoutValidationResult(false, "Minimum payout amount is ₹10.")
+        }
+        if (amount > availableBalance) {
+            return PayoutValidationResult(false, "Payout amount exceeds available balance of ₹$availableBalance.")
+        }
+        if (amount > 100_000L) {
+            return PayoutValidationResult(false, "Single payout cannot exceed ₹100,000.")
+        }
+        return PayoutValidationResult(true)
+    }
+
+    fun maskDestination(dest: String): String {
+        val trimmed = dest.trim()
+        if (trimmed.isEmpty()) return "••••"
+        if (trimmed.contains("@")) {
+            val parts = trimmed.split("@")
+            val user = parts[0]
+            val domain = parts.getOrNull(1).orEmpty()
+            return if (user.length <= 2) {
+                "${user.firstOrNull() ?: '*'}***@$domain"
+            } else {
+                "${user.first()}***${user.last()}@$domain"
+            }
+        }
+        val digits = trimmed.filter { it.isDigit() }
+        return if (digits.length >= 4) {
+            "•••• •••• ${digits.takeLast(4)}"
+        } else {
+            "•••• $trimmed"
+        }
+    }
+
+    fun generateReceiptText(receipt: RiderPayoutReceipt): String {
+        return buildString {
+            appendLine("==========================================")
+            appendLine("           RESTRO UP PAYOUT RECEIPT       ")
+            appendLine("==========================================")
+            appendLine("Receipt No  : ${receipt.receiptNumber}")
+            appendLine("Payout ID   : ${receipt.payoutId}")
+            appendLine("Rider Name  : ${receipt.riderName} (${receipt.riderId})")
+            appendLine("Amount      : ₹${receipt.amountRupees} ${receipt.currency}")
+            appendLine("Method      : ${receipt.payoutMethod}")
+            val dest = if (receipt.maskedDestination.isNotBlank()) receipt.maskedDestination else receipt.destinationMasked
+            appendLine("Destination : $dest")
+            appendLine("Status      : ${receipt.status.uppercase()}")
+            if (receipt.referenceId.isNotBlank()) {
+                appendLine("Reference ID: ${receipt.referenceId}")
+            }
+            if (receipt.utr.isNotBlank()) {
+                appendLine("Bank UTR    : ${receipt.utr}")
+            }
+            if (receipt.createdAt.isNotBlank()) {
+                appendLine("Date        : ${receipt.createdAt}")
+            }
+            appendLine("------------------------------------------")
+            appendLine(receipt.legalNote)
+            appendLine("==========================================")
+        }
+    }
+
+    fun generateReceiptText(payout: RiderPayoutRecord, riderName: String = "Rider"): String {
+        val receipt = RiderPayoutReceipt(
+            receiptNumber = payout.receiptNumber.ifBlank { "REC-${payout.id}" },
+            payoutId = payout.id,
+            riderId = payout.riderId,
+            riderName = riderName,
+            amountRupees = payout.amountRupees,
+            payoutMethod = payout.payoutMethod,
+            maskedDestination = payout.accountDestination,
+            destinationMasked = payout.accountDestination,
+            status = payout.status,
+            referenceId = payout.referenceId,
+            utr = payout.utr,
+            timestampMs = payout.timestampMs
+        )
+        return generateReceiptText(receipt)
+    }
+}
 
 data class RiderRideOffer(
     val id: String,

@@ -4094,7 +4094,12 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
 
     fun recordRiderPayout(payout: RiderPayoutRecord) {
         val current = getRiderPayouts(payout.riderId).toMutableList()
-        current.add(0, payout)
+        val existingIndex = current.indexOfFirst { it.id == payout.id }
+        if (existingIndex >= 0) {
+            current[existingIndex] = payout
+        } else {
+            current.add(0, payout)
+        }
         firebasePrefs.edit().putString("rider_payouts_${payout.riderId}", gson.toJson(current)).apply()
         syncToFirebaseFirestore(
             "rider_payouts",
@@ -4104,7 +4109,13 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 "riderId" to payout.riderId,
                 "amountRupees" to payout.amountRupees,
                 "accountDestination" to payout.accountDestination,
+                "payoutMethod" to payout.payoutMethod,
                 "status" to payout.status,
+                "referenceId" to payout.referenceId,
+                "utr" to payout.utr,
+                "failureReason" to payout.failureReason,
+                "idempotencyKey" to payout.idempotencyKey,
+                "receiptNumber" to payout.receiptNumber,
                 "timestampMs" to payout.timestampMs
             )
         )

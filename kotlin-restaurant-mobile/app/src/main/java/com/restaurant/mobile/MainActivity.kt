@@ -723,6 +723,7 @@ fun RestaurantMobileApp(
                             riderName = deliveryVm?.profile?.name ?: "Ramesh Kumar",
                             database = database,
                             cloudEngine = deliveryVm?.cloudEngine,
+                            deliveryVm = deliveryVm,
                             onShowToast = onShowToast
                         )
                     }

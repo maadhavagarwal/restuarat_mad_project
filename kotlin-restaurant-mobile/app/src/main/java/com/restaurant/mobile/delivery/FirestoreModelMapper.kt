@@ -521,13 +521,26 @@ object FirestoreModelMapper {
             val status = (data["status"] as? String) ?: "COMPLETED"
             val timestampMs = (data["timestampMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
 
+            val payoutMethod = (data["payoutMethod"] as? String) ?: "UPI"
+            val referenceId = (data["referenceId"] as? String).orEmpty()
+            val utr = (data["utr"] as? String).orEmpty()
+            val failureReason = (data["failureReason"] as? String).orEmpty()
+            val idempotencyKey = (data["idempotencyKey"] as? String).orEmpty()
+            val receiptNumber = (data["receiptNumber"] as? String).orEmpty()
+
             RiderPayoutRecord(
                 id = id,
                 riderId = riderId,
                 amountRupees = amountRupees,
                 accountDestination = accountDestination,
                 status = status,
-                timestampMs = timestampMs
+                timestampMs = timestampMs,
+                payoutMethod = payoutMethod,
+                referenceId = referenceId,
+                utr = utr,
+                failureReason = failureReason,
+                idempotencyKey = idempotencyKey,
+                receiptNumber = receiptNumber
             )
         } catch (_: Exception) {
             null
