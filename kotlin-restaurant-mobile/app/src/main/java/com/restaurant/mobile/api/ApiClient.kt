@@ -12,13 +12,25 @@ import kotlinx.coroutines.withContext
  */
 object ApiClient {
 
+    private var databaseRef: com.restaurant.mobile.delivery.RestroSqlDatabase? = null
+    private var cloudEngineRef: com.restaurant.mobile.delivery.FirebaseCloudEngine? = null
+
+    fun initialize(
+        database: com.restaurant.mobile.delivery.RestroSqlDatabase,
+        cloudEngine: com.restaurant.mobile.delivery.FirebaseCloudEngine? = null
+    ) {
+        databaseRef = database
+        cloudEngineRef = cloudEngine
+    }
+
     suspend fun getCategories(): List<Category> = withContext(Dispatchers.Default) {
-        val uniqueCats = MockCatalog.sample.dishes.map { it.category }.distinct()
+        val dishes = databaseRef?.getAllDishes()?.ifEmpty { MockCatalog.sample.dishes } ?: MockCatalog.sample.dishes
+        val uniqueCats = dishes.map { it.category }.distinct()
         uniqueCats.mapIndexed { idx, name -> Category((idx + 1).toLong(), name) }
     }
 
     suspend fun getMenuItems(): List<MenuItem> = withContext(Dispatchers.Default) {
-        val dishes = MockCatalog.sample.dishes
+        val dishes = databaseRef?.getAllDishes()?.ifEmpty { MockCatalog.sample.dishes } ?: MockCatalog.sample.dishes
         val uniqueCats = dishes.map { it.category }.distinct()
         dishes.mapIndexed { idx, dish ->
             val catId = (uniqueCats.indexOf(dish.category) + 1).toLong()
@@ -48,12 +60,14 @@ object ApiClient {
         tableId > 0 && status.isNotBlank()
     }
 
-    suspend fun getKOTs(): List<KOT> = withContext(Dispatchers.Default) {
-        emptyList()
+    suspend fun getKOTs(): List<KOT> = withContext(Dispatchers.IO) {
+        databaseRef?.getAllKotTickets() ?: emptyList()
     }
 
-    suspend fun updateKOTStatus(kotId: Long, newStatus: String): Boolean = withContext(Dispatchers.Default) {
-        kotId > 0 && newStatus.isNotBlank()
+    suspend fun updateKOTStatus(kotId: Long, newStatus: String): Boolean = withContext(Dispatchers.IO) {
+        val dbOk = databaseRef?.updateKotTicketStatus(kotId, newStatus) ?: false
+        cloudEngineRef?.updateKotStatusInCloud(kotId, newStatus)
+        dbOk || (kotId > 0 && newStatus.isNotBlank())
     }
 
     suspend fun checkoutOrder(

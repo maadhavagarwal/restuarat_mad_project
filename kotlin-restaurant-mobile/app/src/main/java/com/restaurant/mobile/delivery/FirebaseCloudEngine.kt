@@ -7,6 +7,8 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
+import com.restaurant.mobile.model.KOT
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.time.Instant
@@ -43,6 +45,7 @@ class FirebaseCloudEngine(
     private var restaurantsListenerReg: ListenerRegistration? = null
     private var dishesListenerReg: ListenerRegistration? = null
     private var settingsListenerReg: ListenerRegistration? = null
+    private var kotTicketsListenerReg: ListenerRegistration? = null
     private var riderLocationListenerReg: ListenerRegistration? = null
     private var ridersListenerReg: ListenerRegistration? = null
 
@@ -76,7 +79,7 @@ class FirebaseCloudEngine(
 
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
-            onSuccess()
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
             return
         }
 
@@ -101,6 +104,7 @@ class FirebaseCloudEngine(
                 "riderLatitude" to order.riderLatitude,
                 "riderLongitude" to order.riderLongitude,
                 "events" to gson.toJson(order.events),
+                "idempotencyKey" to (order.idempotencyKey ?: ""),
                 "updatedAt" to System.currentTimeMillis()
             )
             db.collection("orders").document(order.id)
@@ -118,22 +122,62 @@ class FirebaseCloudEngine(
         }
     }
 
-    fun observeOrdersRealTime(
-        userId: String,
-        onOrdersUpdated: (List<DeliveryOrder>) -> Unit
+    fun updateOrderStatusInCloud(
+        orderId: String,
+        newStatus: String,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
     ) {
-        val channelId = "orders:$userId"
+        localSqlDb.updateOrderStatus(orderId, newStatus)
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
-            onOrdersUpdated(localSqlDb.getAllOrders())
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
+            return
+        }
+        db.collection("orders").document(orderId)
+            .update(
+                mapOf(
+                    "status" to newStatus,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+            )
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it) }
+    }
+
+    fun observeOrdersRealTime(
+        userId: String = "",
+        restaurantId: String = "",
+        isStaffOrRider: Boolean = false,
+        onOrdersUpdated: (List<DeliveryOrder>) -> Unit
+    ) {
+        val channelId = when {
+            isStaffOrRider && restaurantId.isNotBlank() -> "orders:restaurant:$restaurantId"
+            isStaffOrRider -> "orders:staff"
+            userId.isNotBlank() && userId != "guest" -> "orders:user:$userId"
+            else -> "orders:all"
+        }
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
+                localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+            } else {
+                localSqlDb.getAllOrders()
+            }
+            onOrdersUpdated(fallback)
             return
         }
 
         try {
-            val query = if (userId.isNotBlank() && userId != "guest") {
-                db.collection("orders").whereEqualTo("userId", userId)
-            } else {
-                db.collection("orders")
+            val query: Query = when {
+                isStaffOrRider && restaurantId.isNotBlank() ->
+                    db.collection("orders").whereEqualTo("restaurantId", restaurantId)
+                isStaffOrRider ->
+                    db.collection("orders")
+                userId.isNotBlank() && userId != "guest" ->
+                    db.collection("orders").whereEqualTo("userId", userId)
+                else ->
+                    db.collection("orders")
             }
 
             ordersListenerReg = subscriptionManager.attachQueryListener(
@@ -141,28 +185,170 @@ class FirebaseCloudEngine(
                 scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
                 query = query,
                 onSnapshot = { snapshot, _ ->
-                    val cloudOrders = mutableListOf<DeliveryOrder>()
-                    for (doc in snapshot.documents) {
-                        val parsed = FirestoreModelMapper.mapToDeliveryOrder(doc.id, doc.data ?: emptyMap())
-                        if (parsed != null) {
-                            cloudOrders.add(parsed)
-                            localSqlDb.saveOrder(parsed)
-                        }
-                    }
+                    subscriptionManager.processDocumentChanges(
+                        channelId = channelId,
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToDeliveryOrder(id, data) },
+                        onAdded = { order -> localSqlDb.upsertOrderFromCloud(order) },
+                        onModified = { order -> localSqlDb.upsertOrderFromCloud(order) },
+                        onRemoved = { /* order retention in history */ }
+                    )
 
-                    if (cloudOrders.isNotEmpty()) {
-                        onOrdersUpdated(cloudOrders)
+                    val relevantOrders = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
+                        localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
                     } else {
-                        onOrdersUpdated(localSqlDb.getAllOrders())
+                        localSqlDb.getAllOrders()
                     }
+                    onOrdersUpdated(relevantOrders)
                 },
                 onError = { err ->
                     Log.w(tag, "Orders subscription error: ${err.message}")
-                    onOrdersUpdated(localSqlDb.getAllOrders())
+                    val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
+                        localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+                    } else {
+                        localSqlDb.getAllOrders()
+                    }
+                    onOrdersUpdated(fallback)
                 }
             )
         } catch (_: Exception) {
-            onOrdersUpdated(localSqlDb.getAllOrders())
+            val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
+                localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+            } else {
+                localSqlDb.getAllOrders()
+            }
+            onOrdersUpdated(fallback)
+        }
+    }
+
+    // --- KITCHEN ORDER TICKETS (KOT) REAL-TIME CLOUD SYNC ---
+
+    fun saveKotToCloud(
+        kot: KOT,
+        restaurantId: String = "rest-1",
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
+            return
+        }
+        val docId = "KOT-${kot.id}"
+        val kotMap = mapOf(
+            "id" to kot.id,
+            "orderId" to kot.orderId,
+            "restaurantId" to restaurantId,
+            "tableNumber" to kot.tableNumber,
+            "tableId" to kot.tableId,
+            "round" to kot.round,
+            "roundName" to kot.roundName,
+            "status" to kot.status,
+            "items" to kot.items.map { mapOf("id" to it.id, "menuItemName" to it.menuItemName, "quantity" to it.quantity, "priceAtTimeOfOrder" to it.priceAtTimeOfOrder) },
+            "customerName" to (kot.customerName ?: ""),
+            "createdAt" to kot.createdAt,
+            "updatedAt" to Instant.now().toString()
+        )
+        db.collection("kot_tickets").document(docId).set(kotMap)
+            .addOnSuccessListener {
+                Log.d(tag, "KOT ticket #$docId synced to Cloud Firestore.")
+                onSuccess()
+            }
+            .addOnFailureListener { e ->
+                Log.w(tag, "KOT ticket saved locally; Firestore sync pending: ${e.message}")
+                onError(e)
+            }
+    }
+
+    fun updateKotStatusInCloud(
+        kotId: Long,
+        newStatus: String,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
+            return
+        }
+        val docId = "KOT-$kotId"
+        db.collection("kot_tickets").document(docId)
+            .update(
+                mapOf(
+                    "status" to newStatus,
+                    "updatedAt" to Instant.now().toString()
+                )
+            )
+            .addOnSuccessListener {
+                Log.d(tag, "KOT #$kotId status updated to '$newStatus' in Cloud Firestore.")
+                onSuccess()
+            }
+            .addOnFailureListener { e ->
+                Log.w(tag, "Failed to update KOT status in Cloud Firestore: ${e.message}")
+                onError(e)
+            }
+    }
+
+    fun deleteKotFromCloud(
+        kotId: Long,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
+            return
+        }
+        val docId = "KOT-$kotId"
+        db.collection("kot_tickets").document(docId).delete()
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { onError(it) }
+    }
+
+    fun observeKotTicketsRealTime(
+        restaurantId: String = "",
+        onKotsUpdated: (List<KOT>) -> Unit
+    ) {
+        val channelId = if (restaurantId.isNotBlank()) "kot_tickets:$restaurantId" else "kot_tickets:all"
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onKotsUpdated(localSqlDb.getAllKotTickets())
+            return
+        }
+
+        try {
+            val query: Query = if (restaurantId.isNotBlank()) {
+                db.collection("kot_tickets").whereEqualTo("restaurantId", restaurantId)
+            } else {
+                db.collection("kot_tickets")
+            }
+
+            kotTicketsListenerReg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
+                    subscriptionManager.processDocumentChanges(
+                        channelId = channelId,
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToKot(id, data) },
+                        onAdded = { kot -> localSqlDb.upsertKotFromCloud(kot) },
+                        onModified = { kot -> localSqlDb.upsertKotFromCloud(kot) },
+                        onRemoved = { docId ->
+                            val numId = docId.removePrefix("KOT-").filter { it.isDigit() }.toLongOrNull()
+                            if (numId != null) localSqlDb.deleteKotFromCloud(numId)
+                        }
+                    )
+                    onKotsUpdated(localSqlDb.getAllKotTickets())
+                },
+                onError = { err ->
+                    Log.w(tag, "KOT tickets subscription error: ${err.message}")
+                    onKotsUpdated(localSqlDb.getAllKotTickets())
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(tag, "KOT tickets setup error: ${e.message}")
+            onKotsUpdated(localSqlDb.getAllKotTickets())
         }
     }
 
@@ -936,6 +1122,7 @@ class FirebaseCloudEngine(
     fun cleanUpListeners() {
         subscriptionManager.cancelAll()
         ordersListenerReg = null
+        kotTicketsListenerReg = null
         tabListenerReg = null
         bookingsListenerReg = null
         userListenerReg = null
@@ -950,6 +1137,7 @@ class FirebaseCloudEngine(
     fun cancelUserScopedListeners() {
         subscriptionManager.cancelUserScopedSubscriptions()
         ordersListenerReg = null
+        kotTicketsListenerReg = null
         tabListenerReg = null
         bookingsListenerReg = null
         userListenerReg = null

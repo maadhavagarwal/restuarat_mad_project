@@ -208,6 +208,10 @@ fun RestaurantMobileApp(
     val backend = remember(backendEngine, database) {
         backendEngine ?: com.restaurant.mobile.delivery.RestroFirebaseBackendEngine(context, database)
     }
+
+    LaunchedEffect(database, deliveryVm) {
+        ApiClient.initialize(database, deliveryVm?.cloudEngine)
+    }
     var showStaffAiSheet by rememberSaveable { mutableStateOf(false) }
 
     val allowedScreens = remember(userRole) {
@@ -302,7 +306,7 @@ fun RestaurantMobileApp(
                 }
             }
             val localKots = database.getAllKotTickets()
-            val remoteKots = emptyList<KOT>()
+            val remoteKots = ApiClient.getKOTs()
             kots = if (localKots.isNotEmpty()) {
                 val localIds = localKots.map { it.id }.toSet()
                 localKots + remoteKots.filter { it.id !in localIds }
@@ -322,6 +326,12 @@ fun RestaurantMobileApp(
 
     LaunchedEffect(deliveryVm?.catalog) {
         refreshAll()
+    }
+
+    LaunchedEffect(deliveryVm) {
+        deliveryVm?.cloudEngine?.observeKotTicketsRealTime("rest-1") { updatedKots ->
+            kots = updatedKots
+        }
     }
 
     MaterialTheme(

@@ -1403,7 +1403,23 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             put("status", newStatus)
         }
         val affected = db.update(TABLE_ORDERS, cv, "id = ? AND status = ?", arrayOf(orderId.trim(), current))
+        if (affected > 0) {
+            syncToFirebaseFirestore(
+                "orders",
+                orderId.trim(),
+                mapOf(
+                    "status" to newStatus,
+                    "updatedAt" to System.currentTimeMillis()
+                )
+            )
+        }
         return affected > 0
+    }
+
+    fun upsertOrderFromCloud(order: DeliveryOrder): Boolean {
+        val db = writableDatabase
+        val cv = orderContentValues(order)
+        return db.insertWithOnConflict(TABLE_ORDERS, null, cv, SQLiteDatabase.CONFLICT_REPLACE) != -1L
     }
 
     fun getAllOrders(): List<DeliveryOrder> {
@@ -2870,7 +2886,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             put("updated_at", createdAt)
         }
         val insertedId = db.insert(TABLE_KOT_TICKETS, null, cv)
-        return KOT(
+        val createdKot = KOT(
             id = insertedId,
             orderId = orderId,
             status = "New",
@@ -2882,6 +2898,24 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             createdAt = createdAt,
             customerName = customerName
         )
+        syncToFirebaseFirestore(
+            "kot_tickets",
+            "KOT-$insertedId",
+            mapOf(
+                "id" to insertedId,
+                "orderId" to orderId,
+                "tableNumber" to tableNumber,
+                "tableId" to tableId.ifBlank { tableNumber },
+                "round" to round,
+                "roundName" to roundName,
+                "status" to "New",
+                "items" to items.map { mapOf("id" to it.id, "menuItemName" to it.menuItemName, "quantity" to it.quantity, "priceAtTimeOfOrder" to it.priceAtTimeOfOrder) },
+                "customerName" to customerName,
+                "createdAt" to createdAt,
+                "updatedAt" to createdAt
+            )
+        )
+        return createdKot
     }
 
     fun getAllKotTickets(): List<KOT> {
@@ -2936,6 +2970,14 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         }
         val rows = db.update(TABLE_KOT_TICKETS, cv, "id = ?", arrayOf(kotId.toString()))
         if (rows > 0) {
+            syncToFirebaseFirestore(
+                "kot_tickets",
+                "KOT-$kotId",
+                mapOf(
+                    "status" to newStatus,
+                    "updatedAt" to Instant.now().toString()
+                )
+            )
             recordAuditLog(
                 action = "KOT_STATUS_UPDATED",
                 actorEmail = "chef@restro.com",
@@ -2956,6 +2998,51 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             }
         }
         return rows > 0
+    }
+
+    fun deleteKotTicket(kotId: Long): Boolean {
+        val db = writableDatabase
+        val ok = db.delete(TABLE_KOT_TICKETS, "id = ?", arrayOf(kotId.toString())) > 0
+        if (ok) {
+            deleteFromFirebaseFirestore("kot_tickets", "KOT-$kotId")
+        }
+        return ok
+    }
+
+    fun upsertKotFromCloud(kot: KOT): Boolean {
+        val db = writableDatabase
+        createKotTicketsTable(db)
+        val cv = ContentValues().apply {
+            put("id", kot.id)
+            put("order_id", kot.orderId)
+            put("table_number", kot.tableNumber)
+            put("table_id", kot.tableId.ifBlank { kot.tableNumber })
+            put("round_number", kot.round)
+            put("round_name", kot.roundName)
+            put("status", kot.status)
+            put("items_json", gson.toJson(kot.items))
+            put("customer_name", kot.customerName)
+            put("created_at", kot.createdAt.ifBlank { Instant.now().toString() })
+            put("updated_at", Instant.now().toString())
+        }
+        val ok = db.insertWithOnConflict(TABLE_KOT_TICKETS, null, cv, SQLiteDatabase.CONFLICT_REPLACE) != -1L
+        if (ok && kot.orderId > 0L) {
+            val orderStatusStr = when (kot.status.trim().lowercase()) {
+                "preparing" -> "Preparing"
+                "ready" -> "Out for delivery"
+                "served" -> "Delivered"
+                else -> null
+            }
+            if (orderStatusStr != null) {
+                updateOrderStatus(kot.orderId.toString(), orderStatusStr)
+            }
+        }
+        return ok
+    }
+
+    fun deleteKotFromCloud(kotId: Long): Boolean {
+        val db = writableDatabase
+        return db.delete(TABLE_KOT_TICKETS, "id = ?", arrayOf(kotId.toString())) > 0
     }
 
     fun getNextRoundNumberForTable(tableNumber: String): Int {

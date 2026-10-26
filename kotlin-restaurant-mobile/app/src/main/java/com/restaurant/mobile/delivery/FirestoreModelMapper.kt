@@ -2,6 +2,8 @@ package com.restaurant.mobile.delivery
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.restaurant.mobile.model.KOT
+import com.restaurant.mobile.model.KOTItem
 import java.time.Instant
 
 /**
@@ -82,7 +84,71 @@ object FirestoreModelMapper {
                 riderVehicle = (data["riderVehicle"] as? String) ?: "",
                 riderRating = (data["riderRating"] as? Number)?.toDouble() ?: 4.8,
                 riderLatitude = (data["riderLatitude"] as? Number)?.toDouble() ?: 0.0,
-                riderLongitude = (data["riderLongitude"] as? Number)?.toDouble() ?: 0.0
+                riderLongitude = (data["riderLongitude"] as? Number)?.toDouble() ?: 0.0,
+                idempotencyKey = (data["idempotencyKey"] as? String)?.ifBlank { null }
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // -------------------------------------------------------------
+    // KITCHEN ORDER TICKETS (KOT)
+    // -------------------------------------------------------------
+
+    fun mapToKot(docId: String, data: Map<String, Any?>): KOT? {
+        return try {
+            val id = (data["id"] as? Number)?.toLong()
+                ?: (data["id"] as? String)?.toLongOrNull()
+                ?: docId.removePrefix("KOT-").filter { it.isDigit() }.toLongOrNull()
+                ?: return null
+            val orderId = (data["orderId"] as? Number)?.toLong()
+                ?: (data["orderId"] as? String)?.toLongOrNull() ?: 0L
+            val tableNumber = (data["tableNumber"] as? String) ?: ""
+            val tableId = (data["tableId"] as? String)?.ifBlank { null } ?: tableNumber
+            val round = (data["round"] as? Number)?.toInt()
+                ?: (data["roundNumber"] as? Number)?.toInt() ?: 1
+            val roundName = (data["roundName"] as? String) ?: ""
+            val status = (data["status"] as? String) ?: "New"
+            val customerName = data["customerName"] as? String
+            val createdAt = (data["createdAt"] as? String) ?: ""
+
+            val items: List<KOTItem> = when (val rawItems = data["items"]) {
+                is String -> {
+                    if (rawItems.isNotBlank()) {
+                        val listType = object : TypeToken<List<KOTItem>>() {}.type
+                        runCatching { gson.fromJson<List<KOTItem>>(rawItems, listType) }.getOrNull() ?: emptyList()
+                    } else emptyList()
+                }
+                is List<*> -> {
+                    rawItems.mapNotNull { item ->
+                        when (item) {
+                            is Map<*, *> -> {
+                                val itemName = (item["menuItemName"] as? String)
+                                    ?: (item["name"] as? String) ?: return@mapNotNull null
+                                val qty = (item["quantity"] as? Number)?.toInt() ?: 1
+                                val price = (item["priceAtTimeOfOrder"] as? Number)?.toDouble() ?: 0.0
+                                val itemId = (item["id"] as? Number)?.toLong() ?: 0L
+                                KOTItem(id = itemId, menuItemName = itemName, quantity = qty, priceAtTimeOfOrder = price)
+                            }
+                            else -> null
+                        }
+                    }
+                }
+                else -> emptyList()
+            }
+
+            KOT(
+                id = id,
+                orderId = orderId,
+                status = status,
+                items = items,
+                tableNumber = tableNumber,
+                tableId = tableId,
+                round = round,
+                roundName = roundName,
+                createdAt = createdAt,
+                customerName = customerName
             )
         } catch (_: Exception) {
             null

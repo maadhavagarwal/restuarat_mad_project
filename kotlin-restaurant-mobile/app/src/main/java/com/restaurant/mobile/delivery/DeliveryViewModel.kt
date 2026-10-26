@@ -1179,7 +1179,12 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             detectAndApplyLiveGps()
 
             // Real-time Cloud Firestore synchronization listeners
-            cloudEngine.observeOrdersRealTime(currentUserId) { cloudOrders ->
+            val isStaff = profile?.role?.isStaff == true
+            cloudEngine.observeOrdersRealTime(
+                userId = currentUserId,
+                restaurantId = "rest-1",
+                isStaffOrRider = isStaff
+            ) { cloudOrders ->
                 viewModelScope.launch(Dispatchers.Main) {
                     if (cloudOrders.isNotEmpty()) {
                         orders = cloudOrders
@@ -2465,6 +2470,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
             // Real-time Cloud Firestore sync
             cloudEngine.saveOrderToCloud(orderWithRider)
+            sqlDb.getAllKotTickets().find { it.tableNumber.contains(orderWithRider.id) }?.let { kot ->
+                cloudEngine.saveKotToCloud(kot, orderWithRider.restaurantId)
+            }
             cloudEngine.saveRiderLocationToCloud(
                 orderId = orderWithRider.id,
                 latitude = assignment.rider.latitude,
