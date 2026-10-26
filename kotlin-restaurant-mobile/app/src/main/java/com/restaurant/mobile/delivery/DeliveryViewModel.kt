@@ -1526,23 +1526,64 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            val cleanType = documentType.uppercase()
-            val cleanNum = documentNumber.trim().uppercase()
-            val summary = when {
-                cleanType.contains("DRIVING") || cleanType.contains("DL") ->
-                    "Gemini OCR: Indian Union Driving Licence Verified Â· Vehicle ${cleanNum.ifBlank { "MH-02-AB-1234" }} Â· Transport Class Valid"
-                cleanType.contains("FSSAI") ->
-                    "Gemini OCR: FSSAI Form-C Food Safety Certificate Verified Â· Lic #${cleanNum.ifBlank { "11524006000421" }}"
-                cleanType.contains("GST") ->
-                    "Gemini OCR: Govt of India GST REG-06 Certificate Verified Â· GSTIN ${cleanNum.ifBlank { "27AABCU9603R1ZM" }}"
-                else ->
-                    "Gemini OCR: Document $cleanType ($cleanNum) text extracted & verified"
+            val token = api.token ?: session.load()
+            val locale = RestroI18n.currentLanguage
+
+            if (token.isNullOrBlank()) {
+                val unauthMsg = when (locale) {
+                    "hi" -> "प्रमाणीकरण टोकन आवश्यक है। दस्तावेज़ सत्यापित करने के लिए कृपया साइन इन करें।"
+                    "mr" -> "प्रमाणीकरण टोकन आवश्यक आहे. दस्तऐवज पडताळण्यासाठी कृपया साइन इन करा."
+                    else -> "Authentication token required. Please sign in to verify documents."
+                }
+                withContext(Dispatchers.Main) {
+                    onResult(false, unauthMsg)
+                }
+                return@launch
             }
+
+            if (api.token == null) {
+                api.token = token
+            }
+
             try {
-                kotlinx.coroutines.delay(450L)
-            } catch (_: Exception) {}
-            withContext(Dispatchers.Main) {
-                onResult(true, summary)
+                val payload = mapOf(
+                    "documentType" to documentType,
+                    "documentNumber" to documentNumber,
+                    "expectedNumber" to documentNumber,
+                    "fileUri" to fileUri,
+                    "holderName" to holderName,
+                    "locale" to locale,
+                    "language" to locale
+                )
+                val responseJson = api.request("/ai/verify-document", "POST", payload)
+                val responseMap = runCatching {
+                    com.google.gson.Gson().fromJson(responseJson, Map::class.java)
+                }.getOrNull()
+
+                val verified = responseMap?.get("verified") == true
+                val serverMsg = responseMap?.get("message") as? String
+                val maskedNumber = responseMap?.get("documentNumber") as? String
+                    ?: responseMap?.get("maskedDocumentNumber") as? String
+
+                val displayMsg = when {
+                    !serverMsg.isNullOrBlank() -> serverMsg
+                    verified -> "Document verified successfully. ($maskedNumber)"
+                    else -> "Document verification failed."
+                }
+
+                withContext(Dispatchers.Main) {
+                    onResult(verified, displayMsg)
+                }
+            } catch (e: ApiFailure) {
+                val errMsg = e.message ?: "Verification failed (HTTP ${e.status})"
+                withContext(Dispatchers.Main) {
+                    onResult(false, errMsg)
+                }
+            } catch (e: Exception) {
+                val errMsg = e.localizedMessage ?: "Network error during verification"
+                withContext(Dispatchers.Main) {
+                    onResult(false, errMsg)
+                }
             }
         }
     }

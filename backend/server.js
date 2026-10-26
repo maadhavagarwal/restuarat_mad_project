@@ -138,6 +138,107 @@ function validateDrivingLicence(num) {
   return /^[A-Z]{2}[0-9]{2}[0-9A-Z]{7,12}$/.test(clean) ? clean : null;
 }
 
+// ==========================================
+// Centralized Localization Messages (en, hi, mr)
+// ==========================================
+const DOCUMENT_MESSAGES = {
+  VERIFICATION_SUCCESS: {
+    en: "Document verified successfully.",
+    hi: "दस्तावेज़ सफलतापूर्वक सत्यापित हो गया।",
+    mr: "दस्तऐवज यशस्वीरित्या पडताळले गेले."
+  },
+  DOCUMENT_UNREADABLE: {
+    en: "Document is blurry or unreadable. Please upload a clear copy.",
+    hi: "दस्तावेज़ धुंधला या अस्पष्ट है। कृपया स्पष्ट प्रति अपलोड करें।",
+    mr: "दस्तऐवज अस्पष्ट किंवा वाचण्यायोग्य नाही. कृपया स्पष्ट प्रत अपलोड करा."
+  },
+  DOCUMENT_TYPE_MISMATCH: {
+    en: "Document type mismatch. The uploaded file does not match the requested document type.",
+    hi: "दस्तावेज़ का प्रकार मेल नहीं खाता। अपलोड की गई फ़ाइल अनुरोधित दस्तावेज़ प्रकार से मेल नहीं खाती।",
+    mr: "दस्तऐवजाचा प्रकार जुळत नाही. अपलोड केलेली फाइल विनंती केलेल्या दस्तऐवज प्रकाराशी जुळत नाही."
+  },
+  MISSING_DOCUMENT_NUMBER: {
+    en: "Document number is required for verification.",
+    hi: "सत्यापन के लिए दस्तावेज़ संख्या आवश्यक है।",
+    mr: "पडताळणीसाठी दस्तऐवज क्रमांक आवश्यक आहे."
+  },
+  INVALID_DOCUMENT_NUMBER_FORMAT: {
+    en: "Invalid document number format.",
+    hi: "दस्तावेज़ संख्या का प्रारूप अमान्य है।",
+    mr: "दस्तऐवज क्रमांक स्वरूप अवैध आहे."
+  },
+  DOCUMENT_NUMBER_MISMATCH: {
+    en: "Document number mismatch. The extracted number does not match the submitted number.",
+    hi: "दस्तावेज़ संख्या मेल नहीं खाती। निकाला गया नंबर सबमिट किए गए नंबर से मेल नहीं खाता।",
+    mr: "दस्तऐवज क्रमांक जुळत नाही. काढलेला क्रमांक सबमिट केलेल्या क्रमांकाशी जुळत नाही."
+  },
+  UNAUTHENTICATED: {
+    en: "Authentication token required. Please sign in to verify documents.",
+    hi: "प्रमाणीकरण टोकन आवश्यक है। दस्तावेज़ सत्यापित करने के लिए कृपया साइन इन करें।",
+    mr: "प्रमाणीकरण टोकन आवश्यक आहे. दस्तऐवज पडताळण्यासाठी कृपया साइन इन करा."
+  },
+  FORBIDDEN: {
+    en: "Access denied: You do not have permission to verify this document.",
+    hi: "पहुंच अस्वीकृत: आपको इस दस्तावेज़ को सत्यापित करने की अनुमति नहीं है।",
+    mr: "प्रवेश नाकारला: आपल्याला हा दस्तऐवज पडताळण्याची परवानगी नाही."
+  },
+  AI_SERVICE_UNAVAILABLE: {
+    en: "AI verification service is temporarily unavailable. Please try again later.",
+    hi: "एआई सत्यापन सेवा अस्थायी रूप से अनुपलब्ध है। कृपया बाद में पुनः प्रयास करें।",
+    mr: "एआय पडताळणी सेवा तात्पुरती अनुपलब्ध आहे. कृपया नंतर पुन्हा प्रयत्न करा."
+  },
+  INVALID_REQUEST: {
+    en: "Invalid request parameters. Please verify your document submission.",
+    hi: "अमान्य अनुरोध पैरामीटर। कृपया अपना दस्तावेज़ सबमिशन जांचें।",
+    mr: "अवैध विनंती पॅरामीटर्स. कृपया आपले दस्तऐवज सबमिशन तपासा."
+  }
+};
+
+function resolveLocale(req) {
+  if (!req) return "en";
+  const candidate = (
+    (req.body && (req.body.locale || req.body.language)) ||
+    (req.query && (req.query.locale || req.query.language)) ||
+    (req.headers && (req.headers["accept-language"] || req.headers["x-locale"])) ||
+    "en"
+  ).toLowerCase().trim();
+
+  if (candidate.startsWith("hi")) return "hi";
+  if (candidate.startsWith("mr")) return "mr";
+  return "en";
+}
+
+function getLocalizedDocumentMessage(code, locale = "en") {
+  const normLocale = (locale === "hi" || locale === "mr") ? locale : "en";
+  let targetCode = code;
+  if (code === "UNAUTHORIZED") targetCode = "UNAUTHENTICATED";
+  if (code === "UNAUTHORIZED_ACCESS") targetCode = "FORBIDDEN";
+  if (code === "DOCUMENT_CONFIDENCE_LOW") targetCode = "DOCUMENT_UNREADABLE";
+  if (code === "AI_TIMEOUT" || code === "GEMINI_API_ERROR" || code === "GEMINI_NOT_CONFIGURED" || code === "MALFORMED_AI_RESPONSE" || code === "EMPTY_MODEL_RESPONSE") {
+    targetCode = "AI_SERVICE_UNAVAILABLE";
+  }
+  if (code === "INVALID_DOCUMENT_TYPE" || code === "DOCUMENT_BYTES_REQUIRED" || code === "BAD_REQUEST" || code === "UNSUPPORTED_DOCUMENT_FORMAT") {
+    targetCode = "INVALID_REQUEST";
+  }
+
+  const entry = DOCUMENT_MESSAGES[targetCode];
+  if (entry && entry[normLocale]) {
+    return entry[normLocale];
+  }
+  if (entry && entry["en"]) {
+    return entry["en"];
+  }
+  return DOCUMENT_MESSAGES.INVALID_REQUEST[normLocale] || DOCUMENT_MESSAGES.INVALID_REQUEST.en;
+}
+
+function maskDocumentNumber(num) {
+  if (!num || typeof num !== "string") return "";
+  const clean = num.trim();
+  if (clean.length <= 4) return clean;
+  return "***" + clean.slice(-4);
+}
+
+
 function buildGeminiVisionPrompt(canonicalType, expectedNumber, holderName) {
   let docTitle = "";
   let expectedFormat = "";
@@ -447,14 +548,25 @@ function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
 // Authentication Middleware
 // ==========================================
 function authMiddleware(req, res, next) {
+  const locale = resolveLocale(req);
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "UNAUTHORIZED", message: "Authentication token required." });
+    return res.status(401).json({
+      success: false,
+      verified: false,
+      error: "UNAUTHORIZED",
+      message: getLocalizedDocumentMessage("UNAUTHENTICATED", locale)
+    });
   }
   const token = authHeader.split(" ")[1];
   const userId = db.sessions.get(token);
   if (!userId) {
-    return res.status(401).json({ error: "UNAUTHORIZED", message: "Invalid or expired session token." });
+    return res.status(401).json({
+      success: false,
+      verified: false,
+      error: "UNAUTHORIZED",
+      message: getLocalizedDocumentMessage("UNAUTHENTICATED", locale)
+    });
   }
   req.userId = userId;
   req.user = db.users.find(u => u.id === userId);
@@ -2048,9 +2160,10 @@ router.get("/media/download/:docId", authMiddleware, (req, res) => {
   fs.createReadStream(doc.filePath).pipe(res);
 });
 
-router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
+router.post("/ai/verify-document", authMiddleware, optionalDocumentUpload, async (req, res) => {
   let tempPathToCleanup = null;
   try {
+    const locale = resolveLocale(req);
     const {
       documentType,
       type,
@@ -2062,7 +2175,10 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
       holderName = "",
       fileBase64 = "",
       base64 = "",
-      documentBase64 = ""
+      documentBase64 = "",
+      ownerId = "",
+      riderId = "",
+      restaurantId = ""
     } = req.body || {};
 
     const rawType = documentType || type || category || "";
@@ -2072,11 +2188,158 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: "INVALID_DOCUMENT_TYPE",
-        message: "Invalid or missing document type. Must be one of: RIDER_DL, RESTAURANT_FSSAI, RESTAURANT_GST."
+        message: getLocalizedDocumentMessage("INVALID_REQUEST", locale),
+        documentType: null
       });
     }
 
+    // Role-based authorization & Ownership validation (Checked BEFORE expensive AI or byte processing)
+    const userRole = req.user?.role || "CUSTOMER";
+    const isMasterAdmin = userRole === "MASTER_ADMIN";
+
+    if (canonicalType === "RIDER_DL") {
+      if (userRole !== "RIDER" && !isMasterAdmin) {
+        return res.status(403).json({
+          success: false,
+          verified: false,
+          error: "FORBIDDEN",
+          message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+          documentType: canonicalType
+        });
+      }
+
+      // Ensure rider cannot verify on behalf of other riders
+      if (!isMasterAdmin) {
+        if (ownerId && ownerId !== req.userId) {
+          return res.status(403).json({
+            success: false,
+            verified: false,
+            error: "FORBIDDEN",
+            message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+            documentType: canonicalType
+          });
+        }
+        if (riderId && riderId !== req.userId) {
+          return res.status(403).json({
+            success: false,
+            verified: false,
+            error: "FORBIDDEN",
+            message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+            documentType: canonicalType
+          });
+        }
+      }
+    } else if (canonicalType === "RESTAURANT_FSSAI" || canonicalType === "RESTAURANT_GST") {
+      if (userRole !== "ADMIN" && !isMasterAdmin) {
+        return res.status(403).json({
+          success: false,
+          verified: false,
+          error: "FORBIDDEN",
+          message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+          documentType: canonicalType
+        });
+      }
+
+      // Ensure admin cannot verify on behalf of other restaurants
+      const userRestId = req.user?.restaurantId || "rest-1";
+      if (!isMasterAdmin) {
+        if (ownerId && ownerId !== userRestId) {
+          return res.status(403).json({
+            success: false,
+            verified: false,
+            error: "FORBIDDEN",
+            message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+            documentType: canonicalType
+          });
+        }
+        if (restaurantId && restaurantId !== userRestId) {
+          return res.status(403).json({
+            success: false,
+            verified: false,
+            error: "FORBIDDEN",
+            message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+            documentType: canonicalType
+          });
+        }
+      }
+    }
+
+    // Check pre-uploaded doc ownership if targetDocId is present
+    const targetDocId = docId || (function() {
+      const m = String(fileUri).match(/doc-[a-f0-9-]+/i);
+      return m ? m[0] : null;
+    })();
+
+    let docRec = null;
+    if (targetDocId) {
+      if (!db.complianceDocuments || !db.complianceDocuments.has(targetDocId)) {
+        return res.status(404).json({
+          success: false,
+          verified: false,
+          error: "NOT_FOUND",
+          message: getLocalizedDocumentMessage("INVALID_REQUEST", locale),
+          documentType: canonicalType
+        });
+      }
+      docRec = db.complianceDocuments.get(targetDocId);
+      if (!isMasterAdmin) {
+        if (canonicalType === "RIDER_DL") {
+          if (docRec.ownerId !== req.userId && docRec.uploaderUserId !== req.userId) {
+            return res.status(403).json({
+              success: false,
+              verified: false,
+              error: "FORBIDDEN",
+              message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+              documentType: canonicalType
+            });
+          }
+        } else if (canonicalType === "RESTAURANT_FSSAI" || canonicalType === "RESTAURANT_GST") {
+          const userRestId = req.user?.restaurantId || "rest-1";
+          if (docRec.ownerId !== userRestId) {
+            return res.status(403).json({
+              success: false,
+              verified: false,
+              error: "FORBIDDEN",
+              message: getLocalizedDocumentMessage("FORBIDDEN", locale),
+              documentType: canonicalType
+            });
+          }
+        }
+      }
+    }
+
+    // Strict user-submitted document number requirement
     const cleanExpectedNum = String(expectedNumber || documentNumber || "").trim();
+    if (!cleanExpectedNum) {
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        error: "MISSING_DOCUMENT_NUMBER",
+        message: getLocalizedDocumentMessage("MISSING_DOCUMENT_NUMBER", locale),
+        documentType: canonicalType
+      });
+    }
+
+    // Format validation of user-submitted document number
+    let validatedSubmittedNum = null;
+    if (canonicalType === "RIDER_DL") {
+      validatedSubmittedNum = validateDrivingLicence(cleanExpectedNum);
+    } else if (canonicalType === "RESTAURANT_FSSAI") {
+      validatedSubmittedNum = validateFssaiNumber(cleanExpectedNum);
+    } else if (canonicalType === "RESTAURANT_GST") {
+      validatedSubmittedNum = validateGstin(cleanExpectedNum);
+    }
+
+    if (!validatedSubmittedNum) {
+      return res.status(422).json({
+        success: false,
+        verified: false,
+        error: "INVALID_DOCUMENT_NUMBER_FORMAT",
+        message: getLocalizedDocumentMessage("INVALID_DOCUMENT_NUMBER_FORMAT", locale),
+        documentType: canonicalType
+      });
+    }
+
     const cleanHolderName = String(holderName || "").trim();
 
     // 1. Retrieve actual document bytes
@@ -2096,22 +2359,14 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         } catch (_) {
           fileBuffer = null;
         }
-      } else {
-        const targetDocId = docId || (function() {
-          const m = String(fileUri).match(/doc-[a-f0-9-]+/i);
-          return m ? m[0] : null;
-        })();
-
-        if (targetDocId && db.complianceDocuments && db.complianceDocuments.has(targetDocId)) {
-          const docRec = db.complianceDocuments.get(targetDocId);
-          if (docRec && docRec.filePath && fs.existsSync(docRec.filePath)) {
-            fileBuffer = fs.readFileSync(docRec.filePath);
-          }
-        } else if (fileUri && typeof fileUri === "string") {
-          const resolvedPath = path.resolve(fileUri);
-          if (resolvedPath.startsWith(path.resolve(UPLOAD_BASE_DIR)) && fs.existsSync(resolvedPath)) {
-            fileBuffer = fs.readFileSync(resolvedPath);
-          }
+      } else if (docRec) {
+        if (docRec.filePath && fs.existsSync(docRec.filePath)) {
+          fileBuffer = fs.readFileSync(docRec.filePath);
+        }
+      } else if (fileUri && typeof fileUri === "string") {
+        const resolvedPath = path.resolve(fileUri);
+        if (resolvedPath.startsWith(path.resolve(UPLOAD_BASE_DIR)) && fs.existsSync(resolvedPath)) {
+          fileBuffer = fs.readFileSync(resolvedPath);
         }
       }
     }
@@ -2121,7 +2376,8 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: "DOCUMENT_BYTES_REQUIRED",
-        message: "No document bytes provided. You must upload a file, supply a base64 document, or reference a valid compliance document."
+        message: getLocalizedDocumentMessage("INVALID_REQUEST", locale),
+        documentType: canonicalType
       });
     }
 
@@ -2132,7 +2388,8 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: "PAYLOAD_TOO_LARGE",
-        message: `Document file size (${(fileBuffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit of 10MB.`
+        message: `Document file size (${(fileBuffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit of 10MB.`,
+        documentType: canonicalType
       });
     }
 
@@ -2143,7 +2400,8 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: "UNSUPPORTED_DOCUMENT_FORMAT",
-        message: "Invalid or unsupported document content. File magic bytes do not match PDF, JPEG, PNG, or WEBP."
+        message: getLocalizedDocumentMessage("INVALID_REQUEST", locale),
+        documentType: canonicalType
       });
     }
 
@@ -2156,7 +2414,7 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: "GEMINI_NOT_CONFIGURED",
-        message: "Gemini Vision OCR service is not configured (missing GEMINI_API_KEY).",
+        message: getLocalizedDocumentMessage("AI_SERVICE_UNAVAILABLE", locale),
         documentType: canonicalType
       });
     }
@@ -2164,7 +2422,7 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     console.log(`[Gemini Vision OCR] Inspecting ${canonicalType} (${fileBuffer.length} bytes, ${detectedMime}) using ${geminiModel}`);
 
     // 5. Construct prompt & inlineData payload with genuine document bytes
-    const prompt = buildGeminiVisionPrompt(canonicalType, cleanExpectedNum, cleanHolderName);
+    const prompt = buildGeminiVisionPrompt(canonicalType, validatedSubmittedNum, cleanHolderName);
     const geminiPayload = JSON.stringify({
       contents: [
         {
@@ -2228,7 +2486,7 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: isTimeout ? "AI_TIMEOUT" : "GEMINI_API_ERROR",
-        message: `Gemini OCR request failed: ${apiErr.message}`,
+        message: getLocalizedDocumentMessage(isTimeout ? "AI_TIMEOUT" : "GEMINI_API_ERROR", locale),
         documentType: canonicalType
       });
     }
@@ -2239,7 +2497,7 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
         success: false,
         verified: false,
         error: "GEMINI_API_ERROR",
-        message: `Gemini API returned non-success HTTP status ${status}`,
+        message: getLocalizedDocumentMessage("AI_SERVICE_UNAVAILABLE", locale),
         documentType: canonicalType
       });
     }
@@ -2249,22 +2507,22 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     try {
       parsedBody = typeof gRes.body === "object" ? gRes.body : JSON.parse(gRes.body);
     } catch (_) {
-      return res.status(200).json({
+      return res.status(502).json({
         success: false,
         verified: false,
         error: "MALFORMED_API_RESPONSE",
-        message: "Gemini API returned invalid response envelope.",
+        message: getLocalizedDocumentMessage("AI_SERVICE_UNAVAILABLE", locale),
         documentType: canonicalType
       });
     }
 
     const rawCandidateText = parsedBody.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawCandidateText) {
-      return res.status(200).json({
+      return res.status(502).json({
         success: false,
         verified: false,
         error: "EMPTY_MODEL_RESPONSE",
-        message: "Gemini did not return any candidate text parts.",
+        message: getLocalizedDocumentMessage("AI_SERVICE_UNAVAILABLE", locale),
         documentType: canonicalType
       });
     }
@@ -2277,11 +2535,11 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
       }
       aiJson = JSON.parse(cleanStr);
     } catch (_) {
-      return res.status(200).json({
+      return res.status(502).json({
         success: false,
         verified: false,
         error: "MALFORMED_AI_RESPONSE",
-        message: "Gemini model output could not be parsed as JSON.",
+        message: getLocalizedDocumentMessage("AI_SERVICE_UNAVAILABLE", locale),
         documentType: canonicalType
       });
     }
@@ -2296,10 +2554,12 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     const remarks = aiJson.remarks ? String(aiJson.remarks).trim() : "";
 
     if (!documentTypeMatch) {
-      return res.json({
-        success: true,
+      return res.status(422).json({
+        success: false,
         verified: false,
         provider: "GEMINI_VISION_OCR",
+        error: "DOCUMENT_TYPE_MISMATCH",
+        message: getLocalizedDocumentMessage("DOCUMENT_TYPE_MISMATCH", locale),
         documentType: canonicalType,
         documentNumber: null,
         holderName: null,
@@ -2310,10 +2570,12 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     }
 
     if (!isLegible) {
-      return res.json({
-        success: true,
+      return res.status(422).json({
+        success: false,
         verified: false,
         provider: "GEMINI_VISION_OCR",
+        error: "DOCUMENT_UNREADABLE",
+        message: getLocalizedDocumentMessage("DOCUMENT_UNREADABLE", locale),
         documentType: canonicalType,
         documentNumber: null,
         holderName: null,
@@ -2324,10 +2586,12 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     }
 
     if (!rawExtractedNum) {
-      return res.json({
-        success: true,
+      return res.status(422).json({
+        success: false,
         verified: false,
         provider: "GEMINI_VISION_OCR",
+        error: "DOCUMENT_UNREADABLE",
+        message: getLocalizedDocumentMessage("DOCUMENT_UNREADABLE", locale),
         documentType: canonicalType,
         documentNumber: null,
         holderName: null,
@@ -2337,17 +2601,19 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
       });
     }
 
-    // 9. Format validation based on regulatory document specifications
+    // 9. Format validation of extracted document number based on regulatory specifications
     let cleanExtractedNum = null;
     if (canonicalType === "RIDER_DL") {
       cleanExtractedNum = validateDrivingLicence(rawExtractedNum);
       if (!cleanExtractedNum) {
-        return res.json({
-          success: true,
+        return res.status(422).json({
+          success: false,
           verified: false,
           provider: "GEMINI_VISION_OCR",
+          error: "INVALID_DOCUMENT_NUMBER_FORMAT",
+          message: getLocalizedDocumentMessage("INVALID_DOCUMENT_NUMBER_FORMAT", locale),
           documentType: canonicalType,
-          documentNumber: rawExtractedNum,
+          documentNumber: null,
           holderName: rawHolderName,
           confidence,
           reason: `Extracted Driving Licence number '${rawExtractedNum}' is invalid. Must match standard Indian Driving Licence format.`,
@@ -2357,12 +2623,14 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     } else if (canonicalType === "RESTAURANT_FSSAI") {
       cleanExtractedNum = validateFssaiNumber(rawExtractedNum);
       if (!cleanExtractedNum) {
-        return res.json({
-          success: true,
+        return res.status(422).json({
+          success: false,
           verified: false,
           provider: "GEMINI_VISION_OCR",
+          error: "INVALID_DOCUMENT_NUMBER_FORMAT",
+          message: getLocalizedDocumentMessage("INVALID_DOCUMENT_NUMBER_FORMAT", locale),
           documentType: canonicalType,
-          documentNumber: rawExtractedNum,
+          documentNumber: null,
           holderName: rawHolderName,
           confidence,
           reason: `Extracted FSSAI number '${rawExtractedNum}' is invalid. Must be exactly 14 numeric digits.`,
@@ -2372,12 +2640,14 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     } else if (canonicalType === "RESTAURANT_GST") {
       cleanExtractedNum = validateGstin(rawExtractedNum);
       if (!cleanExtractedNum) {
-        return res.json({
-          success: true,
+        return res.status(422).json({
+          success: false,
           verified: false,
           provider: "GEMINI_VISION_OCR",
+          error: "INVALID_DOCUMENT_NUMBER_FORMAT",
+          message: getLocalizedDocumentMessage("INVALID_DOCUMENT_NUMBER_FORMAT", locale),
           documentType: canonicalType,
-          documentNumber: rawExtractedNum,
+          documentNumber: null,
           holderName: rawHolderName,
           confidence,
           reason: `Extracted GSTIN '${rawExtractedNum}' is invalid. Must be a 15-character Indian GSTIN conforming to standard format.`,
@@ -2386,32 +2656,35 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
       }
     }
 
-    // 10. Check against user-supplied document number if provided
-    if (cleanExpectedNum) {
-      const normalizedExpected = cleanExpectedNum.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
-      if (normalizedExpected !== cleanExtractedNum) {
-        return res.json({
-          success: true,
-          verified: false,
-          provider: "GEMINI_VISION_OCR",
-          documentType: canonicalType,
-          documentNumber: cleanExtractedNum,
-          holderName: rawHolderName,
-          confidence,
-          reason: `Extracted document number '${cleanExtractedNum}' does not match claimed number '${normalizedExpected}'.`,
-          details: { documentTypeMatch: true, isLegible: true, formatValid: true, numberMatch: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
-        });
-      }
-    }
-
-    // 11. Low confidence rejection threshold
-    if (confidence < 0.5) {
-      return res.json({
-        success: true,
+    // 10. Strict match against user-submitted document number
+    if (cleanExtractedNum !== validatedSubmittedNum) {
+      return res.status(422).json({
+        success: false,
         verified: false,
         provider: "GEMINI_VISION_OCR",
+        error: "DOCUMENT_NUMBER_MISMATCH",
+        message: getLocalizedDocumentMessage("DOCUMENT_NUMBER_MISMATCH", locale),
         documentType: canonicalType,
-        documentNumber: cleanExtractedNum,
+        documentNumber: maskDocumentNumber(cleanExtractedNum),
+        maskedDocumentNumber: maskDocumentNumber(cleanExtractedNum),
+        holderName: rawHolderName,
+        confidence,
+        reason: `Extracted document number does not match submitted number.`,
+        details: { documentTypeMatch: true, isLegible: true, formatValid: true, numberMatch: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+      });
+    }
+
+    // 11. Low confidence rejection threshold (< 0.5)
+    if (confidence < 0.5) {
+      return res.status(422).json({
+        success: false,
+        verified: false,
+        provider: "GEMINI_VISION_OCR",
+        error: "DOCUMENT_CONFIDENCE_LOW",
+        message: getLocalizedDocumentMessage("DOCUMENT_UNREADABLE", locale),
+        documentType: canonicalType,
+        documentNumber: maskDocumentNumber(cleanExtractedNum),
+        maskedDocumentNumber: maskDocumentNumber(cleanExtractedNum),
         holderName: rawHolderName,
         confidence,
         reason: `OCR confidence (${(confidence * 100).toFixed(1)}%) is too low for compliance approval.`,
@@ -2420,23 +2693,25 @@ router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
     }
 
     // 12. Verification Success
-    const maskedNum = cleanExtractedNum ? '***' + cleanExtractedNum.slice(-4) : 'none';
+    const maskedNum = maskDocumentNumber(cleanExtractedNum);
     console.log(`[Gemini Vision OCR] Successfully verified ${canonicalType} (${maskedNum}) with confidence ${confidence}`);
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       verified: true,
       provider: "GEMINI_VISION_OCR",
       documentType: canonicalType,
-      documentNumber: cleanExtractedNum,
+      documentNumber: maskedNum,
+      maskedDocumentNumber: maskedNum,
       holderName: rawHolderName,
       confidence,
-      extractedText: extractedSummary || `Verified Indian Union ${canonicalType} (${cleanExtractedNum})`,
+      message: getLocalizedDocumentMessage("VERIFICATION_SUCCESS", locale),
+      extractedText: extractedSummary || `Verified Indian Union ${canonicalType} (${maskedNum})`,
       details: {
         documentTypeMatch: true,
         isLegible: true,
         formatValid: true,
-        numberMatch: cleanExpectedNum ? true : null,
+        numberMatch: true,
         mimeType: detectedMime,
         fileSizeBytes: fileBuffer.length
       }
@@ -2483,5 +2758,9 @@ app.validateGstin = validateGstin;
 app.validateDrivingLicence = validateDrivingLicence;
 app.normalizeComplianceDocType = normalizeComplianceDocType;
 app.buildGeminiVisionPrompt = buildGeminiVisionPrompt;
+app.DOCUMENT_MESSAGES = DOCUMENT_MESSAGES;
+app.resolveLocale = resolveLocale;
+app.getLocalizedDocumentMessage = getLocalizedDocumentMessage;
+app.maskDocumentNumber = maskDocumentNumber;
 
 module.exports = app;

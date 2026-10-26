@@ -494,9 +494,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                 onSuccess = { record ->
                                     dlUri = record.downloadUrl
                                     dlVerifying = true
-                                    vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, record.downloadUrl, name) { _, summary ->
+                                    vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, record.downloadUrl, name) { isSuccess, summary ->
                                         dlVerifying = false
-                                        dlVerifiedMsg = summary
+                                        if (isSuccess) {
+                                            dlVerifiedMsg = summary
+                                            dlUploadError = null
+                                        } else {
+                                            dlVerifiedMsg = ""
+                                            dlUploadError = summary
+                                        }
                                     }
                                 },
                                 onFailure = { err ->
@@ -509,9 +515,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Friders%2Fsample_dl.jpg?alt=media"
                         dlUri = fallback
                         dlVerifying = true
-                        vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, fallback, name) { _, summary ->
+                        vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, fallback, name) { isSuccess, summary ->
                             dlVerifying = false
-                            dlVerifiedMsg = summary
+                            if (isSuccess) {
+                                dlVerifiedMsg = summary
+                                dlUploadError = null
+                            } else {
+                                dlVerifiedMsg = ""
+                                dlUploadError = summary
+                            }
                         }
                     }
                 }
@@ -536,9 +548,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                 onSuccess = { record ->
                                     fssaiCertUri = record.downloadUrl
                                     fssaiVerifying = true
-                                    vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, record.downloadUrl, restaurantNameInput) { _, summary ->
+                                    vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, record.downloadUrl, restaurantNameInput) { isSuccess, summary ->
                                         fssaiVerifying = false
-                                        fssaiVerifiedMsg = summary
+                                        if (isSuccess) {
+                                            fssaiVerifiedMsg = summary
+                                            fssaiUploadError = null
+                                        } else {
+                                            fssaiVerifiedMsg = ""
+                                            fssaiUploadError = summary
+                                        }
                                     }
                                 },
                                 onFailure = { err ->
@@ -551,9 +569,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Frestaurants%2Fsample_fssai.pdf?alt=media"
                         fssaiCertUri = fallback
                         fssaiVerifying = true
-                        vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, fallback, restaurantNameInput) { _, summary ->
+                        vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, fallback, restaurantNameInput) { isSuccess, summary ->
                             fssaiVerifying = false
-                            fssaiVerifiedMsg = summary
+                            if (isSuccess) {
+                                fssaiVerifiedMsg = summary
+                                fssaiUploadError = null
+                            } else {
+                                fssaiVerifiedMsg = ""
+                                fssaiUploadError = summary
+                            }
                         }
                     }
                 }
@@ -575,9 +599,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                 onSuccess = { record ->
                                     gstCertUri = record.downloadUrl
                                     gstVerifying = true
-                                    vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, record.downloadUrl, restaurantNameInput) { _, summary ->
+                                    vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, record.downloadUrl, restaurantNameInput) { isSuccess, summary ->
                                         gstVerifying = false
-                                        gstVerifiedMsg = summary
+                                        if (isSuccess) {
+                                            gstVerifiedMsg = summary
+                                            gstUploadError = null
+                                        } else {
+                                            gstVerifiedMsg = ""
+                                            gstUploadError = summary
+                                        }
                                     }
                                 },
                                 onFailure = { err ->
@@ -590,9 +620,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Frestaurants%2Fsample_gst.pdf?alt=media"
                         gstCertUri = fallback
                         gstVerifying = true
-                        vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, fallback, restaurantNameInput) { _, summary ->
+                        vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, fallback, restaurantNameInput) { isSuccess, summary ->
                             gstVerifying = false
-                            gstVerifiedMsg = summary
+                            if (isSuccess) {
+                                gstVerifiedMsg = summary
+                                gstUploadError = null
+                            } else {
+                                gstVerifiedMsg = ""
+                                gstUploadError = summary
+                            }
                         }
                     }
                 }
@@ -652,9 +688,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                             val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Friders%2Fdriving_licence_verified.jpg?alt=media"
                                             dlUri = fallback
                                             dlVerifying = true
-                                            vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, fallback, name) { _, summary ->
+                                            vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber.ifBlank { "MH-02-AB-1234" }, fallback, name) { isSuccess, summary ->
                                                 dlVerifying = false
-                                                dlVerifiedMsg = summary
+                                                if (isSuccess) {
+                                                    dlVerifiedMsg = summary
+                                                    dlUploadError = null
+                                                } else {
+                                                    dlVerifiedMsg = ""
+                                                    dlUploadError = summary
+                                                }
                                             }
                                         }
                                     },
@@ -671,9 +713,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                         val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Friders%2Fdl_${vehicleNumber}.jpg?alt=media"
                                         dlUri = fallback
                                         dlVerifying = true
-                                        vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber, fallback, name) { _, summary ->
+                                        vm.verifyPartnerDocumentWithGemini("DRIVING_LICENSE", vehicleNumber, fallback, name) { isSuccess, summary ->
                                             dlVerifying = false
-                                            dlVerifiedMsg = summary
+                                            if (isSuccess) {
+                                                dlVerifiedMsg = summary
+                                                dlUploadError = null
+                                            } else {
+                                                dlVerifiedMsg = ""
+                                                dlUploadError = summary
+                                            }
                                         }
                                     }
                                 ) {
@@ -774,9 +822,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                             val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Frestaurants%2Ffssai_cert.pdf?alt=media"
                                             fssaiCertUri = fallback
                                             fssaiVerifying = true
-                                            vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, fallback, restaurantNameInput) { _, summary ->
+                                            vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber.ifBlank { "11524006000421" }, fallback, restaurantNameInput) { isSuccess, summary ->
                                                 fssaiVerifying = false
-                                                fssaiVerifiedMsg = summary
+                                                if (isSuccess) {
+                                                    fssaiVerifiedMsg = summary
+                                                    fssaiUploadError = null
+                                                } else {
+                                                    fssaiVerifiedMsg = ""
+                                                    fssaiUploadError = summary
+                                                }
                                             }
                                         }
                                     },
@@ -793,9 +847,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                         val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Frestaurants%2Ffssai_${fssaiNumber}.pdf?alt=media"
                                         fssaiCertUri = fallback
                                         fssaiVerifying = true
-                                        vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber, fallback, restaurantNameInput) { _, summary ->
+                                        vm.verifyPartnerDocumentWithGemini("FSSAI_CERTIFICATE", fssaiNumber, fallback, restaurantNameInput) { isSuccess, summary ->
                                             fssaiVerifying = false
-                                            fssaiVerifiedMsg = summary
+                                            if (isSuccess) {
+                                                fssaiVerifiedMsg = summary
+                                                fssaiUploadError = null
+                                            } else {
+                                                fssaiVerifiedMsg = ""
+                                                fssaiUploadError = summary
+                                            }
                                         }
                                     }
                                 ) {
@@ -832,9 +892,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                             val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Frestaurants%2Fgst_cert.pdf?alt=media"
                                             gstCertUri = fallback
                                             gstVerifying = true
-                                            vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, fallback, restaurantNameInput) { _, summary ->
+                                            vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber.ifBlank { "27AABCU9603R1ZM" }, fallback, restaurantNameInput) { isSuccess, summary ->
                                                 gstVerifying = false
-                                                gstVerifiedMsg = summary
+                                                if (isSuccess) {
+                                                    gstVerifiedMsg = summary
+                                                    gstUploadError = null
+                                                } else {
+                                                    gstVerifiedMsg = ""
+                                                    gstUploadError = summary
+                                                }
                                             }
                                         }
                                     },
@@ -851,9 +917,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                         val fallback = "https://firebasestorage.googleapis.com/v0/b/restro-app/o/documents%2Frestaurants%2Fgst_${gstNumber}.pdf?alt=media"
                                         gstCertUri = fallback
                                         gstVerifying = true
-                                        vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber, fallback, restaurantNameInput) { _, summary ->
+                                        vm.verifyPartnerDocumentWithGemini("GST_CERTIFICATE", gstNumber, fallback, restaurantNameInput) { isSuccess, summary ->
                                             gstVerifying = false
-                                            gstVerifiedMsg = summary
+                                            if (isSuccess) {
+                                                gstVerifiedMsg = summary
+                                                gstUploadError = null
+                                            } else {
+                                                gstVerifiedMsg = ""
+                                                gstUploadError = summary
+                                            }
                                         }
                                     }
                                 ) {
