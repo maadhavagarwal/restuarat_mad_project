@@ -55,6 +55,13 @@ class FirebaseCloudEngine(
     private var riderPayoutsListenerReg: ListenerRegistration? = null
     private var riderRejectedOffersListenerReg: ListenerRegistration? = null
 
+    var storage: com.google.firebase.storage.FirebaseStorage? = null
+        private set
+
+    val storageEngine: FirebaseStorageEngine by lazy {
+        FirebaseStorageEngine(context, storage)
+    }
+
     init {
         try {
             if (FirebaseApp.getApps(context).isEmpty()) {
@@ -65,6 +72,11 @@ class FirebaseCloudEngine(
                 firestoreSettings = FirebaseFirestoreSettings.Builder()
                     .setPersistenceEnabled(true)
                     .build()
+            }
+            try {
+                storage = com.google.firebase.storage.FirebaseStorage.getInstance()
+            } catch (se: Exception) {
+                Log.w(tag, "Firebase Storage initialization deferred: ${se.message}")
             }
             isFirebaseInitialized = true
             Log.i(tag, "Firebase Cloud Engine successfully initialized with Firestore offline persistence.")

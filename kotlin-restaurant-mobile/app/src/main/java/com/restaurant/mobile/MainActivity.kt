@@ -703,7 +703,8 @@ fun RestaurantMobileApp(
                         NavigationScreen.MENU -> AdminMenuManagementScreenView(
                             database = database,
                             onShowToast = onShowToast,
-                            catalog = deliveryVm?.catalog
+                            catalog = deliveryVm?.catalog,
+                            deliveryVm = deliveryVm
                         )
                         NavigationScreen.INVENTORY -> InventoryAndAuditScreenView(
                             database = database,
@@ -3155,8 +3156,10 @@ fun StaffPayrollScreenView(
 fun AdminMenuManagementScreenView(
     database: com.restaurant.mobile.delivery.RestroSqlDatabase,
     onShowToast: (String) -> Unit,
-    catalog: com.restaurant.mobile.delivery.Catalog? = null
+    catalog: com.restaurant.mobile.delivery.Catalog? = null,
+    deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel? = null
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var restaurants by remember { mutableStateOf<List<com.restaurant.mobile.delivery.Restaurant>>(emptyList()) }
     var selectedRestaurantId by remember { mutableStateOf("rest-1") }
@@ -3285,13 +3288,30 @@ fun AdminMenuManagementScreenView(
                         )
                     }
 
+                    var isUploadingAdminLogo by remember { mutableStateOf(false) }
+                    var adminLogoUploadProgress by remember { mutableStateOf(0f) }
+
                     val adminLogoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-                        val picked = uri?.toString() ?: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
-                        coroutineScope.launch(Dispatchers.IO) {
-                            database.updateRestaurantLogo(rest.id, picked)
-                            refreshMenu()
-                            withContext(Dispatchers.Main) {
-                                onShowToast("Restaurant logo updated for ${rest.name}")
+                        if (uri != null) {
+                            coroutineScope.launch {
+                                isUploadingAdminLogo = true
+                                adminLogoUploadProgress = 0f
+                                val res = deliveryVm?.uploadRestaurantLogo(rest.id, uri) { prog ->
+                                    adminLogoUploadProgress = prog
+                                } ?: com.restaurant.mobile.delivery.FirebaseStorageEngine(context).uploadRestaurantLogo(rest.id, uri) { prog ->
+                                    adminLogoUploadProgress = prog
+                                }
+                                isUploadingAdminLogo = false
+                                res.fold(
+                                    onSuccess = { downloadUrl ->
+                                        database.updateRestaurantLogo(rest.id, downloadUrl)
+                                        refreshMenu()
+                                        onShowToast("Restaurant logo uploaded and saved!")
+                                    },
+                                    onFailure = { err ->
+                                        onShowToast("Logo upload failed: ${err.localizedMessage ?: "Unknown error"}")
+                                    }
+                                )
                             }
                         }
                     }
@@ -3301,33 +3321,47 @@ fun AdminMenuManagementScreenView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            "Logo: ${rest.logoUrl.ifBlank { rest.image }.take(34)}...",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            val activeLogo = rest.logoUrl.ifBlank { rest.image }
+                            com.restaurant.mobile.delivery.Photo(
+                                url = activeLogo,
+                                description = rest.name,
+                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp))
+                            )
+                            Column {
+                                Text(
+                                    "Brand Logo",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    if (isUploadingAdminLogo) "Uploading: ${(adminLogoUploadProgress * 100).toInt()}%"
+                                    else activeLogo.take(28) + "...",
+                                    fontSize = 11.sp,
+                                    color = if (isUploadingAdminLogo) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                         OutlinedButton(
                             onClick = {
                                 try {
                                     adminLogoPicker.launch("image/*")
                                 } catch (_: Exception) {
-                                    val fallbackLogo = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        database.updateRestaurantLogo(rest.id, fallbackLogo)
-                                        refreshMenu()
-                                        withContext(Dispatchers.Main) {
-                                            onShowToast("Restaurant logo updated for ${rest.name}")
-                                        }
-                                    }
+                                    onShowToast("Unable to open image picker")
                                 }
                             },
+                            enabled = !isUploadingAdminLogo,
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Icon(Icons.Default.Image, null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text(com.restaurant.mobile.delivery.RestroI18n.t("upload_logo_btn"), fontSize = 11.sp)
+                            Text(if (isUploadingAdminLogo) "Uploading..." else com.restaurant.mobile.delivery.RestroI18n.t("upload_logo_btn"), fontSize = 11.sp)
                         }
                     }
                 }
@@ -3351,14 +3385,25 @@ fun AdminMenuManagementScreenView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text(
-                                "₹${dish.price / 100} · ${dish.category} · Mapped to ${dish.restaurantId}",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            com.restaurant.mobile.delivery.Photo(
+                                url = dish.image,
+                                description = dish.name,
+                                modifier = Modifier.size(46.dp).clip(RoundedCornerShape(8.dp))
                             )
+                            Column {
+                                Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text(
+                                    "₹${dish.price / 100} · ${dish.category} · Mapped to ${dish.restaurantId}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3413,10 +3458,35 @@ fun AdminMenuManagementScreenView(
             mutableStateOf(target?.image ?: (selectedRest?.image ?: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800"))
         }
 
+        var isUploadingAdminDishImage by remember { mutableStateOf(false) }
+        var adminDishImageProgress by remember { mutableStateOf(0f) }
+        var adminDishImageError by remember { mutableStateOf<String?>(null) }
+
         val adminDishImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            val picked = uri?.toString()
-            if (!picked.isNullOrBlank()) {
-                editDishImage = picked
+            if (uri != null) {
+                coroutineScope.launch {
+                    isUploadingAdminDishImage = true
+                    adminDishImageProgress = 0f
+                    adminDishImageError = null
+                    val dishId = target?.id ?: "dish-${System.currentTimeMillis()}"
+                    val restId = selectedRestaurantId
+                    val res = deliveryVm?.uploadDishImage(restId, dishId, uri) { prog ->
+                        adminDishImageProgress = prog
+                    } ?: com.restaurant.mobile.delivery.FirebaseStorageEngine(context).uploadDishImage(restId, dishId, uri) { prog ->
+                        adminDishImageProgress = prog
+                    }
+                    isUploadingAdminDishImage = false
+                    res.fold(
+                        onSuccess = { downloadUrl ->
+                            editDishImage = downloadUrl
+                            onShowToast("Dish image uploaded successfully!")
+                        },
+                        onFailure = { err ->
+                            adminDishImageError = err.localizedMessage ?: "Failed to upload image"
+                            onShowToast("Dish image upload failed: ${err.localizedMessage}")
+                        }
+                    )
+                }
             }
         }
 
@@ -3461,20 +3531,49 @@ fun AdminMenuManagementScreenView(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        com.restaurant.mobile.delivery.Photo(
+                            url = editDishImage,
+                            description = dName,
+                            modifier = Modifier.size(54.dp).clip(RoundedCornerShape(8.dp))
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            if (isUploadingAdminDishImage) {
+                                LinearProgressIndicator(
+                                    progress = { adminDishImageProgress },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text("Uploading: ${(adminDishImageProgress * 100).toInt()}%", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                            } else if (adminDishImageError != null) {
+                                Text(adminDishImageError!!, fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+                            } else {
+                                Text(
+                                    if (editDishImage.startsWith("http")) "Cloud image linked" else "Standard catalog image",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                     OutlinedButton(
                         onClick = {
                             try {
                                 adminDishImagePicker.launch("image/*")
                             } catch (_: Exception) {
-                                editDishImage = "https://images.unsplash.com/photo-1565557623262-b51c2513a641?w=800"
+                                onShowToast("Unable to open image picker")
                             }
                         },
+                        enabled = !isUploadingAdminDishImage,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp)
                     ) {
                         Icon(Icons.Default.AddPhotoAlternate, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(com.restaurant.mobile.delivery.RestroI18n.t("upload_dish_image_btn"), fontSize = 12.sp)
+                        Text(if (isUploadingAdminDishImage) "Uploading..." else com.restaurant.mobile.delivery.RestroI18n.t("upload_dish_image_btn"), fontSize = 12.sp)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -1547,6 +1547,30 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    val storageEngine: FirebaseStorageEngine
+        get() = cloudEngine.storageEngine
+
+    suspend fun uploadRestaurantLogo(
+        restaurantId: String,
+        uri: android.net.Uri,
+        onProgress: (Float) -> Unit = {}
+    ): Result<String> {
+        val result = storageEngine.uploadRestaurantLogo(restaurantId, uri, onProgress)
+        result.onSuccess { downloadUrl ->
+            updateRestaurantLogo(restaurantId, downloadUrl)
+        }
+        return result
+    }
+
+    suspend fun uploadDishImage(
+        restaurantId: String,
+        dishId: String,
+        uri: android.net.Uri,
+        onProgress: (Float) -> Unit = {}
+    ): Result<String> {
+        return storageEngine.uploadDishImage(restaurantId, dishId, uri, onProgress)
+    }
+
     fun updateRestaurantLogo(restaurantId: String, logoUri: String) {
         if (logoUri.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {

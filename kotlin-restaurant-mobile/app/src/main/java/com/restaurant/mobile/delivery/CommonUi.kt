@@ -80,7 +80,7 @@ fun Field(label: String, value: String, change: (String) -> Unit, secret: Boolea
 @Composable
 fun Photo(url: String, description: String, modifier: Modifier = Modifier) {
     SubcomposeAsyncImage(
-        model = url,
+        model = if (url.trim().isNotBlank()) url.trim() else "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600",
         contentDescription = description,
         contentScale = ContentScale.Crop,
         modifier = modifier.background(RestroTokens.surface),

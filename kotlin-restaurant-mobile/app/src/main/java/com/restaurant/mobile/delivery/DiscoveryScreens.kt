@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -2233,6 +2234,12 @@ fun RestaurantPartnerConsoleDialog(
 
     var editingDish by remember { mutableStateOf<Dish?>(null) }
     var showAddOrEditDish by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    fun showToast(msg: String) {
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
 
     val restaurantDishes = remember(restaurant.id, vm.catalog.dishes) {
         vm.catalog.dishes.filter { it.restaurantId == restaurant.id }
@@ -2348,40 +2355,67 @@ fun RestaurantPartnerConsoleDialog(
                         HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
                         var logoStatus by remember { mutableStateOf(restaurant.logoUrl.ifBlank { restaurant.image }) }
+                        var isUploadingLogo by remember { mutableStateOf(false) }
+                        var logoUploadProgress by remember { mutableStateOf(0f) }
+
                         val restLogoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-                            val picked = uri?.toString() ?: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
-                            logoStatus = picked
-                            vm.updateRestaurantLogo(restaurant.id, picked)
+                            if (uri != null) {
+                                coroutineScope.launch {
+                                    isUploadingLogo = true
+                                    logoUploadProgress = 0f
+                                    val res = vm.uploadRestaurantLogo(restaurant.id, uri) { prog ->
+                                        logoUploadProgress = prog
+                                    }
+                                    isUploadingLogo = false
+                                    res.fold(
+                                        onSuccess = { downloadUrl ->
+                                            logoStatus = downloadUrl
+                                            showToast("Restaurant logo uploaded and saved successfully!")
+                                        },
+                                        onFailure = { err ->
+                                            showToast("Logo upload failed: ${err.localizedMessage ?: "Unknown error"}")
+                                        }
+                                    )
+                                }
+                            }
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Restaurant Brand Logo", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Text(
-                                    if (logoStatus.isNotBlank()) "Active Logo: ${logoStatus.take(36)}..." else "No custom logo uploaded",
-                                    fontSize = 10.sp,
-                                    color = RestroTokens.muted
-                                )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Photo(logoStatus, restaurant.name, Modifier.size(38.dp).clip(RoundedCornerShape(8.dp)))
+                                Column {
+                                    Text("Restaurant Brand Logo", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(
+                                        if (isUploadingLogo) "Uploading: ${(logoUploadProgress * 100).toInt()}%"
+                                        else if (logoStatus.isNotBlank()) "Active Logo: ${logoStatus.take(30)}..."
+                                        else "No custom logo uploaded",
+                                        fontSize = 10.sp,
+                                        color = if (isUploadingLogo) RestroTokens.coral else RestroTokens.muted
+                                    )
+                                }
                             }
                             OutlinedButton(
                                 onClick = {
                                     try {
                                         restLogoPicker.launch("image/*")
                                     } catch (_: Exception) {
-                                        val sampleLogo = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
-                                        logoStatus = sampleLogo
-                                        vm.updateRestaurantLogo(restaurant.id, sampleLogo)
+                                        showToast("Unable to open image picker")
                                     }
                                 },
+                                enabled = !isUploadingLogo,
                                 shape = RoundedCornerShape(8.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Icon(Icons.Default.Image, null, modifier = Modifier.size(14.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text(RestroI18n.t("upload_logo_btn"), fontSize = 10.sp)
+                                Text(if (isUploadingLogo) "Uploading..." else RestroI18n.t("upload_logo_btn"), fontSize = 10.sp)
                             }
                         }
                     }
@@ -2475,10 +2509,32 @@ fun RestaurantPartnerConsoleDialog(
         var dAvail by remember(editingDish) { mutableStateOf(editingDish?.available ?: true) }
         var dImage by remember(editingDish) { mutableStateOf(editingDish?.image ?: restaurant.image) }
 
+        var isUploadingDishImage by remember { mutableStateOf(false) }
+        var dishImageProgress by remember { mutableStateOf(0f) }
+        var dishImageError by remember { mutableStateOf<String?>(null) }
+
         val dishImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            val picked = uri?.toString()
-            if (!picked.isNullOrBlank()) {
-                dImage = picked
+            if (uri != null) {
+                coroutineScope.launch {
+                    isUploadingDishImage = true
+                    dishImageProgress = 0f
+                    dishImageError = null
+                    val dishId = editingDish?.id ?: "dish-${System.currentTimeMillis()}"
+                    val res = vm.uploadDishImage(restaurant.id, dishId, uri) { prog ->
+                        dishImageProgress = prog
+                    }
+                    isUploadingDishImage = false
+                    res.fold(
+                        onSuccess = { downloadUrl ->
+                            dImage = downloadUrl
+                            showToast("Dish image uploaded!")
+                        },
+                        onFailure = { err ->
+                            dishImageError = err.localizedMessage ?: "Failed to upload image"
+                            showToast("Upload failed: ${err.localizedMessage}")
+                        }
+                    )
+                }
             }
         }
 
@@ -2524,13 +2580,31 @@ fun RestaurantPartnerConsoleDialog(
                         maxLines = 2,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    OutlinedTextField(
-                        value = dImage,
-                        onValueChange = { dImage = it },
-                        label = { Text("Custom Dish Image URL / URI") },
-                        singleLine = true,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxWidth()
-                    )
+                    ) {
+                        Photo(dImage, dName, Modifier.size(54.dp).clip(RoundedCornerShape(8.dp)))
+                        Column(modifier = Modifier.weight(1f)) {
+                            if (isUploadingDishImage) {
+                                LinearProgressIndicator(
+                                    progress = { dishImageProgress },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = RestroTokens.coral
+                                )
+                                Text("Uploading: ${(dishImageProgress * 100).toInt()}%", fontSize = 10.sp, color = RestroTokens.coral)
+                            } else if (dishImageError != null) {
+                                Text(dishImageError!!, fontSize = 10.sp, color = Color(0xFFEF4444))
+                            } else {
+                                Text(
+                                    if (dImage.startsWith("http")) "Cloud image linked" else "Standard catalog image",
+                                    fontSize = 10.sp,
+                                    color = RestroTokens.muted
+                                )
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2540,15 +2614,16 @@ fun RestaurantPartnerConsoleDialog(
                                 try {
                                     dishImagePicker.launch("image/*")
                                 } catch (_: Exception) {
-                                    dImage = "https://images.unsplash.com/photo-1565557623262-b51c2513a641?w=800"
+                                    showToast("Unable to open image picker")
                                 }
                             },
+                            enabled = !isUploadingDishImage,
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Icon(Icons.Default.AddPhotoAlternate, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(RestroI18n.t("upload_dish_image_btn"), fontSize = 11.sp)
+                            Text(if (isUploadingDishImage) "Uploading..." else RestroI18n.t("upload_dish_image_btn"), fontSize = 11.sp)
                         }
                     }
                     Row(
@@ -2588,7 +2663,7 @@ fun RestaurantPartnerConsoleDialog(
                         vm.upsertRestaurantDish(dishObj)
                         showAddOrEditDish = false
                     },
-                    enabled = dName.isNotBlank() && dPriceRupees.isNotBlank(),
+                    enabled = dName.isNotBlank() && dPriceRupees.isNotBlank() && !isUploadingDishImage,
                     colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral)
                 ) {
                     Text(RestroI18n.t("save_changes"), color = RestroTokens.canvas, fontWeight = FontWeight.Bold)
