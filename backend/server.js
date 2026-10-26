@@ -375,6 +375,7 @@ const db = {
   ]),
   riderPayouts: new Map(), // payoutId -> payoutRecord
   payoutIdempotency: new Map(), // idempotencyKey -> payoutId
+  translationCache: new Map(), // `${lang}:${dishIdOrName}` -> { name, description }
   
   restaurants: [
     {
@@ -2602,6 +2603,304 @@ app.post("/api/delivery/rider/payouts/:id/reconcile", handleReconcilePayout);
 app.post("/payments/razorpayx/webhook", handleRazorpayXWebhook);
 
 // ------------------------------------------
+// Multilingual Menu Translation Engine (Gemini 1.5 Flash & Caching)
+// Supports Hindi ("hi") and Marathi ("mr")
+// ------------------------------------------
+const TRANSLATIONS_STORAGE_FILE = path.join(__dirname, "uploads", "translations_cache.json");
+
+function loadDurableTranslations() {
+  try {
+    if (fs.existsSync(TRANSLATIONS_STORAGE_FILE)) {
+      const raw = fs.readFileSync(TRANSLATIONS_STORAGE_FILE, "utf8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          if (item && item.key && item.translation) {
+            db.translationCache.set(item.key, item.translation);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("⚠️ [Translation Storage] Failed to load translations:", err.message);
+  }
+}
+
+function saveDurableTranslations() {
+  try {
+    const list = [];
+    for (const [key, translation] of db.translationCache.entries()) {
+      list.push({ key, translation });
+    }
+    fs.writeFileSync(TRANSLATIONS_STORAGE_FILE, JSON.stringify(list, null, 2), "utf8");
+  } catch (err) {
+    console.warn("⚠️ [Translation Storage] Failed to persist translations:", err.message);
+  }
+}
+
+// Initial load
+loadDurableTranslations();
+
+const CULINARY_LEXICON = {
+  hi: {
+    "Butter Chicken": { name: "बटर चिकन", description: "मलाईदार मक्खन और टमाटर की समृद्ध ग्रेवी में पका हुआ तंदूरी चिकन।" },
+    "Garlic Naan": { name: "गार्लिक नान", description: "तंदूर में सिका हुआ लहसुन और मक्खन से महकता गरमा-गरम नान।" },
+    "Paneer Tikka": { name: "पनीर टिक्का", description: "तंदूर में भुने हुए मसालेदार और रसदार ताजे पनीर के टुकड़े।" },
+    "Dal Makhani": { name: "दाल मखनी", description: "धीमी आंच पर रात भर पकी हुई मक्खन और क्रीम वाली काली दाल।" },
+    "Awadhi Dum Biryani": { name: "अवधी दम बिरयानी", description: "धीमी आंच पर पकाई गई सुगंधित मसालों से भरपूर शाही बिरयानी।" },
+    "Truffle Fettuccine": { name: "ट्रफल फेटुचिनी", description: "हाथ से बनी पास्ता पट्टी, मशरूम और परमेसन चीज की मलाईदार सॉस में।" },
+    "Woodfired Margherita Pizza": { name: "वुडफायर्ड मार्गरिटा पिज्जा", description: "लकड़ी की भट्टी में सिका पारंपरिक इटैलियन पिज्जा और मोज़ेरेला चीज।" },
+    "Ghee Roast Dosa": { name: "घी रोस्ट डोसा", description: "शुद्ध देसी घी में सिका हुआ कुरकुरा डोसा, नारियल की चटनी और सांभर के साथ।" },
+    "Misal Pav": { name: "मिसल पाव", description: "तीखी उसल, कुरकुरे फरसाण, नींबू और ताजे पाव के साथ।" },
+    "Pav Bhaji": { name: "पाव भाजी", description: "मक्खन में मैश की गई तीखी सब्जियां और सिके हुए पाव।" },
+    "Gulab Jamun": { name: "गुलाब जामुन", description: "इलायची और केसर की चाशनी में डूबे हुए गरमा-गरम नरम मावे के जामुन।" },
+    "Tokyo Shoyu Ramen": { name: "टोक्यो शोयु रामेन", description: "पारंपरिक जापानी सोया शोरबा, नूडल्स और ताजी सब्जियों का कटोरा।" }
+  },
+  mr: {
+    "Butter Chicken": { name: "बटर चिकन", description: "लोणी आणि टोमॅटोच्या मलाईदार रश्श्यात शिजवलेले चिकन." },
+    "Garlic Naan": { name: "लसूण नान", description: "तंदूरमध्ये भाजलेले लसूण आणि लोणी लावलेले गरमागरम नान." },
+    "Paneer Tikka": { name: "पनीर टिक्का", description: "तंदूरमध्ये भाजलेले मसालेदार आणि चविष्ट ताजे पनीरचे तुकडे." },
+    "Dal Makhani": { name: "दाल मखनी", description: "मंद आचेवर रात्रभर शिजवलेली लोणी आणि मलईयुक्त काळी डाळ." },
+    "Awadhi Dum Biryani": { name: "अवधी दम बिर्याणी", description: "मंद आचेवर शिजवलेली सुगंधी मसाल्यांची शाही बिर्याणी." },
+    "Truffle Fettuccine": { name: "ट्रफल फेटुचिनी", description: "मशरूम आणि पारमेसन चीजच्या मलाईदार सॉसमध्ये हाताने बनवलेला पास्ता." },
+    "Woodfired Margherita Pizza": { name: "वुडफायर्ड मार्गेरिटा पिझ्झा", description: "लाकडाच्या भट्टीत भाजलेला पारंपरिक इटालियन पिझ्झा आणि मोझरेला चीज." },
+    "Ghee Roast Dosa": { name: "तूप रोस्ट डोसा", description: "शुद्ध गावरान तुपात भाजलेला कुरकुरीत डोसा, खोबऱ्याची चटणी आणि सांबारसह." },
+    "Misal Pav": { name: "झणझणीत मिसळ पाव", description: "झणझणीत कट, चवदार उसळ, फरसाण, लिंबू आणि ताजे लादी पाव." },
+    "Pav Bhaji": { name: "पाव भाजी", description: "लोण्यामध्ये शिजवलेली चवदार भाजी आणि भाजलेले मऊ पाव." },
+    "Gulab Jamun": { name: "गुलाब जामुन", description: "वेलची आणि केशरच्या पाकात भिजवलेले गरमागरम मऊ खव्याचे गुलाबजाम." },
+    "Tokyo Shoyu Ramen": { name: "टोकियो शोयु रामेन", description: "पारंपरिक जपानी सोया सूप, नूडल्स आणि ताज्या भाज्यांचा स्वादिष्ट बाऊल." }
+  }
+};
+
+function getLexiconTranslation(name, description, targetLang) {
+  const dict = CULINARY_LEXICON[targetLang] || {};
+  if (dict[name]) {
+    return {
+      name: dict[name].name,
+      description: dict[name].description || description
+    };
+  }
+  for (const [key, val] of Object.entries(dict)) {
+    if (name.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(name.toLowerCase())) {
+      return {
+        name: val.name,
+        description: val.description || description
+      };
+    }
+  }
+  return {
+    name,
+    description
+  };
+}
+
+function getDishDisplayName(dish, lang) {
+  if (lang !== "hi" && lang !== "mr") return dish.name;
+  const cached = db.translationCache.get(`${lang}:${dish.id}`) || db.translationCache.get(`${lang}:${dish.name}`);
+  if (cached && cached.name) return cached.name;
+  return getLexiconTranslation(dish.name, dish.description, lang).name;
+}
+
+async function translateWithGemini(items, targetLang) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const langName = targetLang === "hi" ? "Hindi" : targetLang === "mr" ? "Marathi" : "English";
+
+  const systemPrompt = `You are an expert culinary translator for a premier Indian restaurant dining platform.
+Translate the following dish names and descriptions accurately, appetizingly, and naturally into ${langName} in Devanagari script.
+Preserve famous Indian dish names (like Biryani, Paneer, Naan, Dosa) with appropriate Devanagari spelling.
+Output strictly valid JSON with NO surrounding formatting, exactly matching this schema:
+[
+  {
+    "id": "dish-id",
+    "name": "Translated Name in Devanagari",
+    "description": "Appetizing translated description in Devanagari"
+  }
+]`;
+
+  const userPayload = items.map(it => ({ id: it.id, name: it.name, description: it.description || "" }));
+
+  if (typeof app.customGeminiRequester === "function") {
+    return await app.customGeminiRequester({
+      payload: userPayload,
+      targetLanguage: targetLang,
+      systemPrompt
+    });
+  }
+
+  if (!apiKey) {
+    throw new Error("GEMINI_NOT_CONFIGURED");
+  }
+
+  const geminiPayload = JSON.stringify({
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: `${systemPrompt}\n\nDishes to translate:\n${JSON.stringify(userPayload)}` }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json"
+    }
+  });
+
+  const geminiRes = await new Promise((resolve, reject) => {
+    const geminiReq = https.request({
+      hostname: "generativelanguage.googleapis.com",
+      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(geminiPayload)
+      }
+    }, (resp) => {
+      let b = "";
+      resp.on("data", c => b += c);
+      resp.on("end", () => resolve({ status: resp.statusCode, body: b }));
+    });
+    geminiReq.on("error", reject);
+    geminiReq.setTimeout(8000, () => { geminiReq.destroy(); reject(new Error("Gemini timeout")); });
+    geminiReq.write(geminiPayload);
+    geminiReq.end();
+  });
+
+  if (geminiRes.status !== 200) {
+    throw new Error(`GEMINI_API_ERROR_${geminiRes.status}`);
+  }
+
+  const parsed = JSON.parse(geminiRes.body);
+  const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error("EMPTY_GEMINI_TRANSLATION_RESPONSE");
+  }
+  return JSON.parse(text);
+}
+
+const handleMenuTranslate = async (req, res) => {
+  const { items, targetLanguage = "hi" } = req.body || {};
+  const lang = String(targetLanguage || "en").toLowerCase().trim();
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      error: "EMPTY_ITEMS",
+      message: "An array of menu items to translate is required."
+    });
+  }
+
+  if (lang !== "hi" && lang !== "mr" && lang !== "en") {
+    return res.status(400).json({
+      error: "UNSUPPORTED_LANGUAGE",
+      message: `Language '${lang}' is not supported. Only 'hi', 'mr', and 'en' are permitted.`
+    });
+  }
+
+  // English returns as-is
+  if (lang === "en") {
+    return res.json({
+      success: true,
+      language: "en",
+      provider: "ORIGINAL",
+      translations: items.map(it => ({ id: it.id, name: it.name, description: it.description || "" }))
+    });
+  }
+
+  const results = [];
+  const uncachedItems = [];
+
+  for (const item of items) {
+    const cacheKeyById = `${lang}:${item.id}`;
+    const cacheKeyByName = `${lang}:${item.name}`;
+    const cached = db.translationCache.get(cacheKeyById) || db.translationCache.get(cacheKeyByName);
+
+    if (cached) {
+      results.push({
+        id: item.id,
+        name: cached.name,
+        description: cached.description
+      });
+    } else {
+      uncachedItems.push(item);
+    }
+  }
+
+  if (uncachedItems.length === 0) {
+    return res.json({
+      success: true,
+      language: lang,
+      provider: "CACHE",
+      translations: results
+    });
+  }
+
+  let newlyTranslated = [];
+  let provider = "GEMINI_1_5_FLASH";
+
+  try {
+    newlyTranslated = await translateWithGemini(uncachedItems, lang);
+    if (!Array.isArray(newlyTranslated)) {
+      throw new Error("Malformed Gemini translation array");
+    }
+  } catch (err) {
+    console.warn(`⚠️ [Menu Translation Gemini Fallback]: ${err.message}`);
+    provider = "LEXICON_FALLBACK";
+    newlyTranslated = uncachedItems.map(item => {
+      const fallback = getLexiconTranslation(item.name, item.description, lang);
+      return {
+        id: item.id,
+        name: fallback.name,
+        description: fallback.description
+      };
+    });
+  }
+
+  // Cache newly translated items
+  for (const trans of newlyTranslated) {
+    const originalItem = uncachedItems.find(it => it.id === trans.id) || { name: trans.name };
+    db.translationCache.set(`${lang}:${trans.id}`, { name: trans.name, description: trans.description });
+    db.translationCache.set(`${lang}:${originalItem.name}`, { name: trans.name, description: trans.description });
+    results.push(trans);
+  }
+
+  saveDurableTranslations();
+
+  return res.json({
+    success: true,
+    language: lang,
+    provider,
+    translations: results
+  });
+};
+
+const handleGetTranslationCache = (req, res) => {
+  const lang = req.query.language?.toLowerCase()?.trim();
+  const cacheObj = {};
+  for (const [k, v] of db.translationCache.entries()) {
+    if (!lang || k.startsWith(`${lang}:`)) {
+      cacheObj[k] = v;
+    }
+  }
+  return res.json({
+    success: true,
+    totalCached: Object.keys(cacheObj).length,
+    cache: cacheObj
+  });
+};
+
+router.post("/menu/translate", handleMenuTranslate);
+app.post("/api/menu/translate", handleMenuTranslate);
+app.post("/menu/translate", handleMenuTranslate);
+router.get("/menu/translate/cache", handleGetTranslationCache);
+app.get("/api/menu/translate/cache", handleGetTranslationCache);
+
+app.handleMenuTranslate = handleMenuTranslate;
+app.loadDurableTranslations = loadDurableTranslations;
+app.saveDurableTranslations = saveDurableTranslations;
+app.CULINARY_LEXICON = CULINARY_LEXICON;
+app.getDishDisplayName = getDishDisplayName;
+
+// ------------------------------------------
 // Restro.AI Assistant Engine (Gemini & Grounded Heuristics)
 // ------------------------------------------
 router.post("/ai/chat", async (req, res) => {
@@ -2720,42 +3019,44 @@ Rules:
   actions = matchedDishes.map(d => ({
     type: "ADD_TO_CART",
     dishId: d.id,
-    dishName: d.name,
+    dishName: getDishDisplayName(d, lang),
     price: d.price / 100
   }));
+
+  const dishLabels = matchedDishes.map(d => `${getDishDisplayName(d, lang)} (₹${d.price / 100})`).join(", ");
 
   // Multilingual Response Synthesis
   if (lang === "hi") {
     if (isVegQuery) {
-      reply = `आपके लिए कुछ बेहतरीन शाकाहारी विकल्प उपलब्ध हैं: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")}। क्या आप इनमें से कुछ अपनी कार्ट में जोड़ना चाहेंगे?`;
+      reply = `आपके लिए कुछ बेहतरीन शाकाहारी विकल्प उपलब्ध हैं: ${dishLabels}। क्या आप इनमें से कुछ अपनी कार्ट में जोड़ना चाहेंगे?`;
     } else if (isBudgetQuery) {
-      reply = `बजट के अनुकूल ये स्वादिष्ट व्यंजन उपलब्ध हैं: ${matchedDishes.map(d => `${d.name} - ₹${d.price / 100}`).join(", ")}।`;
+      reply = `बजट के अनुकूल ये स्वादिष्ट व्यंजन उपलब्ध हैं: ${dishLabels}।`;
     } else if (isSpicyQuery) {
-      reply = `मसालेदार और चटपटे भोजन के शौकीनों के लिए: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")} शानदार विकल्प हैं!`;
+      reply = `मसालेदार और चटपटे भोजन के शौकीनों के लिए: ${dishLabels} शानदार विकल्प हैं!`;
     } else {
-      reply = `नमस्ते! रेस्ट्रो.एआई में आपका स्वागत है। हमारे पास सबसे लोकप्रिय व्यंजन हैं: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")}। आप इनमें से क्या ऑर्डर करना चाहेंगे?`;
+      reply = `नमस्ते! रेस्ट्रो.एआई में आपका स्वागत है। हमारे पास सबसे लोकप्रिय व्यंजन हैं: ${dishLabels}। आप इनमें से क्या ऑर्डर करना चाहेंगे?`;
     }
     suggestions = ["₹250 के अंदर के व्यंजन", "केवल शाकाहारी दिखाओ", "मेरी कार्ट दिखाओ"];
   } else if (lang === "mr") {
     if (isVegQuery) {
-      reply = `तुमच्यासाठी उत्तम शाकाहारी पर्याय: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")} उपलब्ध आहेत. कार्टमध्ये जोडायचे का?`;
+      reply = `तुमच्यासाठी उत्तम शाकाहारी पर्याय: ${dishLabels} उपलब्ध आहेत. कार्टमध्ये जोडायचे का?`;
     } else if (isBudgetQuery) {
-      reply = `बजेटमधील चवदार पदार्थ: ${matchedDishes.map(d => `${d.name} - ₹${d.price / 100}`).join(", ")}।`;
+      reply = `बजेटमधील चवदार पदार्थ: ${dishLabels}।`;
     } else if (isSpicyQuery) {
-      reply = `झणझणीत आणि चविष्ट जेवणासाठी: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")} उत्तम आहेत!`;
+      reply = `झणझणीत आणि चविष्ट जेवणासाठी: ${dishLabels} उत्तम आहेत!`;
     } else {
-      reply = `नमस्कार! रेस्ट्रो.एआय मध्ये आपले स्वागत आहे. आमचे सर्वोत्तम पदार्थ: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")} आहेत. तुम्हाला काय ऑर्डर करायला आवडेल?`;
+      reply = `नमस्कार! रेस्ट्रो.एआय मध्ये आपले स्वागत आहे. आमचे सर्वोत्तम पदार्थ: ${dishLabels} आहेत. तुम्हाला काय ऑर्डर करायला आवडेल?`;
     }
     suggestions = ["₹२५० च्या आतील पदार्थ", "झणझणीत बिर्याणी", "माझी कार्ट उघडा"];
   } else {
     if (isVegQuery) {
-      reply = `Here are delicious vegetarian favorites from our live menu: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")}. Would you like me to add one to your cart?`;
+      reply = `Here are delicious vegetarian favorites from our live menu: ${dishLabels}. Would you like me to add one to your cart?`;
     } else if (isBudgetQuery) {
-      reply = `Here are great options fitting your budget: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")}.`;
+      reply = `Here are great options fitting your budget: ${dishLabels}.`;
     } else if (isSpicyQuery) {
-      reply = `Craving something spicy? You will love: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")}!`;
+      reply = `Craving something spicy? You will love: ${dishLabels}!`;
     } else {
-      reply = `Hello! I'm Restro.AI, your personal food companion. Top picks on the menu right now: ${matchedDishes.map(d => `${d.name} (₹${d.price / 100})`).join(", ")}. What are you in the mood for?`;
+      reply = `Hello! I'm Restro.AI, your personal food companion. Top picks on the menu right now: ${dishLabels}. What are you in the mood for?`;
     }
     suggestions = ["Dishes under ₹250", "Healthy Veg Dinner", "Open My Cart"];
   }

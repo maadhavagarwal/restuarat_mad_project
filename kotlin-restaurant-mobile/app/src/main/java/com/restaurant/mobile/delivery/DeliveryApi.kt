@@ -513,6 +513,28 @@ class DeliveryApi {
                     receiptText = RiderPayoutRules.generateReceiptText(payout)
                 )
             }
+            (cleanPath == "/menu/translate" || cleanPath == "/api/menu/translate") && method == "POST" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                val targetLang = (req["targetLanguage"] as? String ?: "hi").lowercase().trim()
+                val itemsRaw = req["items"] as? List<*> ?: emptyList<Any>()
+                val results = itemsRaw.mapNotNull { it as? Map<*, *> }.map { itemMap ->
+                    val id = itemMap["id"]?.toString() ?: ""
+                    val name = itemMap["name"]?.toString() ?: ""
+                    val desc = itemMap["description"]?.toString() ?: ""
+                    val trans = RestroMenuTranslationManager.getTranslation(id, name, desc, targetLang)
+                    mapOf(
+                        "id" to id,
+                        "name" to trans.name,
+                        "description" to trans.description
+                    )
+                }
+                mapOf(
+                    "success" to true,
+                    "language" to targetLang,
+                    "provider" to "KOTLIN_ENGINE_FALLBACK",
+                    "translations" to results
+                )
+            }
             else -> null
         }
     }

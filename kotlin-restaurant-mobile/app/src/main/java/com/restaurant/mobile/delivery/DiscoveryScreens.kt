@@ -1839,10 +1839,7 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
                     )
                 }
             }
-            Text(
-                dish.name,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
+            Text(dish.localizedName(), fontWeight = FontWeight.Bold, fontSize = 16.sp,
                 modifier = Modifier.clickable {
                     vm.dishId = dish.id
                     vm.restaurantId = dish.restaurantId
@@ -2281,7 +2278,7 @@ fun QuickReorderCard(
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                    Text(dish.localizedName(), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
                     Text(restaurantName, fontSize = 11.sp, color = RestroTokens.muted, maxLines = 1)
                 }
                 Row(
@@ -2666,7 +2663,7 @@ fun RestaurantPartnerConsoleDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(dish.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Text(dish.localizedName(), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 Text(
                                     "${dish.category} · ${money(dish.price)} · ${if (dish.available) "In Stock" else "Out of Stock"}",
                                     fontSize = 11.sp,

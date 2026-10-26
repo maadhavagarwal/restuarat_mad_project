@@ -63,7 +63,7 @@ fun FoodScreen(vm: DeliveryViewModel) {
             Text(money(dish.price), fontWeight = FontWeight.Bold, fontSize = 20.sp)
         }
 
-        Heading(dish.name, dish.description)
+        Heading(dish.localizedName(), dish.localizedDescription())
 
         if (dish.addons.isNotEmpty()) {
             Text("Customize with Add-ons", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

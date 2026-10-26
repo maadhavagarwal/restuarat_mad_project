@@ -213,8 +213,9 @@ fun RestroAiBottomSheet(
                                             ) {
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     val priceRupees = if (action.price > 1000.0) (action.price / 100.0).toInt() else action.price.toInt()
+                                                    val displayDishName = vm.catalog.dishes.find { it.id == action.dishId }?.localizedName() ?: action.dishName
                                                     Text(
-                                                        action.dishName,
+                                                        displayDishName,
                                                         fontSize = 13.sp,
                                                         fontWeight = FontWeight.Bold,
                                                         color = RestroTokens.text

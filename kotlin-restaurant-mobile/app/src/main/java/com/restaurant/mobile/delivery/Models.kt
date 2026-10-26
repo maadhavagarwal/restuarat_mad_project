@@ -11,6 +11,11 @@ import java.util.UUID
 
 data class AddOn(val id: String, val name: String, val price: Long)
 
+data class DishTranslation(
+    val name: String,
+    val description: String = ""
+)
+
 data class Dish(
     val id: String,
     val restaurantId: String,
@@ -22,6 +27,7 @@ data class Dish(
     val vegetarian: Boolean,
     val available: Boolean = true,
     val addons: List<AddOn> = emptyList(),
+    val translations: Map<String, DishTranslation> = emptyMap()
 )
 
 data class Restaurant(

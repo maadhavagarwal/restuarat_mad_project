@@ -3062,6 +3062,65 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun fetchMenuTranslations(
+        dishes: List<Dish> = catalog.dishes,
+        targetLanguage: String = RestroI18n.currentLanguage,
+        onComplete: ((Boolean) -> Unit)? = null
+    ) {
+        val lang = targetLanguage.lowercase(Locale.ROOT).trim()
+        if (lang == "en" || dishes.isEmpty()) {
+            onComplete?.invoke(true)
+            return
+        }
+
+        val uncached = dishes.filter { !RestroMenuTranslationManager.isCached(lang, it.id, it.name) }
+        if (uncached.isEmpty()) {
+            onComplete?.invoke(true)
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val reqBody = mapOf(
+                    "items" to uncached.map {
+                        mapOf("id" to it.id, "name" to it.name, "description" to it.description)
+                    },
+                    "targetLanguage" to lang
+                )
+                val resp: Map<String, Any> = api.call("/menu/translate", "POST", reqBody)
+                val translationsList = resp["translations"] as? List<*> ?: emptyList<Any>()
+                for (item in translationsList) {
+                    val map = item as? Map<*, *> ?: continue
+                    val id = map["id"]?.toString() ?: ""
+                    val name = map["name"]?.toString() ?: ""
+                    val desc = map["description"]?.toString() ?: ""
+                    if (id.isNotBlank() && name.isNotBlank()) {
+                        val originalDish = uncached.find { it.id == id }
+                        val origName = originalDish?.name ?: name
+                        RestroMenuTranslationManager.cacheTranslation(
+                            lang = lang,
+                            dishId = id,
+                            dishName = origName,
+                            translation = DishTranslation(name, desc)
+                        )
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(true)
+                }
+            } catch (e: Exception) {
+                // Graceful fallback: populate lexicon translations
+                for (dish in uncached) {
+                    val fallback = RestroMenuTranslationManager.getTranslation(dish.id, dish.name, dish.description, lang)
+                    RestroMenuTranslationManager.cacheTranslation(lang, dish.id, dish.name, fallback)
+                }
+                withContext(Dispatchers.Main) {
+                    onComplete?.invoke(false)
+                }
+            }
+        }
+    }
+
     fun handleVoiceResult(speechText: String) {
         isVoiceListening = false
         val clean = speechText.trim()

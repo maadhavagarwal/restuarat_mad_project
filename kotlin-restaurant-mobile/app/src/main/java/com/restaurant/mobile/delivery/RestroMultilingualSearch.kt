@@ -174,7 +174,15 @@ object RestroMultilingualSearch {
             return false
         }
 
-        val dishText = "${dish.name} ${dish.category} ${dish.description}".lowercase(Locale.ROOT)
+        val dishText = buildString {
+            append(dish.name).append(" ")
+            append(dish.category).append(" ")
+            append(dish.description).append(" ")
+            append(dish.localizedName("hi")).append(" ")
+            append(dish.localizedDescription("hi")).append(" ")
+            append(dish.localizedName("mr")).append(" ")
+            append(dish.localizedDescription("mr"))
+        }.lowercase(Locale.ROOT)
         val normalizedDishText = Normalizer.normalize(dishText, Normalizer.Form.NFC)
 
         // Check if any keyword matches
