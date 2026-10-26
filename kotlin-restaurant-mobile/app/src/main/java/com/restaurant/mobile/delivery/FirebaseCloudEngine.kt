@@ -26,6 +26,8 @@ class FirebaseCloudEngine(
     private val gson = Gson()
     private val tag = "FirebaseCloudEngine"
 
+    val subscriptionManager = FirestoreSubscriptionManager()
+
     var isFirebaseInitialized: Boolean = false
         private set
 
@@ -117,8 +119,7 @@ class FirebaseCloudEngine(
         userId: String,
         onOrdersUpdated: (List<DeliveryOrder>) -> Unit
     ) {
-        ordersListenerReg?.remove()
-
+        val channelId = "orders:$userId"
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
             onOrdersUpdated(localSqlDb.getAllOrders())
@@ -126,74 +127,23 @@ class FirebaseCloudEngine(
         }
 
         try {
-            ordersListenerReg = db.collection("orders")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) {
-                        onOrdersUpdated(localSqlDb.getAllOrders())
-                        return@addSnapshotListener
-                    }
+            val query = if (userId.isNotBlank() && userId != "guest") {
+                db.collection("orders").whereEqualTo("userId", userId)
+            } else {
+                db.collection("orders")
+            }
 
+            ordersListenerReg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
                     val cloudOrders = mutableListOf<DeliveryOrder>()
                     for (doc in snapshot.documents) {
-                        try {
-                            val id = doc.getString("id") ?: doc.id
-                            val restId = doc.getString("restaurantId") ?: ""
-                            val restName = doc.getString("restaurantName") ?: ""
-                            val status = doc.getString("status") ?: "Confirmed"
-                            val paymentMethod = doc.getString("paymentMethod") ?: "Cash on delivery"
-                            val paymentStatus = doc.getString("paymentStatus") ?: "Due on delivery"
-                            val addrJson = doc.getString("address") ?: ""
-                            val quoteJson = doc.getString("quote") ?: ""
-                            val eventsJson = doc.getString("events") ?: ""
-
-                            val address = try {
-                                if (addrJson.isNotBlank()) gson.fromJson(addrJson, Address::class.java) else null
-                            } catch (_: Exception) {
-                                null
-                            } ?: Address("addr-default", "Home", doc.getString("deliveryAddress") ?: "Goregaon West, Mumbai", "Mumbai", "400062", "+91 98765 43210")
-
-                            val quote = try {
-                                if (quoteJson.isNotBlank()) gson.fromJson(quoteJson, Quote::class.java) else null
-                            } catch (_: Exception) {
-                                null
-                            } ?: Quote(
-                                restaurantId = restId,
-                                lines = emptyList(),
-                                subtotal = (doc.getLong("total") ?: 500L) * 100L,
-                                tax = 2500L,
-                                delivery = 3500L,
-                                discount = 0L,
-                                total = (doc.getLong("total") ?: 560L) * 100L
-                            )
-                            val eventsType = object : TypeToken<List<Event>>() {}.type
-                            val events: List<Event> = try {
-                                gson.fromJson(eventsJson, eventsType) ?: listOf(Event(status))
-                            } catch (_: Exception) {
-                                listOf(Event(status))
-                            }
-
-                            val order = DeliveryOrder(
-                                id = id,
-                                restaurantId = restId,
-                                restaurantName = restName,
-                                address = address,
-                                quote = quote,
-                                paymentMethod = paymentMethod,
-                                paymentStatus = paymentStatus,
-                                status = status,
-                                events = events,
-                                riderId = doc.getString("riderId") ?: "",
-                                riderName = doc.getString("riderName") ?: "",
-                                riderPhone = doc.getString("riderPhone") ?: "",
-                                riderVehicle = doc.getString("riderVehicle") ?: "",
-                                riderRating = doc.getDouble("riderRating") ?: 4.8,
-                                riderLatitude = doc.getDouble("riderLatitude") ?: 0.0,
-                                riderLongitude = doc.getDouble("riderLongitude") ?: 0.0
-                            )
-                            cloudOrders.add(order)
-                            localSqlDb.saveOrder(order)
-                        } catch (e: Exception) {
-                            Log.w(tag, "Failed parsing cloud order: ${e.message}")
+                        val parsed = FirestoreModelMapper.mapToDeliveryOrder(doc.id, doc.data ?: emptyMap())
+                        if (parsed != null) {
+                            cloudOrders.add(parsed)
+                            localSqlDb.saveOrder(parsed)
                         }
                     }
 
@@ -202,7 +152,12 @@ class FirebaseCloudEngine(
                     } else {
                         onOrdersUpdated(localSqlDb.getAllOrders())
                     }
+                },
+                onError = { err ->
+                    Log.w(tag, "Orders subscription error: ${err.message}")
+                    onOrdersUpdated(localSqlDb.getAllOrders())
                 }
+            )
         } catch (_: Exception) {
             onOrdersUpdated(localSqlDb.getAllOrders())
         }
@@ -260,8 +215,7 @@ class FirebaseCloudEngine(
         userId: String,
         onBookingsUpdated: (List<TableBooking>) -> Unit
     ) {
-        bookingsListenerReg?.remove()
-
+        val channelId = "bookings:$userId"
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
             onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
@@ -269,52 +223,23 @@ class FirebaseCloudEngine(
         }
 
         try {
-            bookingsListenerReg = db.collection("table_bookings")
-                .whereEqualTo("userId", userId)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) {
-                        onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
-                        return@addSnapshotListener
-                    }
+            val query = if (userId.isNotBlank() && userId != "guest") {
+                db.collection("table_bookings").whereEqualTo("userId", userId)
+            } else {
+                db.collection("table_bookings")
+            }
 
+            bookingsListenerReg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
                     val bookings = mutableListOf<TableBooking>()
                     for (doc in snapshot.documents) {
-                        try {
-                            val id = doc.getString("id") ?: doc.id
-                            val restId = doc.getString("restaurantId") ?: ""
-                            val restName = doc.getString("restaurantName") ?: ""
-                            val tableNum = doc.getString("tableNumber") ?: "T1"
-                            val uid = doc.getString("userId") ?: userId
-                            val uName = doc.getString("userName") ?: "Guest"
-                            val uPhone = doc.getString("userPhone") ?: "+91 98765 43210"
-                            val party = doc.getLong("partySize")?.toInt() ?: 2
-                            val bDate = doc.getString("bookingDate") ?: "Today"
-                            val slot = doc.getString("timeSlot") ?: "7:00 PM"
-                            val area = doc.getString("seatingArea") ?: "Main Dining Room"
-                            val special = doc.getString("specialRequests") ?: ""
-                            val statusStr = doc.getString("status") ?: TableBookingStatus.CONFIRMED
-                            val createdAt = doc.getString("createdAt") ?: Instant.now().toString()
-
-                            val b = TableBooking(
-                                id = id,
-                                restaurantId = restId,
-                                restaurantName = restName,
-                                tableNumber = tableNum,
-                                userId = uid,
-                                userName = uName,
-                                userPhone = uPhone,
-                                partySize = party,
-                                bookingDate = bDate,
-                                timeSlot = slot,
-                                seatingArea = area,
-                                specialRequests = special,
-                                status = statusStr,
-                                createdAt = createdAt
-                            )
-                            bookings.add(b)
-                            localSqlDb.saveTableBooking(b)
-                        } catch (e: Exception) {
-                            Log.w(tag, "Failed parsing cloud booking: ${e.message}")
+                        val parsed = FirestoreModelMapper.mapToTableBooking(doc.id, doc.data ?: emptyMap())
+                        if (parsed != null) {
+                            bookings.add(parsed)
+                            localSqlDb.saveTableBooking(parsed)
                         }
                     }
 
@@ -323,7 +248,12 @@ class FirebaseCloudEngine(
                     } else {
                         onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
                     }
+                },
+                onError = { err ->
+                    Log.w(tag, "Table bookings subscription error: ${err.message}")
+                    onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
                 }
+            )
         } catch (_: Exception) {
             onBookingsUpdated(localSqlDb.getTableBookingsForUser(userId))
         }
@@ -590,42 +520,37 @@ class FirebaseCloudEngine(
         userId: String,
         onAddressesUpdated: (List<Address>) -> Unit
     ) {
-        addressesListenerReg?.remove()
+        val channelId = "addresses:$userId"
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
             onAddressesUpdated(localSqlDb.getAllAddresses())
             return
         }
         try {
-            addressesListenerReg = db.collection("users").document(userId)
-                .collection("addresses")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) {
-                        onAddressesUpdated(localSqlDb.getAllAddresses())
-                        return@addSnapshotListener
-                    }
+            addressesListenerReg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = db.collection("users").document(userId).collection("addresses"),
+                onSnapshot = { snapshot, _ ->
                     val list = mutableListOf<Address>()
                     for (doc in snapshot.documents) {
-                        try {
-                            val id = doc.getString("id") ?: doc.id
-                            val label = doc.getString("label") ?: "Home"
-                            val line = doc.getString("line") ?: ""
-                            val city = doc.getString("city") ?: ""
-                            val postcode = doc.getString("postcode") ?: ""
-                            val phone = doc.getString("phone") ?: ""
-                            val lat = doc.getDouble("latitude")
-                            val lng = doc.getDouble("longitude")
-                            val addr = Address(id, label, line, city, postcode, phone, lat, lng)
-                            list.add(addr)
-                            localSqlDb.saveAddress(addr)
-                        } catch (_: Exception) {}
+                        val parsed = FirestoreModelMapper.mapToAddress(doc.id, doc.data ?: emptyMap())
+                        if (parsed != null) {
+                            list.add(parsed)
+                            localSqlDb.saveAddress(parsed)
+                        }
                     }
                     if (list.isNotEmpty()) {
                         onAddressesUpdated(list)
                     } else {
                         onAddressesUpdated(localSqlDb.getAllAddresses())
                     }
+                },
+                onError = { err ->
+                    Log.w(tag, "Addresses subscription error: ${err.message}")
+                    onAddressesUpdated(localSqlDb.getAllAddresses())
                 }
+            )
         } catch (_: Exception) {
             onAddressesUpdated(localSqlDb.getAllAddresses())
         }
@@ -875,67 +800,37 @@ class FirebaseCloudEngine(
             return
         }
         try {
-            catalogListenerReg = db.collection("restaurants")
-                .addSnapshotListener { restSnap, restErr ->
-                    if (restErr != null || restSnap == null || restSnap.isEmpty) {
-                        onCatalogUpdated(fallbackCatalog)
-                        return@addSnapshotListener
-                    }
+            catalogListenerReg = subscriptionManager.attachQueryListener(
+                channelId = "catalog:restaurants",
+                scope = FirestoreSubscriptionManager.ChannelScope.GLOBAL,
+                query = db.collection("restaurants"),
+                onSnapshot = { restSnap, _ ->
                     val restaurants = mutableListOf<Restaurant>()
                     for (doc in restSnap.documents) {
-                        try {
-                            val id = doc.getString("id") ?: doc.id
-                            val name = doc.getString("name") ?: ""
-                            val cuisine = doc.getString("cuisine") ?: ""
-                            val desc = doc.getString("description") ?: ""
-                            val image = doc.getString("image") ?: ""
-                            val address = doc.getString("address") ?: "Mumbai"
-                            val lat = doc.getDouble("latitude") ?: 19.1663
-                            val lng = doc.getDouble("longitude") ?: 72.8526
-                            val delMins = doc.getLong("deliveryMinutes")?.toInt() ?: 28
-                            val delFee = doc.getLong("deliveryFee") ?: 4000L
-                            val open = doc.getBoolean("open") ?: true
-                            val rating = doc.getDouble("rating") ?: 4.8
-                            val tableBooking = doc.getBoolean("tableBookingAvailable") ?: true
-                            val vibes = (doc.get("vibes") as? List<*>)?.mapNotNull { it as? String } ?: listOf("Fine Dining", "Romantic")
-                            restaurants.add(
-                                Restaurant(
-                                    id = id,
-                                    name = name,
-                                    cuisine = cuisine,
-                                    description = desc,
-                                    image = image,
-                                    address = address,
-                                    latitude = lat,
-                                    longitude = lng,
-                                    deliveryMinutes = delMins,
-                                    deliveryFee = delFee,
-                                    open = open,
-                                    rating = rating,
-                                    vibes = vibes,
-                                    tableBookingAvailable = tableBooking
-                                )
-                            )
-                        } catch (_: Exception) {}
+                        val parsed = FirestoreModelMapper.mapToRestaurant(doc.id, doc.data ?: emptyMap())
+                        if (parsed != null) {
+                            restaurants.add(parsed)
+                        }
                     }
                     if (restaurants.isNotEmpty()) {
                         val currentDishes = localSqlDb.getAllDishes()
                         onCatalogUpdated(Catalog(restaurants, currentDishes))
+                    } else {
+                        onCatalogUpdated(fallbackCatalog)
                     }
+                },
+                onError = { err ->
+                    Log.w(tag, "Catalog subscription error: ${err.message}")
+                    onCatalogUpdated(fallbackCatalog)
                 }
+            )
         } catch (_: Exception) {
             onCatalogUpdated(fallbackCatalog)
         }
     }
 
     fun cleanUpListeners() {
-        ordersListenerReg?.remove()
-        tabListenerReg?.remove()
-        bookingsListenerReg?.remove()
-        userListenerReg?.remove()
-        addressesListenerReg?.remove()
-        catalogListenerReg?.remove()
-        riderLocationListenerReg?.remove()
+        subscriptionManager.cancelAll()
         ordersListenerReg = null
         tabListenerReg = null
         bookingsListenerReg = null
@@ -943,5 +838,14 @@ class FirebaseCloudEngine(
         addressesListenerReg = null
         catalogListenerReg = null
         riderLocationListenerReg = null
+    }
+
+    fun cancelUserScopedListeners() {
+        subscriptionManager.cancelUserScopedSubscriptions()
+        ordersListenerReg = null
+        tabListenerReg = null
+        bookingsListenerReg = null
+        userListenerReg = null
+        addressesListenerReg = null
     }
 }

@@ -32,8 +32,8 @@ object MockCatalog {
         restaurants = listOf(
             Restaurant(
                 id = "rest-1",
-                name = "Bistro Lumière & Biryani",
-                cuisine = "Awadhi · Mughlai · Biryani",
+                name = "Bistro LumiÃ¨re & Biryani",
+                cuisine = "Awadhi Â· Mughlai Â· Biryani",
                 description = "Artisanal dum cooked biryanis and royal kebabs with slow-cooked aromatic spices.",
                 image = "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=800&auto=format&fit=crop",
                 address = "SV Road, Near Station, Goregaon West, Mumbai",
@@ -53,7 +53,7 @@ object MockCatalog {
             Restaurant(
                 id = "rest-2",
                 name = "Trattoria Milano",
-                cuisine = "Italian · Woodfired Pizza · Pasta",
+                cuisine = "Italian Â· Woodfired Pizza Â· Pasta",
                 description = "Authentic Neapolitan hand-stretched sourdough pizzas and homemade fettuccine.",
                 image = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&auto=format&fit=crop",
                 address = "Lokhandwala Complex, Andheri West, Mumbai",
@@ -73,7 +73,7 @@ object MockCatalog {
             Restaurant(
                 id = "rest-3",
                 name = "Dakshin Delights",
-                cuisine = "South Indian · Chettinad · Dosa",
+                cuisine = "South Indian Â· Chettinad Â· Dosa",
                 description = "Crispy ghee roast dosas, flaky Malabar parottas, and traditional filter coffee.",
                 image = "https://images.unsplash.com/photo-1668236543090-82eba5ee5976?w=800&auto=format&fit=crop",
                 address = "Linking Road, Bandra West, Mumbai",
@@ -93,7 +93,7 @@ object MockCatalog {
             Restaurant(
                 id = "rest-4",
                 name = "Tokyo Zen & Bao",
-                cuisine = "Pan-Asian · Ramen · Dim Sum",
+                cuisine = "Pan-Asian Â· Ramen Â· Dim Sum",
                 description = "Silky broth ramen bowls, handmade bao buns, and freshly rolled sushi.",
                 image = "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=800&auto=format&fit=crop",
                 address = "Juhu Tara Road, Juhu Beach, Mumbai",
@@ -113,7 +113,7 @@ object MockCatalog {
             Restaurant(
                 id = "rest-5",
                 name = "The Green Bowl & Bakery",
-                cuisine = "Healthy Bowls · Salads · Sourdough",
+                cuisine = "Healthy Bowls Â· Salads Â· Sourdough",
                 description = "Nutrient-packed grain bowls, crisp salads, organic smoothies and fresh sourdough.",
                 image = "https://images.unsplash.com/photo-1540420773420-3366772f4999?w=800&auto=format&fit=crop",
                 address = "Central Avenue, Hiranandani Gardens, Powai, Mumbai",
@@ -132,7 +132,7 @@ object MockCatalog {
             )
         ),
         dishes = listOf(
-            // Restaurant 1: Bistro Lumière & Biryani
+            // Restaurant 1: Bistro LumiÃ¨re & Biryani
             Dish(
                 id = "dish-1",
                 restaurantId = "rest-1",
@@ -1034,6 +1034,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         orders = emptyList()
         favorites = emptyList()
         userTableBookings = emptyList()
+        cloudEngine.cancelUserScopedListeners()
         tableTabObservationJob?.cancel()
         tableTabObservationJob = null
         observedTableNumber = null
@@ -1204,7 +1205,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                     catalog = cloudCat
                 }
             }
-            cloudEngine.seedCatalogToCloud(catalog)
+            // Seed catalog to cloud only if remote catalog is completely empty, preventing startup overwrite
+            val existingRemote = runCatching { backend.getCatalog() }.getOrNull()
+            if (existingRemote == null || existingRemote.restaurants.isEmpty()) {
+                cloudEngine.seedCatalogToCloud(catalog)
+            }
 
             if (api.token != null) refreshAccount()
         }
@@ -1521,11 +1526,11 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             val cleanNum = documentNumber.trim().uppercase()
             val summary = when {
                 cleanType.contains("DRIVING") || cleanType.contains("DL") ->
-                    "Gemini OCR: Indian Union Driving Licence Verified · Vehicle ${cleanNum.ifBlank { "MH-02-AB-1234" }} · Transport Class Valid"
+                    "Gemini OCR: Indian Union Driving Licence Verified Â· Vehicle ${cleanNum.ifBlank { "MH-02-AB-1234" }} Â· Transport Class Valid"
                 cleanType.contains("FSSAI") ->
-                    "Gemini OCR: FSSAI Form-C Food Safety Certificate Verified · Lic #${cleanNum.ifBlank { "11524006000421" }}"
+                    "Gemini OCR: FSSAI Form-C Food Safety Certificate Verified Â· Lic #${cleanNum.ifBlank { "11524006000421" }}"
                 cleanType.contains("GST") ->
-                    "Gemini OCR: Govt of India GST REG-06 Certificate Verified · GSTIN ${cleanNum.ifBlank { "27AABCU9603R1ZM" }}"
+                    "Gemini OCR: Govt of India GST REG-06 Certificate Verified Â· GSTIN ${cleanNum.ifBlank { "27AABCU9603R1ZM" }}"
                 else ->
                     "Gemini OCR: Document $cleanType ($cleanNum) text extracted & verified"
             }
@@ -1786,6 +1791,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         addresses = emptyList()
         orders = emptyList()
         favorites = emptyList()
+        cloudEngine.cancelUserScopedListeners()
         isGuestMode = false
         pendingPostAuthRoute = null
         authReasonBanner = null
@@ -1847,7 +1853,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             }
             val activeCoupon = cart.coupon.trim().uppercase()
             if ((activeCoupon == "FEAST" || activeCoupon == "FEAST100") && subtotal < 20000L) {
-                couponError = "Coupon '$activeCoupon' was removed because cart subtotal fell below ₹200."
+                couponError = "Coupon '$activeCoupon' was removed because cart subtotal fell below â‚¹200."
                 couponMessage = null
                 cart = cart.copy(coupon = "")
                 try { api.call("/cart", "PUT", cart) } catch (_: Exception) {}
@@ -2144,7 +2150,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun resolveAndApplyLocation(loc: Location, context: Context) = withContext(Dispatchers.IO) {
         val lat = Math.round(loc.latitude * 10000.0) / 10000.0
         val lng = Math.round(loc.longitude * 10000.0) / 10000.0
-        val accuracyM = if (loc.hasAccuracy()) " (±${loc.accuracy.toInt()}m)" else ""
+        val accuracyM = if (loc.hasAccuracy()) " (Â±${loc.accuracy.toInt()}m)" else ""
         var addressName = "Live Hardware Location$accuracyM"
         try {
             val geocoder = Geocoder(context, Locale.getDefault())
@@ -2229,7 +2235,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     fun getRestaurantDistanceInfo(restaurant: Restaurant): String {
         val dist = getRestaurantDistanceKm(restaurant)
         val estMins = getRestaurantTotalDeliveryMinutes(restaurant)
-        return String.format(java.util.Locale.US, "%.1f km · %d mins", dist, estMins)
+        return String.format(java.util.Locale.US, "%.1f km Â· %d mins", dist, estMins)
     }
 
     fun getNearestRestaurants(): List<Restaurant> {
@@ -2247,7 +2253,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         if (fromOrders.isNotEmpty()) return fromOrders.take(6)
 
         return catalog.dishes.take(5).map { dish ->
-            val restName = catalog.restaurants.find { it.id == dish.restaurantId }?.name ?: "Bistro Lumière"
+            val restName = catalog.restaurants.find { it.id == dish.restaurantId }?.name ?: "Bistro LumiÃ¨re"
             Pair(dish, restName)
         }
     }
@@ -2535,7 +2541,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     fun updateDishPriceAndAvailability(dishId: String, newPrice: Long, isAvailable: Boolean, onDone: () -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
             sqlDb.updateDishPriceAndAvailability(dishId, newPrice, isAvailable)
-            sqlDb.recordAuditLog("MENU_UPDATED", profile?.email ?: "admin@restro.app", "ADMIN", dishId, "Price changed to ₹${newPrice / 100}, available=$isAvailable")
+            sqlDb.recordAuditLog("MENU_UPDATED", profile?.email ?: "admin@restro.app", "ADMIN", dishId, "Price changed to â‚¹${newPrice / 100}, available=$isAvailable")
             refresh()
             withContext(Dispatchers.Main) {
                 onDone()
@@ -2754,8 +2760,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     val fallbackReply = when (RestroI18n.currentLanguage) {
-                        "hi" -> "माफ़ कीजिए, अभी नेटवर्क समस्या के कारण सुझाव प्राप्त नहीं हो सके। कृपया मेनू ब्राउज़ करें।"
-                        "mr" -> "क्षमस्व, नेटवर्क समस्येमुळे शिफारसी लोड झाल्या नाहीत. कृपया मेनू तपासा."
+                        "hi" -> "à¤®à¤¾à¤«à¤¼ à¤•à¥€à¤œà¤¿à¤, à¤…à¤­à¥€ à¤¨à¥‡à¤Ÿà¤µà¤°à¥à¤• à¤¸à¤®à¤¸à¥à¤¯à¤¾ à¤•à¥‡ à¤•à¤¾à¤°à¤£ à¤¸à¥à¤à¤¾à¤µ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤ à¤¨à¤¹à¥€à¤‚ à¤¹à¥‹ à¤¸à¤•à¥‡à¥¤ à¤•à¥ƒà¤ªà¤¯à¤¾ à¤®à¥‡à¤¨à¥‚ à¤¬à¥à¤°à¤¾à¤‰à¤œà¤¼ à¤•à¤°à¥‡à¤‚à¥¤"
+                        "mr" -> "à¤•à¥à¤·à¤®à¤¸à¥à¤µ, à¤¨à¥‡à¤Ÿà¤µà¤°à¥à¤• à¤¸à¤®à¤¸à¥à¤¯à¥‡à¤®à¥à¤³à¥‡ à¤¶à¤¿à¤«à¤¾à¤°à¤¸à¥€ à¤²à¥‹à¤¡ à¤à¤¾à¤²à¥à¤¯à¤¾ à¤¨à¤¾à¤¹à¥€à¤¤. à¤•à¥ƒà¤ªà¤¯à¤¾ à¤®à¥‡à¤¨à¥‚ à¤¤à¤ªà¤¾à¤¸à¤¾."
                         else -> "Sorry, I had trouble reaching the AI service. Feel free to browse our fresh menu directly!"
                     }
                     aiChatHistory.add(RestroAiMessage(isUser = false, text = fallbackReply))
@@ -2772,42 +2778,42 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
         val lower = clean.lowercase()
         when {
-            lower.contains("cart") || lower.contains("कार्ट") -> {
+            lower.contains("cart") || lower.contains("à¤•à¤¾à¤°à¥à¤Ÿ") -> {
                 route = "Cart"
                 voiceManager.speak(when (RestroI18n.currentLanguage) {
-                    "hi" -> "आपकी कार्ट खोल दी गई है"
-                    "mr" -> "तुमची कार्ट उघडली आहे"
+                    "hi" -> "à¤†à¤ªà¤•à¥€ à¤•à¤¾à¤°à¥à¤Ÿ à¤–à¥‹à¤² à¤¦à¥€ à¤—à¤ˆ à¤¹à¥ˆ"
+                    "mr" -> "à¤¤à¥à¤®à¤šà¥€ à¤•à¤¾à¤°à¥à¤Ÿ à¤‰à¤˜à¤¡à¤²à¥€ à¤†à¤¹à¥‡"
                     else -> "Opening your cart"
                 })
             }
-            lower.contains("dine in") || lower.contains("डाइन") || lower.contains("डायन") || lower.contains("table") -> {
+            lower.contains("dine in") || lower.contains("à¤¡à¤¾à¤‡à¤¨") || lower.contains("à¤¡à¤¾à¤¯à¤¨") || lower.contains("table") -> {
                 route = "DineIn"
                 voiceManager.speak(when (RestroI18n.currentLanguage) {
-                    "hi" -> "डाइन इन टेबल बुकिंग पेज खोला गया"
-                    "mr" -> "डायन-इन टेबल बुकिंग पेज उघडले आहे"
+                    "hi" -> "à¤¡à¤¾à¤‡à¤¨ à¤‡à¤¨ à¤Ÿà¥‡à¤¬à¤² à¤¬à¥à¤•à¤¿à¤‚à¤— à¤ªà¥‡à¤œ à¤–à¥‹à¤²à¤¾ à¤—à¤¯à¤¾"
+                    "mr" -> "à¤¡à¤¾à¤¯à¤¨-à¤‡à¤¨ à¤Ÿà¥‡à¤¬à¤² à¤¬à¥à¤•à¤¿à¤‚à¤— à¤ªà¥‡à¤œ à¤‰à¤˜à¤¡à¤²à¥‡ à¤†à¤¹à¥‡"
                     else -> "Opening table booking"
                 })
             }
-            lower.contains("order") || lower.contains("ऑर्डर") -> {
+            lower.contains("order") || lower.contains("à¤‘à¤°à¥à¤¡à¤°") -> {
                 route = "Orders"
                 voiceManager.speak(when (RestroI18n.currentLanguage) {
-                    "hi" -> "आपके ऑर्डर्स खोले जा रहे हैं"
-                    "mr" -> "तुमचे ऑर्डर्स उघडले जात आहेत"
+                    "hi" -> "à¤†à¤ªà¤•à¥‡ à¤‘à¤°à¥à¤¡à¤°à¥à¤¸ à¤–à¥‹à¤²à¥‡ à¤œà¤¾ à¤°à¤¹à¥‡ à¤¹à¥ˆà¤‚"
+                    "mr" -> "à¤¤à¥à¤®à¤šà¥‡ à¤‘à¤°à¥à¤¡à¤°à¥à¤¸ à¤‰à¤˜à¤¡à¤²à¥‡ à¤œà¤¾à¤¤ à¤†à¤¹à¥‡à¤¤"
                     else -> "Opening your orders"
                 })
             }
-            lower.contains("profile") || lower.contains("प्रोफाइल") || lower.contains("account") -> {
+            lower.contains("profile") || lower.contains("à¤ªà¥à¤°à¥‹à¤«à¤¾à¤‡à¤²") || lower.contains("account") -> {
                 route = "Profile"
             }
-            lower.contains("ai") || lower.contains("assistant") || lower.contains("सहायक") -> {
+            lower.contains("ai") || lower.contains("assistant") || lower.contains("à¤¸à¤¹à¤¾à¤¯à¤•") -> {
                 showRestroAiSheet = true
             }
             else -> {
                 query = clean
                 route = "Home"
                 voiceManager.speak(when (RestroI18n.currentLanguage) {
-                    "hi" -> clean + " के परिणाम दिखाए जा रहे हैं"
-                    "mr" -> clean + " चे परिणाम दाखवले जात आहेत"
+                    "hi" -> clean + " à¤•à¥‡ à¤ªà¤°à¤¿à¤£à¤¾à¤® à¤¦à¤¿à¤–à¤¾à¤ à¤œà¤¾ à¤°à¤¹à¥‡ à¤¹à¥ˆà¤‚"
+                    "mr" -> clean + " à¤šà¥‡ à¤ªà¤°à¤¿à¤£à¤¾à¤® à¤¦à¤¾à¤–à¤µà¤²à¥‡ à¤œà¤¾à¤¤ à¤†à¤¹à¥‡à¤¤"
                     else -> "Showing results for " + clean
                 })
             }
@@ -2870,5 +2876,10 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 "MyBookings" -> "Profile"
                 else -> "Home"
             }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        cloudEngine.cleanUpListeners()
     }
 }
