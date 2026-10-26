@@ -24,17 +24,48 @@ data class ImageValidationResult(
     val errorMessage: String? = null
 )
 
+enum class ComplianceDocCategory(val rawValue: String) {
+    RIDER_DL("RIDER_DL"),
+    RESTAURANT_FSSAI("RESTAURANT_FSSAI"),
+    RESTAURANT_GST("RESTAURANT_GST");
+
+    companion object {
+        fun fromString(value: String): ComplianceDocCategory? =
+            entries.find { it.rawValue.equals(value.trim(), ignoreCase = true) }
+    }
+}
+
+data class DocumentValidationResult(
+    val isValid: Boolean,
+    val mimeType: String? = null,
+    val sizeBytes: Long = 0L,
+    val errorMessage: String? = null
+)
+
+data class ComplianceDocumentRecord(
+    val category: ComplianceDocCategory,
+    val ownerId: String,
+    val storagePath: String,
+    val downloadUrl: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val isPrivate: Boolean = true
+)
+
 /**
- * Enterprise Production Cloud Storage Engine for Admin Restaurant Logos & Custom Dish Images.
+ * Enterprise Production Cloud Storage Engine for:
+ * 1. Admin Restaurant Logos & Custom Dish Images
+ * 2. Partner Compliance Documents: Rider DL, Restaurant FSSAI, Restaurant GST
  *
  * Responsibilities:
  * 1. Safely streams Android `content://` URIs via [ContentResolver.openInputStream].
- * 2. Validates image MIME types (JPG, PNG, WEBP, GIF, HEIC) and enforced size limits (5MB logo, 10MB dish).
- * 3. Fallback header magic byte sniffing when content resolver does not provide a mime type.
- * 4. Generates unique storage paths preventing object collisions.
- * 5. Emits granular upload progress.
- * 6. Returns permanent HTTPS download URLs (never local content URIs).
- * 7. Safe cancellation and error recovery without leaking streams or leaving partial state.
+ * 2. Validates image MIME types (JPG, PNG, WEBP, GIF, HEIC) and PDF compliance documents.
+ * 3. Enforces size limits: 5MB logo, 10MB dish, 10MB compliance documents.
+ * 4. Header magic byte sniffing (JPEG, PNG, GIF, WEBP, PDF).
+ * 5. Generates unique storage paths preventing object collisions and path traversal.
+ * 6. Emits granular upload progress.
+ * 7. Returns permanent cloud references / HTTPS download URLs (never local content URIs).
+ * 8. Strict privacy controls for compliance documents (`Cache-Control: private, no-store`).
  */
 class FirebaseStorageEngine(
     private val context: Context,
@@ -45,6 +76,7 @@ class FirebaseStorageEngine(
 
         const val MAX_LOGO_SIZE_BYTES = 5 * 1024 * 1024L // 5 MB
         const val MAX_DISH_SIZE_BYTES = 10 * 1024 * 1024L // 10 MB
+        const val MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024L // 10 MB
 
         val SUPPORTED_MIME_TYPES = setOf(
             "image/jpeg",
@@ -53,6 +85,14 @@ class FirebaseStorageEngine(
             "image/webp",
             "image/gif",
             "image/heic"
+        )
+
+        val SUPPORTED_DOCUMENT_MIME_TYPES = setOf(
+            "application/pdf",
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/webp"
         )
 
         /**
@@ -95,6 +135,46 @@ class FirebaseStorageEngine(
             )
         }
 
+        /**
+         * Pure function for validating compliance document headers (PDF, JPEG, PNG, WEBP).
+         */
+        fun validateDocumentBytes(
+            headerBytes: ByteArray,
+            reportedMimeType: String?,
+            sizeBytes: Long,
+            maxSizeBytes: Long = MAX_DOCUMENT_SIZE_BYTES
+        ): DocumentValidationResult {
+            val detectedMime = reportedMimeType?.lowercase()
+                ?.takeIf { it in SUPPORTED_DOCUMENT_MIME_TYPES }
+                ?: detectDocumentMimeFromHeader(headerBytes)
+
+            if (detectedMime == null || detectedMime !in SUPPORTED_DOCUMENT_MIME_TYPES) {
+                return DocumentValidationResult(
+                    isValid = false,
+                    mimeType = reportedMimeType,
+                    sizeBytes = sizeBytes,
+                    errorMessage = "Unsupported document format '${reportedMimeType ?: "unknown"}'. Only PDF documents and JPG/PNG/WEBP images are accepted."
+                )
+            }
+
+            if (sizeBytes > maxSizeBytes) {
+                val maxMb = maxSizeBytes / (1024 * 1024)
+                val currentMb = String.format(java.util.Locale.US, "%.1f", sizeBytes.toDouble() / (1024 * 1024))
+                return DocumentValidationResult(
+                    isValid = false,
+                    mimeType = detectedMime,
+                    sizeBytes = sizeBytes,
+                    errorMessage = "Document size (${currentMb}MB) exceeds the maximum allowed limit of ${maxMb}MB."
+                )
+            }
+
+            return DocumentValidationResult(
+                isValid = true,
+                mimeType = detectedMime,
+                sizeBytes = sizeBytes
+            )
+        }
+
         fun detectMimeFromHeader(header: ByteArray): String? {
             if (header.size < 4) return null
             // JPEG: FF D8 FF
@@ -119,8 +199,18 @@ class FirebaseStorageEngine(
             return null
         }
 
+        fun detectDocumentMimeFromHeader(header: ByteArray): String? {
+            if (header.size < 4) return null
+            // PDF: 25 50 44 46 (%PDF)
+            if (header[0] == 0x25.toByte() && header[1] == 0x50.toByte() && header[2] == 0x44.toByte() && header[3] == 0x46.toByte()) {
+                return "application/pdf"
+            }
+            return detectMimeFromHeader(header)
+        }
+
         fun getExtensionForMimeType(mimeType: String?): String {
             return when (mimeType?.lowercase()) {
+                "application/pdf" -> "pdf"
                 "image/png" -> "png"
                 "image/webp" -> "webp"
                 "image/gif" -> "gif"
@@ -132,10 +222,23 @@ class FirebaseStorageEngine(
         fun generateStoragePath(restaurantId: String, type: String, id: String, ext: String): String {
             val timestamp = System.currentTimeMillis()
             val uuid = UUID.randomUUID().toString().take(8)
+            val sanitizedRestaurant = restaurantId.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "rest-1" }
+            val sanitizedId = id.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "item" }
             return if (type == "logo") {
-                "restaurants/$restaurantId/logos/logo_${timestamp}_$uuid.$ext"
+                "restaurants/$sanitizedRestaurant/logos/logo_${timestamp}_$uuid.$ext"
             } else {
-                "restaurants/$restaurantId/dishes/dish_${id}_${timestamp}_$uuid.$ext"
+                "restaurants/$sanitizedRestaurant/dishes/dish_${sanitizedId}_${timestamp}_$uuid.$ext"
+            }
+        }
+
+        fun generateComplianceStoragePath(category: ComplianceDocCategory, ownerId: String, ext: String): String {
+            val timestamp = System.currentTimeMillis()
+            val uuid = UUID.randomUUID().toString().take(8)
+            val sanitizedOwner = ownerId.replace(Regex("[^a-zA-Z0-9_-]"), "").ifBlank { "anonymous" }
+            return when (category) {
+                ComplianceDocCategory.RIDER_DL -> "documents/riders/$sanitizedOwner/dl/dl_${timestamp}_$uuid.$ext"
+                ComplianceDocCategory.RESTAURANT_FSSAI -> "documents/restaurants/$sanitizedOwner/fssai/fssai_${timestamp}_$uuid.$ext"
+                ComplianceDocCategory.RESTAURANT_GST -> "documents/restaurants/$sanitizedOwner/gst/gst_${timestamp}_$uuid.$ext"
             }
         }
     }
@@ -147,7 +250,6 @@ class FirebaseStorageEngine(
         val cr = context.contentResolver
         val reportedMime = cr.getType(uri)
 
-        // Read size from OpenableColumns
         val sizeBytes = try {
             cr.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
                 val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
@@ -161,7 +263,6 @@ class FirebaseStorageEngine(
             0L
         }
 
-        // Read first 12 bytes for header verification
         val header = ByteArray(12)
         try {
             cr.openInputStream(uri)?.use { stream ->
@@ -179,6 +280,43 @@ class FirebaseStorageEngine(
         return validateImageBytes(header, reportedMime, sizeBytes, maxSizeBytes)
     }
 
+    fun validateDocumentUri(
+        uri: Uri,
+        maxSizeBytes: Long = MAX_DOCUMENT_SIZE_BYTES
+    ): DocumentValidationResult {
+        val cr = context.contentResolver
+        val reportedMime = cr.getType(uri)
+
+        val sizeBytes = try {
+            cr.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex != -1 && cursor.moveToFirst() && !cursor.isNull(sizeIndex)) {
+                    cursor.getLong(sizeIndex)
+                } else null
+            } ?: runCatching {
+                cr.openInputStream(uri)?.use { it.available().toLong() }
+            }.getOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+
+        val header = ByteArray(16)
+        try {
+            cr.openInputStream(uri)?.use { stream ->
+                stream.read(header)
+            }
+        } catch (e: Exception) {
+            return DocumentValidationResult(
+                isValid = false,
+                mimeType = reportedMime,
+                sizeBytes = sizeBytes,
+                errorMessage = "Cannot read document data: ${e.message}"
+            )
+        }
+
+        return validateDocumentBytes(header, reportedMime, sizeBytes, maxSizeBytes)
+    }
+
     suspend fun uploadRestaurantLogo(
         restaurantId: String,
         imageUri: Uri,
@@ -191,7 +329,13 @@ class FirebaseStorageEngine(
 
         val ext = getExtensionForMimeType(validation.mimeType)
         val storagePath = generateStoragePath(restaurantId, "logo", restaurantId, ext)
-        uploadStream(imageUri, storagePath, validation.mimeType ?: "image/jpeg", onProgress)
+        uploadStream(
+            uri = imageUri,
+            storagePath = storagePath,
+            mimeType = validation.mimeType ?: "image/jpeg",
+            cacheControl = "public, max-age=2592000",
+            onProgress = onProgress
+        )
     }
 
     suspend fun uploadDishImage(
@@ -207,13 +351,61 @@ class FirebaseStorageEngine(
 
         val ext = getExtensionForMimeType(validation.mimeType)
         val storagePath = generateStoragePath(restaurantId, "dish", dishId, ext)
-        uploadStream(imageUri, storagePath, validation.mimeType ?: "image/jpeg", onProgress)
+        uploadStream(
+            uri = imageUri,
+            storagePath = storagePath,
+            mimeType = validation.mimeType ?: "image/jpeg",
+            cacheControl = "public, max-age=2592000",
+            onProgress = onProgress
+        )
+    }
+
+    suspend fun uploadComplianceDocument(
+        category: ComplianceDocCategory,
+        ownerId: String,
+        docUri: Uri,
+        onProgress: (Float) -> Unit = {}
+    ): Result<ComplianceDocumentRecord> = withContext(Dispatchers.IO) {
+        val validation = validateDocumentUri(docUri, MAX_DOCUMENT_SIZE_BYTES)
+        if (!validation.isValid) {
+            return@withContext Result.failure(IllegalArgumentException(validation.errorMessage ?: "Invalid compliance document"))
+        }
+
+        val ext = getExtensionForMimeType(validation.mimeType)
+        val storagePath = generateComplianceStoragePath(category, ownerId, ext)
+
+        val customMetadata = mapOf(
+            "classification" to "confidential",
+            "category" to category.rawValue,
+            "ownerId" to ownerId
+        )
+
+        uploadStream(
+            uri = docUri,
+            storagePath = storagePath,
+            mimeType = validation.mimeType ?: "application/pdf",
+            cacheControl = "private, no-store",
+            customMetadata = customMetadata,
+            onProgress = onProgress
+        ).map { downloadUrl ->
+            ComplianceDocumentRecord(
+                category = category,
+                ownerId = ownerId,
+                storagePath = storagePath,
+                downloadUrl = downloadUrl,
+                mimeType = validation.mimeType ?: "application/pdf",
+                sizeBytes = validation.sizeBytes,
+                isPrivate = true
+            )
+        }
     }
 
     private suspend fun uploadStream(
         uri: Uri,
         storagePath: String,
         mimeType: String,
+        cacheControl: String = "public, max-age=2592000",
+        customMetadata: Map<String, String> = emptyMap(),
         onProgress: (Float) -> Unit
     ): Result<String> {
         val storageInstance = storage ?: try {
@@ -234,10 +426,14 @@ class FirebaseStorageEngine(
 
         return try {
             val storageRef = storageInstance.reference.child(storagePath)
-            val metadata = StorageMetadata.Builder()
+            val metadataBuilder = StorageMetadata.Builder()
                 .setContentType(mimeType)
-                .setCacheControl("public, max-age=2592000") // 30 days cache
-                .build()
+                .setCacheControl(cacheControl)
+
+            customMetadata.forEach { (key, value) ->
+                metadataBuilder.setCustomMetadata(key, value)
+            }
+            val metadata = metadataBuilder.build()
 
             val uploadTask = storageRef.putStream(stream, metadata)
 

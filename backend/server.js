@@ -3,12 +3,80 @@ const cors = require('cors');
 const crypto = require('crypto');
 const https = require('https');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 app.use(express.json());
+
+// Base directory for secure private document storage
+const UPLOAD_BASE_DIR = path.join(__dirname, 'uploads', 'documents');
+fs.mkdirSync(UPLOAD_BASE_DIR, { recursive: true });
+
+// Multer upload config: 10MB limit, temp files in os.tmpdir()
+const upload = multer({
+  dest: os.tmpdir(),
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+function uploadSingleDocument(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({
+          error: 'PAYLOAD_TOO_LARGE',
+          message: 'Document file size exceeds the maximum allowed limit of 10MB.'
+        });
+      }
+      return res.status(400).json({
+        error: 'UPLOAD_ERROR',
+        message: err.message || 'File upload error.'
+      });
+    }
+    next();
+  });
+}
+
+function verifyDocumentMagicBytes(filePath) {
+  let fd = null;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(16);
+    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
+    if (bytesRead < 4) return null;
+
+    // PDF: %PDF -> 25 50 44 46
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+      return 'application/pdf';
+    }
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+      return 'image/jpeg';
+    }
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      return 'image/png';
+    }
+    // WEBP: RIFF .... WEBP
+    if (bytesRead >= 12 &&
+        buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+        buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+      return 'image/webp';
+    }
+    return null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+}
 
 // ==========================================
 // In-Memory Database with Seed Data
@@ -48,7 +116,8 @@ const db = {
       pin: "9999",
       name: "Ananya Rao (Manager)",
       phone: "+91 90000 99999",
-      role: "ADMIN"
+      role: "ADMIN",
+      restaurantId: "rest-1"
     },
     {
       id: "usr-master",
@@ -239,7 +308,8 @@ const db = {
       settledAt: new Date().toISOString()
     }
   ],
-  dineInIdempotencyKeys: new Map() // key -> { tabId, tableNumber, expectedTotal, result }
+  dineInIdempotencyKeys: new Map(), // key -> { tabId, tableNumber, expectedTotal, result }
+  complianceDocuments: new Map() // docId -> DocumentRecord
 };
 
 // Seed initial session token
@@ -1701,6 +1771,175 @@ Rules:
 // Gemini Vision & OCR Document Verification Engine
 // Verifies Driving Licence, FSSAI Certificate, and GST Certificate
 // ------------------------------------------
+// ------------------------------------------
+// Secure Cloud Uploads & Downloads for Compliance Documents
+// (Rider DL, Restaurant FSSAI, Restaurant GST)
+// ------------------------------------------
+router.post("/media/upload", authMiddleware, uploadSingleDocument, (req, res) => {
+  const tempPath = req.file?.path;
+  try {
+    const { category, ownerId } = req.body || {};
+    const validCategories = ["RIDER_DL", "RESTAURANT_FSSAI", "RESTAURANT_GST"];
+
+    if (!category || !validCategories.includes(category)) {
+      return res.status(400).json({
+        error: "INVALID_CATEGORY",
+        message: `Category must be one of: ${validCategories.join(", ")}`
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        error: "MISSING_FILE",
+        message: "A compliance document file (PDF, JPEG, PNG, or WEBP) is required."
+      });
+    }
+
+    const userRole = req.user?.role || "CUSTOMER";
+    const isMasterAdmin = userRole === "MASTER_ADMIN";
+
+    if (category === "RIDER_DL") {
+      if (userRole !== "RIDER" && !isMasterAdmin) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Role authorization failed: Only delivery riders can upload a driving licence."
+        });
+      }
+      if (!isMasterAdmin && ownerId && ownerId !== req.userId) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Ownership validation failed: Riders cannot upload documents for other accounts."
+        });
+      }
+    } else if (category === "RESTAURANT_FSSAI" || category === "RESTAURANT_GST") {
+      if (userRole !== "ADMIN" && !isMasterAdmin) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Role authorization failed: Only restaurant administrators can upload compliance certificates."
+        });
+      }
+      const userRestaurantId = req.user?.restaurantId || "rest-1";
+      if (!isMasterAdmin && ownerId && ownerId !== userRestaurantId) {
+        return res.status(403).json({
+          error: "FORBIDDEN",
+          message: "Ownership validation failed: Restaurant administrators cannot upload certificates for other restaurants."
+        });
+      }
+    }
+
+    const detectedMime = verifyDocumentMagicBytes(tempPath);
+    if (!detectedMime) {
+      return res.status(422).json({
+        error: "UNPROCESSABLE_ENTITY",
+        message: "Invalid file content: The uploaded file does not match any accepted compliance document format (PDF, JPEG, PNG, WEBP)."
+      });
+    }
+
+    const effectiveOwnerId = category === "RIDER_DL"
+      ? (isMasterAdmin ? (ownerId || req.userId) : req.userId)
+      : (isMasterAdmin ? (ownerId || req.user?.restaurantId || "rest-1") : (req.user?.restaurantId || "rest-1"));
+
+    const sanitizedOwnerId = String(effectiveOwnerId).replace(/[^a-zA-Z0-9_-]/g, "");
+    const ext = detectedMime === "application/pdf" ? "pdf" : (detectedMime === "image/png" ? "png" : (detectedMime === "image/webp" ? "webp" : "jpg"));
+    const timestamp = Date.now();
+    const randomUuid = crypto.randomUUID().slice(0, 8);
+
+    let storageKey = "";
+    let relFolder = "";
+
+    if (category === "RIDER_DL") {
+      storageKey = `documents/riders/${sanitizedOwnerId}/dl/dl_${timestamp}_${randomUuid}.${ext}`;
+      relFolder = path.join("riders", sanitizedOwnerId, "dl");
+    } else if (category === "RESTAURANT_FSSAI") {
+      storageKey = `documents/restaurants/${sanitizedOwnerId}/fssai/fssai_${timestamp}_${randomUuid}.${ext}`;
+      relFolder = path.join("restaurants", sanitizedOwnerId, "fssai");
+    } else {
+      storageKey = `documents/restaurants/${sanitizedOwnerId}/gst/gst_${timestamp}_${randomUuid}.${ext}`;
+      relFolder = path.join("restaurants", sanitizedOwnerId, "gst");
+    }
+
+    const targetDir = path.join(UPLOAD_BASE_DIR, relFolder);
+    fs.mkdirSync(targetDir, { recursive: true });
+    const finalFilePath = path.join(targetDir, `${category.toLowerCase()}_${timestamp}_${randomUuid}.${ext}`);
+
+    fs.copyFileSync(tempPath, finalFilePath);
+
+    const docId = "doc-" + crypto.randomUUID();
+    const docRecord = {
+      docId,
+      category,
+      ownerId: effectiveOwnerId,
+      uploaderUserId: req.userId,
+      storageKey,
+      filePath: finalFilePath,
+      originalName: req.file.originalname || "",
+      mimeType: detectedMime,
+      sizeBytes: req.file.size,
+      isPrivate: true,
+      createdAt: new Date().toISOString()
+    };
+    db.complianceDocuments.set(docId, docRecord);
+
+    console.log(`[Media Upload] Successfully secured ${category} (${docId}) for owner ${effectiveOwnerId} (${req.file.size} bytes, ${detectedMime})`);
+
+    res.status(201).json({
+      success: true,
+      docId,
+      category,
+      storageKey,
+      downloadUrl: `/api/delivery/media/download/${docId}`,
+      mimeType: detectedMime,
+      sizeBytes: req.file.size,
+      isPrivate: true
+    });
+  } catch (err) {
+    console.error(`[Media Upload Error]: ${err.message}`);
+    res.status(500).json({ error: "INTERNAL_SERVER_ERROR", message: "Failed to process compliance document upload." });
+  } finally {
+    if (tempPath && fs.existsSync(tempPath)) {
+      try { fs.unlinkSync(tempPath); } catch (_) {}
+    }
+  }
+});
+
+router.get("/media/download/:docId", authMiddleware, (req, res) => {
+  const { docId } = req.params;
+  const doc = db.complianceDocuments.get(docId);
+
+  if (!doc) {
+    return res.status(404).json({ error: "NOT_FOUND", message: "Compliance document not found." });
+  }
+
+  const userRole = req.user?.role || "CUSTOMER";
+  const isMasterAdmin = userRole === "MASTER_ADMIN";
+
+  let isAuthorized = false;
+  if (isMasterAdmin) {
+    isAuthorized = true;
+  } else if (doc.category === "RIDER_DL") {
+    isAuthorized = (req.userId === doc.ownerId || req.userId === doc.uploaderUserId);
+  } else if (doc.category === "RESTAURANT_FSSAI" || doc.category === "RESTAURANT_GST") {
+    const userRestaurantId = req.user?.restaurantId || "rest-1";
+    isAuthorized = (userRole === "ADMIN" && userRestaurantId === doc.ownerId);
+  }
+
+  if (!isAuthorized) {
+    return res.status(403).json({
+      error: "FORBIDDEN",
+      message: "Access Denied: You are not authorized to access this private compliance document."
+    });
+  }
+
+  if (!fs.existsSync(doc.filePath)) {
+    return res.status(404).json({ error: "FILE_MISSING", message: "Document file is unavailable on server storage." });
+  }
+
+  res.setHeader("Content-Type", doc.mimeType);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Content-Disposition", `inline; filename="${path.basename(doc.filePath)}"`);
+  fs.createReadStream(doc.filePath).pipe(res);
+});
+
 router.post("/ai/verify-document", async (req, res) => {
   const { documentType = "DOCUMENT", documentNumber = "", fileUri = "", holderName = "" } = req.body || {};
   const cleanType = String(documentType).toUpperCase();

@@ -1571,6 +1571,15 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         return storageEngine.uploadDishImage(restaurantId, dishId, uri, onProgress)
     }
 
+    suspend fun uploadComplianceDocument(
+        category: ComplianceDocCategory,
+        ownerId: String,
+        uri: android.net.Uri,
+        onProgress: (Float) -> Unit = {}
+    ): Result<ComplianceDocumentRecord> {
+        return storageEngine.uploadComplianceDocument(category, ownerId, uri, onProgress)
+    }
+
     fun updateRestaurantLogo(restaurantId: String, logoUri: String) {
         if (logoUri.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
