@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test_security.js"
+    "test": "node test_security.js && node test_media_upload.js && node test_gemini_vision_ocr.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

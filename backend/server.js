@@ -12,7 +12,25 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    return res.status(413).json({
+      success: false,
+      verified: false,
+      error: 'PAYLOAD_TOO_LARGE',
+      message: 'Request payload exceeds the maximum allowed size limit.'
+    });
+  }
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      error: 'BAD_REQUEST',
+      message: 'Invalid JSON payload.'
+    });
+  }
+  next(err);
+});
 
 // Base directory for secure private document storage
 const UPLOAD_BASE_DIR = path.join(__dirname, 'uploads', 'documents');
@@ -42,6 +60,30 @@ function uploadSingleDocument(req, res, next) {
   });
 }
 
+function detectDocumentMimeFromBuffer(buffer) {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 4) return null;
+
+  // PDF: %PDF -> 25 50 44 46
+  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+    return 'application/pdf';
+  }
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+    return 'image/jpeg';
+  }
+  // PNG: 89 50 4E 47
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+    return 'image/png';
+  }
+  // WEBP: RIFF .... WEBP
+  if (buffer.length >= 12 &&
+      buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+    return 'image/webp';
+  }
+  return null;
+}
+
 function verifyDocumentMagicBytes(filePath) {
   let fd = null;
   try {
@@ -49,26 +91,7 @@ function verifyDocumentMagicBytes(filePath) {
     const buffer = Buffer.alloc(16);
     const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
     if (bytesRead < 4) return null;
-
-    // PDF: %PDF -> 25 50 44 46
-    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
-      return 'application/pdf';
-    }
-    // JPEG: FF D8 FF
-    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
-      return 'image/jpeg';
-    }
-    // PNG: 89 50 4E 47
-    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
-      return 'image/png';
-    }
-    // WEBP: RIFF .... WEBP
-    if (bytesRead >= 12 &&
-        buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-        buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
-      return 'image/webp';
-    }
-    return null;
+    return detectDocumentMimeFromBuffer(buffer.subarray(0, bytesRead));
   } catch (e) {
     return null;
   } finally {
@@ -76,6 +99,95 @@ function verifyDocumentMagicBytes(filePath) {
       try { fs.closeSync(fd); } catch (_) {}
     }
   }
+}
+
+function optionalDocumentUpload(req, res, next) {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.toLowerCase().includes('multipart/form-data')) {
+    return uploadSingleDocument(req, res, next);
+  }
+  next();
+}
+
+function normalizeComplianceDocType(typeStr) {
+  if (!typeStr) return null;
+  const upper = String(typeStr).trim().toUpperCase();
+  if (upper.includes('FSSAI')) return 'RESTAURANT_FSSAI';
+  if (upper.includes('GST')) return 'RESTAURANT_GST';
+  if (upper.includes('DRIVING') || upper.includes('DL') || upper.includes('LICENCE') || upper.includes('LICENSE')) {
+    return 'RIDER_DL';
+  }
+  return null;
+}
+
+function validateFssaiNumber(num) {
+  if (!num) return null;
+  const clean = String(num).replace(/[^0-9]/g, '');
+  return /^\d{14}$/.test(clean) ? clean : null;
+}
+
+function validateGstin(num) {
+  if (!num) return null;
+  const clean = String(num).replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+  return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(clean) ? clean : null;
+}
+
+function validateDrivingLicence(num) {
+  if (!num) return null;
+  const clean = String(num).replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+  return /^[A-Z]{2}[0-9]{2}[0-9A-Z]{7,12}$/.test(clean) ? clean : null;
+}
+
+function buildGeminiVisionPrompt(canonicalType, expectedNumber, holderName) {
+  let docTitle = "";
+  let expectedFormat = "";
+  let targets = "";
+
+  if (canonicalType === "RIDER_DL") {
+    docTitle = "Indian Union Driving Licence";
+    expectedFormat = "State code (2 letters) + RTO code (2 digits) + alphanumeric licence digits (total 11-16 chars, e.g. MH0220180012345 or DL0420110012345)";
+    targets = `- Extract the official Driving Licence number.
+- Extract the licence holder's full legal name as printed on the document.`;
+  } else if (canonicalType === "RESTAURANT_FSSAI") {
+    docTitle = "Food Safety and Standards Authority of India (FSSAI) Licence / Registration";
+    expectedFormat = "Exactly 14 numeric digits (e.g. 11524006000421)";
+    targets = `- Extract the 14-digit FSSAI licence/registration number.
+- Extract the business / restaurant / Food Business Operator (FBO) name.`;
+  } else if (canonicalType === "RESTAURANT_GST") {
+    docTitle = "Goods and Services Tax (GST) Registration Certificate (Form GST REG-06)";
+    expectedFormat = "Exactly 15 alphanumeric characters (e.g. 27AABCU9603R1ZM: 2 digits state + 10 alphanumeric PAN + 1 entity code + 'Z' + 1 check digit)";
+    targets = `- Extract the 15-character GSTIN.
+- Extract the legal or trade business name.`;
+  }
+
+  return `You are an automated regulatory document compliance verification and OCR inspection system for Indian government certificates.
+Analyze the attached document (image or PDF bytes).
+
+Expected Target Document: ${docTitle}
+Expected Number Format: ${expectedFormat}
+${expectedNumber ? `Expected Document Number: "${expectedNumber}"` : ""}
+${holderName ? `Expected Holder / Business Name: "${holderName}"` : ""}
+
+Tasks:
+1. Determine if the attached document visually and contextually matches the expected target document type: ${canonicalType}.
+2. Check if the document is clear, legible, authentic-looking, and not corrupted, completely blurry, illegible, or unrelated.
+3. ${targets}
+
+Output MUST be a JSON object with this exact schema:
+{
+  "documentTypeMatch": <true if the document is genuinely ${docTitle}, false if unrelated, wrong document, or fraud>,
+  "isLegible": <true if the text and number are clearly readable, false if blurred, cut off, or illegible>,
+  "documentNumber": <extracted document number string, or null if unreadable or absent>,
+  "holderName": <extracted person name or business name string, or null if unreadable or absent>,
+  "confidence": <float between 0.0 and 1.0 indicating OCR reading confidence>,
+  "extractedSummary": <concise 1-2 sentence summary of extracted document credentials>,
+  "remarks": <brief explanation of issues or verification notes>
+}
+
+CRITICAL VERIFICATION RULES:
+- Never guess, fabricate, or hallucinate document numbers or names.
+- If the document is unreadable or does not contain the specified document type, set documentTypeMatch or isLegible to false.
+- Respond ONLY with valid JSON. No conversational text, no markdown backticks.`;
 }
 
 // ==========================================
@@ -1936,79 +2048,413 @@ router.get("/media/download/:docId", authMiddleware, (req, res) => {
   fs.createReadStream(doc.filePath).pipe(res);
 });
 
-router.post("/ai/verify-document", async (req, res) => {
-  const { documentType = "DOCUMENT", documentNumber = "", fileUri = "", holderName = "" } = req.body || {};
-  const cleanType = String(documentType).toUpperCase();
-  const cleanNum = String(documentNumber).trim().toUpperCase();
+router.post("/ai/verify-document", optionalDocumentUpload, async (req, res) => {
+  let tempPathToCleanup = null;
+  try {
+    const {
+      documentType,
+      type,
+      category,
+      documentNumber = "",
+      expectedNumber = "",
+      fileUri = "",
+      docId = "",
+      holderName = "",
+      fileBase64 = "",
+      base64 = "",
+      documentBase64 = ""
+    } = req.body || {};
 
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (geminiApiKey) {
-    try {
-      const prompt = `Verify Indian compliance document metadata:
-Type: ${cleanType}
-Document Number: ${cleanNum}
-File Reference: ${fileUri}
-Holder: ${holderName}
-Return JSON: { "verified": true, "extractedText": "Summary of extracted text", "confidence": 0.98 }`;
-      const payload = JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
+    const rawType = documentType || type || category || "";
+    const canonicalType = normalizeComplianceDocType(rawType);
+    if (!canonicalType) {
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        error: "INVALID_DOCUMENT_TYPE",
+        message: "Invalid or missing document type. Must be one of: RIDER_DL, RESTAURANT_FSSAI, RESTAURANT_GST."
       });
-      const gRes = await new Promise((resolve, reject) => {
-        const gReq = https.request({
-          hostname: "generativelanguage.googleapis.com",
-          path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) }
-        }, (resp) => {
-          let b = "";
-          resp.on("data", c => b += c);
-          resp.on("end", () => resolve({ status: resp.statusCode, body: b }));
-        });
-        gReq.on("error", reject);
-        gReq.setTimeout(6000, () => { gReq.destroy(); reject(new Error("Gemini OCR timeout")); });
-        gReq.write(payload);
-        gReq.end();
-      });
-      if (gRes.status === 200) {
-        const parsed = JSON.parse(gRes.body);
-        const rawText = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText) {
-          const j = JSON.parse(rawText);
-          return res.json({
-            success: true,
-            verified: j.verified !== false,
-            provider: "GEMINI_VISION_OCR",
-            documentType: cleanType,
-            extractedText: j.extractedText || `Verified ${cleanType} (${cleanNum})`,
-            confidence: j.confidence || 0.98
-          });
+    }
+
+    const cleanExpectedNum = String(expectedNumber || documentNumber || "").trim();
+    const cleanHolderName = String(holderName || "").trim();
+
+    // 1. Retrieve actual document bytes
+    let fileBuffer = null;
+
+    if (req.file) {
+      tempPathToCleanup = req.file.path;
+      if (fs.existsSync(req.file.path)) {
+        fileBuffer = fs.readFileSync(req.file.path);
+      }
+    } else {
+      const b64Data = fileBase64 || base64 || documentBase64;
+      if (b64Data && typeof b64Data === "string") {
+        try {
+          const stripped = b64Data.replace(/^data:[^;]+;base64,/, "");
+          fileBuffer = Buffer.from(stripped, "base64");
+        } catch (_) {
+          fileBuffer = null;
+        }
+      } else {
+        const targetDocId = docId || (function() {
+          const m = String(fileUri).match(/doc-[a-f0-9-]+/i);
+          return m ? m[0] : null;
+        })();
+
+        if (targetDocId && db.complianceDocuments && db.complianceDocuments.has(targetDocId)) {
+          const docRec = db.complianceDocuments.get(targetDocId);
+          if (docRec && docRec.filePath && fs.existsSync(docRec.filePath)) {
+            fileBuffer = fs.readFileSync(docRec.filePath);
+          }
+        } else if (fileUri && typeof fileUri === "string") {
+          const resolvedPath = path.resolve(fileUri);
+          if (resolvedPath.startsWith(path.resolve(UPLOAD_BASE_DIR)) && fs.existsSync(resolvedPath)) {
+            fileBuffer = fs.readFileSync(resolvedPath);
+          }
         }
       }
-    } catch (e) {
-      console.warn(`[Gemini OCR Fallback]: ${e.message}`);
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        error: "DOCUMENT_BYTES_REQUIRED",
+        message: "No document bytes provided. You must upload a file, supply a base64 document, or reference a valid compliance document."
+      });
+    }
+
+    // 2. Safe input handling: 10MB file-size limit
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (fileBuffer.length > MAX_SIZE) {
+      return res.status(413).json({
+        success: false,
+        verified: false,
+        error: "PAYLOAD_TOO_LARGE",
+        message: `Document file size (${(fileBuffer.length / (1024 * 1024)).toFixed(1)}MB) exceeds maximum limit of 10MB.`
+      });
+    }
+
+    // 3. Header magic byte sniffing (PDF, JPEG, PNG, WEBP)
+    const detectedMime = detectDocumentMimeFromBuffer(fileBuffer);
+    if (!detectedMime) {
+      return res.status(422).json({
+        success: false,
+        verified: false,
+        error: "UNSUPPORTED_DOCUMENT_FORMAT",
+        message: "Invalid or unsupported document content. File magic bytes do not match PDF, JPEG, PNG, or WEBP."
+      });
+    }
+
+    // 4. Gemini API Configuration
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    const geminiModel = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+
+    if (!geminiApiKey && typeof app.customGeminiRequester !== "function") {
+      return res.status(503).json({
+        success: false,
+        verified: false,
+        error: "GEMINI_NOT_CONFIGURED",
+        message: "Gemini Vision OCR service is not configured (missing GEMINI_API_KEY).",
+        documentType: canonicalType
+      });
+    }
+
+    console.log(`[Gemini Vision OCR] Inspecting ${canonicalType} (${fileBuffer.length} bytes, ${detectedMime}) using ${geminiModel}`);
+
+    // 5. Construct prompt & inlineData payload with genuine document bytes
+    const prompt = buildGeminiVisionPrompt(canonicalType, cleanExpectedNum, cleanHolderName);
+    const geminiPayload = JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            {
+              inlineData: {
+                mimeType: detectedMime,
+                data: fileBuffer.toString("base64")
+              }
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        responseMimeType: "application/json"
+      }
+    });
+
+    // 6. Execute Gemini Vision request
+    let gRes;
+    try {
+      if (typeof app.customGeminiRequester === "function") {
+        gRes = await app.customGeminiRequester({
+          payload: geminiPayload,
+          model: geminiModel,
+          apiKey: geminiApiKey,
+          mimeType: detectedMime,
+          canonicalType
+        });
+      } else {
+        gRes = await new Promise((resolve, reject) => {
+          const gReq = https.request({
+            hostname: process.env.GEMINI_API_HOST || "generativelanguage.googleapis.com",
+            path: `/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`,
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(geminiPayload)
+            }
+          }, (resp) => {
+            let b = "";
+            resp.on("data", c => b += c);
+            resp.on("end", () => resolve({ status: resp.statusCode, body: b }));
+          });
+          gReq.on("error", reject);
+          gReq.setTimeout(12000, () => {
+            gReq.destroy();
+            reject(new Error("Gemini Vision OCR timeout"));
+          });
+          gReq.write(geminiPayload);
+          gReq.end();
+        });
+      }
+    } catch (apiErr) {
+      console.warn(`[Gemini Vision OCR Error]: ${apiErr.message}`);
+      const isTimeout = apiErr.message && apiErr.message.toLowerCase().includes("timeout");
+      return res.status(isTimeout ? 504 : 502).json({
+        success: false,
+        verified: false,
+        error: isTimeout ? "AI_TIMEOUT" : "GEMINI_API_ERROR",
+        message: `Gemini OCR request failed: ${apiErr.message}`,
+        documentType: canonicalType
+      });
+    }
+
+    if (!gRes || typeof gRes.status !== "number" || gRes.status !== 200) {
+      const status = (gRes && gRes.status) || 502;
+      return res.status(502).json({
+        success: false,
+        verified: false,
+        error: "GEMINI_API_ERROR",
+        message: `Gemini API returned non-success HTTP status ${status}`,
+        documentType: canonicalType
+      });
+    }
+
+    // 7. Defensive parsing of model response
+    let parsedBody;
+    try {
+      parsedBody = typeof gRes.body === "object" ? gRes.body : JSON.parse(gRes.body);
+    } catch (_) {
+      return res.status(200).json({
+        success: false,
+        verified: false,
+        error: "MALFORMED_API_RESPONSE",
+        message: "Gemini API returned invalid response envelope.",
+        documentType: canonicalType
+      });
+    }
+
+    const rawCandidateText = parsedBody.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawCandidateText) {
+      return res.status(200).json({
+        success: false,
+        verified: false,
+        error: "EMPTY_MODEL_RESPONSE",
+        message: "Gemini did not return any candidate text parts.",
+        documentType: canonicalType
+      });
+    }
+
+    let aiJson;
+    try {
+      let cleanStr = rawCandidateText.trim();
+      if (cleanStr.startsWith("```")) {
+        cleanStr = cleanStr.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      }
+      aiJson = JSON.parse(cleanStr);
+    } catch (_) {
+      return res.status(200).json({
+        success: false,
+        verified: false,
+        error: "MALFORMED_AI_RESPONSE",
+        message: "Gemini model output could not be parsed as JSON.",
+        documentType: canonicalType
+      });
+    }
+
+    // 8. Structured evaluation
+    const documentTypeMatch = Boolean(aiJson.documentTypeMatch);
+    const isLegible = Boolean(aiJson.isLegible);
+    const rawExtractedNum = aiJson.documentNumber ? String(aiJson.documentNumber).trim() : null;
+    const rawHolderName = aiJson.holderName ? String(aiJson.holderName).trim() : (aiJson.businessName ? String(aiJson.businessName).trim() : null);
+    const confidence = typeof aiJson.confidence === "number" ? Math.max(0, Math.min(1, aiJson.confidence)) : 0.0;
+    const extractedSummary = aiJson.extractedSummary ? String(aiJson.extractedSummary).trim() : "";
+    const remarks = aiJson.remarks ? String(aiJson.remarks).trim() : "";
+
+    if (!documentTypeMatch) {
+      return res.json({
+        success: true,
+        verified: false,
+        provider: "GEMINI_VISION_OCR",
+        documentType: canonicalType,
+        documentNumber: null,
+        holderName: null,
+        confidence,
+        reason: `Document content does not match requested type: ${canonicalType}. ${remarks}`.trim(),
+        details: { documentTypeMatch: false, isLegible, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+      });
+    }
+
+    if (!isLegible) {
+      return res.json({
+        success: true,
+        verified: false,
+        provider: "GEMINI_VISION_OCR",
+        documentType: canonicalType,
+        documentNumber: null,
+        holderName: null,
+        confidence,
+        reason: `Document is unreadable or text is illegible. ${remarks}`.trim(),
+        details: { documentTypeMatch: true, isLegible: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+      });
+    }
+
+    if (!rawExtractedNum) {
+      return res.json({
+        success: true,
+        verified: false,
+        provider: "GEMINI_VISION_OCR",
+        documentType: canonicalType,
+        documentNumber: null,
+        holderName: null,
+        confidence,
+        reason: `No document number could be extracted from the document. ${remarks}`.trim(),
+        details: { documentTypeMatch: true, isLegible: true, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+      });
+    }
+
+    // 9. Format validation based on regulatory document specifications
+    let cleanExtractedNum = null;
+    if (canonicalType === "RIDER_DL") {
+      cleanExtractedNum = validateDrivingLicence(rawExtractedNum);
+      if (!cleanExtractedNum) {
+        return res.json({
+          success: true,
+          verified: false,
+          provider: "GEMINI_VISION_OCR",
+          documentType: canonicalType,
+          documentNumber: rawExtractedNum,
+          holderName: rawHolderName,
+          confidence,
+          reason: `Extracted Driving Licence number '${rawExtractedNum}' is invalid. Must match standard Indian Driving Licence format.`,
+          details: { documentTypeMatch: true, isLegible: true, formatValid: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+        });
+      }
+    } else if (canonicalType === "RESTAURANT_FSSAI") {
+      cleanExtractedNum = validateFssaiNumber(rawExtractedNum);
+      if (!cleanExtractedNum) {
+        return res.json({
+          success: true,
+          verified: false,
+          provider: "GEMINI_VISION_OCR",
+          documentType: canonicalType,
+          documentNumber: rawExtractedNum,
+          holderName: rawHolderName,
+          confidence,
+          reason: `Extracted FSSAI number '${rawExtractedNum}' is invalid. Must be exactly 14 numeric digits.`,
+          details: { documentTypeMatch: true, isLegible: true, formatValid: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+        });
+      }
+    } else if (canonicalType === "RESTAURANT_GST") {
+      cleanExtractedNum = validateGstin(rawExtractedNum);
+      if (!cleanExtractedNum) {
+        return res.json({
+          success: true,
+          verified: false,
+          provider: "GEMINI_VISION_OCR",
+          documentType: canonicalType,
+          documentNumber: rawExtractedNum,
+          holderName: rawHolderName,
+          confidence,
+          reason: `Extracted GSTIN '${rawExtractedNum}' is invalid. Must be a 15-character Indian GSTIN conforming to standard format.`,
+          details: { documentTypeMatch: true, isLegible: true, formatValid: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+        });
+      }
+    }
+
+    // 10. Check against user-supplied document number if provided
+    if (cleanExpectedNum) {
+      const normalizedExpected = cleanExpectedNum.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+      if (normalizedExpected !== cleanExtractedNum) {
+        return res.json({
+          success: true,
+          verified: false,
+          provider: "GEMINI_VISION_OCR",
+          documentType: canonicalType,
+          documentNumber: cleanExtractedNum,
+          holderName: rawHolderName,
+          confidence,
+          reason: `Extracted document number '${cleanExtractedNum}' does not match claimed number '${normalizedExpected}'.`,
+          details: { documentTypeMatch: true, isLegible: true, formatValid: true, numberMatch: false, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+        });
+      }
+    }
+
+    // 11. Low confidence rejection threshold
+    if (confidence < 0.5) {
+      return res.json({
+        success: true,
+        verified: false,
+        provider: "GEMINI_VISION_OCR",
+        documentType: canonicalType,
+        documentNumber: cleanExtractedNum,
+        holderName: rawHolderName,
+        confidence,
+        reason: `OCR confidence (${(confidence * 100).toFixed(1)}%) is too low for compliance approval.`,
+        details: { documentTypeMatch: true, isLegible: true, formatValid: true, confidence, mimeType: detectedMime, sizeBytes: fileBuffer.length }
+      });
+    }
+
+    // 12. Verification Success
+    const maskedNum = cleanExtractedNum ? '***' + cleanExtractedNum.slice(-4) : 'none';
+    console.log(`[Gemini Vision OCR] Successfully verified ${canonicalType} (${maskedNum}) with confidence ${confidence}`);
+
+    return res.json({
+      success: true,
+      verified: true,
+      provider: "GEMINI_VISION_OCR",
+      documentType: canonicalType,
+      documentNumber: cleanExtractedNum,
+      holderName: rawHolderName,
+      confidence,
+      extractedText: extractedSummary || `Verified Indian Union ${canonicalType} (${cleanExtractedNum})`,
+      details: {
+        documentTypeMatch: true,
+        isLegible: true,
+        formatValid: true,
+        numberMatch: cleanExpectedNum ? true : null,
+        mimeType: detectedMime,
+        fileSizeBytes: fileBuffer.length
+      }
+    });
+
+  } catch (err) {
+    console.error(`[AI Document Verification Exception]: ${err.message}`);
+    return res.status(500).json({
+      success: false,
+      verified: false,
+      error: "INTERNAL_SERVER_ERROR",
+      message: "An internal server error occurred during document verification."
+    });
+  } finally {
+    if (tempPathToCleanup && fs.existsSync(tempPathToCleanup)) {
+      try { fs.unlinkSync(tempPathToCleanup); } catch (_) {}
     }
   }
-
-  let extractedSummary = "";
-  if (cleanType.includes("DRIVING") || cleanType.includes("DL")) {
-    extractedSummary = `INDIAN UNION DRIVING LICENCE · Reg/Vehicle: ${cleanNum || "MH-02-AB-1234"} · LMV/MCWG Transport Valid · OCR Match 99.1%`;
-  } else if (cleanType.includes("FSSAI")) {
-    extractedSummary = `FSSAI FOOD SAFETY LICENSE · Lic No: ${cleanNum || "11524006000421"} · Form C Food Business Operator Verified · OCR Match 98.8%`;
-  } else if (cleanType.includes("GST")) {
-    extractedSummary = `GOVERNMENT OF INDIA GST REG-06 · GSTIN: ${cleanNum || "27AABCU9603R1ZM"} · Active Taxpayer Status Verified · OCR Match 99.4%`;
-  } else {
-    extractedSummary = `Document ${cleanType} (${cleanNum}) text extracted & verified`;
-  }
-
-  res.json({
-    success: true,
-    verified: true,
-    provider: "GEMINI_TEXT_EXTRACTION_ENGINE",
-    documentType: cleanType,
-    extractedText: extractedSummary,
-    confidence: 0.99
-  });
 });
 
 // Mount Router under /api/delivery
@@ -2029,5 +2475,13 @@ if (require.main === module) {
     console.log(`=======================================================`);
   });
 }
+
+app.detectDocumentMimeFromBuffer = detectDocumentMimeFromBuffer;
+app.verifyDocumentMagicBytes = verifyDocumentMagicBytes;
+app.validateFssaiNumber = validateFssaiNumber;
+app.validateGstin = validateGstin;
+app.validateDrivingLicence = validateDrivingLicence;
+app.normalizeComplianceDocType = normalizeComplianceDocType;
+app.buildGeminiVisionPrompt = buildGeminiVisionPrompt;
 
 module.exports = app;
