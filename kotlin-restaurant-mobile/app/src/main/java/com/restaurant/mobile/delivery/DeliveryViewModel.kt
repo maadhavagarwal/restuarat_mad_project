@@ -1518,17 +1518,26 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun readDocumentBytes(uri: android.net.Uri): Result<ByteArray> {
+        return storageEngine.readDocumentBytes(uri)
+    }
+
     fun verifyPartnerDocumentWithGemini(
         documentType: String,
         documentNumber: String,
-        fileUri: String,
-        holderName: String,
+        fileUri: String = "",
+        holderName: String = "",
+        documentUri: android.net.Uri? = null,
+        documentBytes: ByteArray? = null,
+        documentBase64: String? = null,
+        docId: String? = null,
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val token = api.token ?: session.load()
             val locale = RestroI18n.currentLanguage
 
+            // 1. Authentication requirement check
             if (token.isNullOrBlank()) {
                 val unauthMsg = when (locale) {
                     "hi" -> "प्रमाणीकरण टोकन आवश्यक है। दस्तावेज़ सत्यापित करने के लिए कृपया साइन इन करें।"
@@ -1545,16 +1554,84 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 api.token = token
             }
 
+            // 2. Strict document number requirement
+            val cleanDocNumber = documentNumber.trim()
+            if (cleanDocNumber.isBlank()) {
+                val missingMsg = when (locale) {
+                    "hi" -> "दस्तावेज़ संख्या दर्ज करना अनिवार्य है।"
+                    "mr" -> "दस्तऐवज क्रमांक प्रविष्ट करणे अनिवार्य आहे."
+                    else -> "Document number is required. Please enter a valid number."
+                }
+                withContext(Dispatchers.Main) {
+                    onResult(false, missingMsg)
+                }
+                return@launch
+            }
+
+            // 3. Resolve actual document bytes
+            var finalBase64: String? = documentBase64?.takeIf { it.isNotBlank() }
+            if (finalBase64 == null && documentBytes != null && documentBytes.isNotEmpty()) {
+                finalBase64 = FirebaseStorageEngine.encodeBytesToBase64(documentBytes)
+            }
+
+            val targetUri = documentUri ?: runCatching {
+                if (fileUri.startsWith("content://") || fileUri.startsWith("file://")) {
+                    android.net.Uri.parse(fileUri)
+                } else null
+            }.getOrNull()
+
+            if (finalBase64 == null && targetUri != null) {
+                val readRes = storageEngine.readDocumentBytes(targetUri)
+                if (readRes.isSuccess) {
+                    finalBase64 = FirebaseStorageEngine.encodeBytesToBase64(readRes.getOrThrow())
+                } else {
+                    val readError = readRes.exceptionOrNull()?.localizedMessage
+                        ?: "Cannot read document file"
+                    withContext(Dispatchers.Main) {
+                        onResult(false, readError)
+                    }
+                    return@launch
+                }
+            }
+
+            // Resolve docId if present in fileUri or passed directly
+            val targetDocId = docId?.takeIf { it.isNotBlank() } ?: runCatching {
+                val m = Regex("doc-[a-f0-9-]+", RegexOption.IGNORE_CASE).find(fileUri)
+                m?.value
+            }.getOrNull()
+
+            if (finalBase64.isNullOrBlank() && targetDocId.isNullOrBlank()) {
+                val noBytesMsg = when (locale) {
+                    "hi" -> "सत्यापन के लिए दस्तावेज़ फ़ाइल आवश्यक है। कृपया एक वैध फ़ाइल चुनें।"
+                    "mr" -> "पडताळणीसाठी दस्तऐवज फाइल आवश्यक आहे. कृपया वैध फाइल निवडा."
+                    else -> "Document file is required for verification. Please select a valid document."
+                }
+                withContext(Dispatchers.Main) {
+                    onResult(false, noBytesMsg)
+                }
+                return@launch
+            }
+
             try {
-                val payload = mapOf(
+                val payload = mutableMapOf<String, Any>(
                     "documentType" to documentType,
-                    "documentNumber" to documentNumber,
-                    "expectedNumber" to documentNumber,
-                    "fileUri" to fileUri,
+                    "documentNumber" to cleanDocNumber,
+                    "expectedNumber" to cleanDocNumber,
                     "holderName" to holderName,
                     "locale" to locale,
                     "language" to locale
                 )
+                if (!finalBase64.isNullOrBlank()) {
+                    payload["documentBase64"] = finalBase64
+                    payload["fileBase64"] = finalBase64
+                }
+                if (!targetDocId.isNullOrBlank()) {
+                    payload["docId"] = targetDocId
+                }
+                if (fileUri.isNotBlank()) {
+                    payload["fileUri"] = fileUri
+                }
+
                 val responseJson = api.request("/ai/verify-document", "POST", payload)
                 val responseMap = runCatching {
                     com.google.gson.Gson().fromJson(responseJson, Map::class.java)
@@ -1567,8 +1644,12 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
 
                 val displayMsg = when {
                     !serverMsg.isNullOrBlank() -> serverMsg
-                    verified -> "Document verified successfully. ($maskedNumber)"
-                    else -> "Document verification failed."
+                    verified -> "Document verified successfully." + (if (!maskedNumber.isNullOrBlank()) " ($maskedNumber)" else "")
+                    else -> when (locale) {
+                        "hi" -> "दस्तावेज़ सत्यापन विफल रहा।"
+                        "mr" -> "दस्तऐवज पडताळणी अयशस्वी झाली."
+                        else -> "Document verification failed."
+                    }
                 }
 
                 withContext(Dispatchers.Main) {
@@ -1586,6 +1667,27 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    // Overload for 5-parameter callers
+    fun verifyPartnerDocumentWithGemini(
+        documentType: String,
+        documentNumber: String,
+        fileUri: String,
+        holderName: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        verifyPartnerDocumentWithGemini(
+            documentType = documentType,
+            documentNumber = documentNumber,
+            fileUri = fileUri,
+            holderName = holderName,
+            documentUri = null,
+            documentBytes = null,
+            documentBase64 = null,
+            docId = null,
+            onResult = onResult
+        )
     }
 
     val storageEngine: FirebaseStorageEngine

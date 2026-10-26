@@ -241,6 +241,50 @@ class FirebaseStorageEngine(
                 ComplianceDocCategory.RESTAURANT_GST -> "documents/restaurants/$sanitizedOwner/gst/gst_${timestamp}_$uuid.$ext"
             }
         }
+
+        /**
+         * Safely read document bytes from an InputStream with a strict max-size limit.
+         * Fails if stream is null, empty (0 bytes), or exceeds maxSizeBytes (default 10MB).
+         */
+        fun readBytesFromStream(stream: java.io.InputStream?, maxSizeBytes: Long = MAX_DOCUMENT_SIZE_BYTES): Result<ByteArray> {
+            if (stream == null) {
+                return Result.failure(java.io.IOException("Document stream is null or inaccessible"))
+            }
+            return try {
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(8192)
+                var totalRead = 0L
+                var read: Int
+                stream.use { input ->
+                    while (input.read(chunk).also { read = it } != -1) {
+                        totalRead += read
+                        if (totalRead > maxSizeBytes) {
+                            val maxMb = maxSizeBytes / (1024 * 1024)
+                            return Result.failure(IllegalArgumentException("Document size exceeds maximum limit of ${maxMb}MB."))
+                        }
+                        buffer.write(chunk, 0, read)
+                    }
+                }
+                val bytes = buffer.toByteArray()
+                if (bytes.isEmpty()) {
+                    return Result.failure(IllegalArgumentException("Document file is empty (0 bytes)."))
+                }
+                Result.success(bytes)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+        /**
+         * Encode byte array to Base64 safely supporting both Android runtime and JVM unit test environments.
+         */
+        fun encodeBytesToBase64(bytes: ByteArray): String {
+            return try {
+                java.util.Base64.getEncoder().encodeToString(bytes)
+            } catch (_: Throwable) {
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            }
+        }
     }
 
     fun validateImageUri(
@@ -315,6 +359,26 @@ class FirebaseStorageEngine(
         }
 
         return validateDocumentBytes(header, reportedMime, sizeBytes, maxSizeBytes)
+    }
+
+    /**
+     * Safely reads document content bytes from a content or file URI using ContentResolver.
+     * Validates MIME type, header magic bytes, and enforces 10MB size limit.
+     */
+    fun readDocumentBytes(uri: Uri, maxSizeBytes: Long = MAX_DOCUMENT_SIZE_BYTES): Result<ByteArray> {
+        val validation = validateDocumentUri(uri, maxSizeBytes)
+        if (!validation.isValid) {
+            return Result.failure(IllegalArgumentException(validation.errorMessage ?: "Invalid document format or size"))
+        }
+
+        val stream = try {
+            context.contentResolver.openInputStream(uri)
+                ?: return Result.failure(java.io.IOException("ContentResolver returned null stream for URI: $uri"))
+        } catch (e: Exception) {
+            return Result.failure(java.io.IOException("Failed to open stream for document URI $uri: ${e.message}", e))
+        }
+
+        return readBytesFromStream(stream, maxSizeBytes)
     }
 
     suspend fun uploadRestaurantLogo(
