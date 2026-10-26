@@ -34,7 +34,17 @@ object FirebasePhoneAuthManager {
                     }
 
                     override fun onVerificationFailed(e: FirebaseException) {
-                        onFailure(e.localizedMessage ?: "Firebase verification failed")
+                        val rawMsg = e.localizedMessage ?: "Firebase verification failed"
+                        val actionableMsg = if (rawMsg.contains("not allowed", ignoreCase = true) || rawMsg.contains("disabled", ignoreCase = true)) {
+                            "Firebase Phone Provider is disabled in Firebase Console (restro-42877). Please go to Firebase Console -> Authentication -> Sign-in method -> Enable 'Phone' and add India (+91) in Settings -> SMS Region Policy. Or add +91 9833978177 under 'Phone numbers for testing'."
+                        } else if (rawMsg.contains("quota", ignoreCase = true) || rawMsg.contains("too many", ignoreCase = true) || rawMsg.contains("blocked", ignoreCase = true)) {
+                            "SMS limit or carrier block reached. Add your number (+91 9833978177) under 'Phone numbers for testing' in Firebase Console with OTP 123456 to test instantly."
+                        } else if (rawMsg.contains("app check", ignoreCase = true) || rawMsg.contains("play integrity", ignoreCase = true) || rawMsg.contains("safety-net", ignoreCase = true)) {
+                            "Play Integrity check requires SHA-1 (81:84:42:B2:58:13:D1:B0:F2:1F:27:B4:FF:E0:62:13:60:1C:2C:28) in Firebase Project Settings."
+                        } else {
+                            rawMsg
+                        }
+                        onFailure(actionableMsg)
                     }
 
                     override fun onCodeSent(
