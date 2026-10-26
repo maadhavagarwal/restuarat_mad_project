@@ -3973,27 +3973,96 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 RiderRideRecord("ride-109", riderId, "ORD-812", "La Piazza Napoletana", "Versova Metro, Andheri", 4.7, 29, 104L, now - 24 * dayMs)
             )
             firebasePrefs.edit().putString(key, gson.toJson(seeded)).apply()
-            seeded.forEach { r ->
-                syncToFirebaseFirestore(
-                    "rider_rides",
-                    r.id,
-                    mapOf(
-                        "id" to r.id,
-                        "riderId" to r.riderId,
-                        "orderId" to r.orderId,
-                        "restaurantName" to r.restaurantName,
-                        "dropAddress" to r.dropAddress,
-                        "distanceKm" to r.distanceKm,
-                        "durationMinutes" to r.durationMinutes,
-                        "incomeRupees" to r.incomeRupees,
-                        "completedAtMs" to r.completedAtMs
-                    )
-                )
-            }
             return seeded
         }
         val type = object : TypeToken<List<RiderRideRecord>>() {}.type
         return runCatching { gson.fromJson<List<RiderRideRecord>>(raw, type) ?: emptyList() }.getOrDefault(emptyList())
+    }
+
+    fun upsertRiderRideFromCloud(ride: RiderRideRecord): Boolean {
+        val key = "rider_rides_${ride.riderId}"
+        val raw = firebasePrefs.getString(key, null)
+        val type = object : TypeToken<List<RiderRideRecord>>() {}.type
+        val current: MutableList<RiderRideRecord> = if (!raw.isNullOrBlank()) {
+            runCatching { gson.fromJson<List<RiderRideRecord>>(raw, type)?.toMutableList() }.getOrNull() ?: mutableListOf()
+        } else {
+            mutableListOf()
+        }
+        val idx = current.indexOfFirst { it.id == ride.id }
+        if (idx >= 0) {
+            if (current[idx] == ride) return false
+            current[idx] = ride
+        } else {
+            current.add(0, ride)
+        }
+        firebasePrefs.edit().putString(key, gson.toJson(current)).apply()
+        return true
+    }
+
+    fun deleteRiderRideFromCloud(rideId: String, riderId: String): Boolean {
+        val key = "rider_rides_$riderId"
+        val raw = firebasePrefs.getString(key, null) ?: return false
+        val type = object : TypeToken<List<RiderRideRecord>>() {}.type
+        val current: MutableList<RiderRideRecord> = runCatching {
+            gson.fromJson<List<RiderRideRecord>>(raw, type)?.toMutableList()
+        }.getOrNull() ?: return false
+        val removed = current.removeAll { it.id == rideId }
+        if (removed) {
+            firebasePrefs.edit().putString(key, gson.toJson(current)).apply()
+        }
+        return removed
+    }
+
+    fun upsertRiderPayoutFromCloud(payout: RiderPayoutRecord): Boolean {
+        val key = "rider_payouts_${payout.riderId}"
+        val raw = firebasePrefs.getString(key, null)
+        val type = object : TypeToken<List<RiderPayoutRecord>>() {}.type
+        val current: MutableList<RiderPayoutRecord> = if (!raw.isNullOrBlank()) {
+            runCatching { gson.fromJson<List<RiderPayoutRecord>>(raw, type)?.toMutableList() }.getOrNull() ?: mutableListOf()
+        } else {
+            mutableListOf()
+        }
+        val idx = current.indexOfFirst { it.id == payout.id }
+        if (idx >= 0) {
+            if (current[idx] == payout) return false
+            current[idx] = payout
+        } else {
+            current.add(0, payout)
+        }
+        firebasePrefs.edit().putString(key, gson.toJson(current)).apply()
+        return true
+    }
+
+    fun deleteRiderPayoutFromCloud(payoutId: String, riderId: String): Boolean {
+        val key = "rider_payouts_$riderId"
+        val raw = firebasePrefs.getString(key, null) ?: return false
+        val type = object : TypeToken<List<RiderPayoutRecord>>() {}.type
+        val current: MutableList<RiderPayoutRecord> = runCatching {
+            gson.fromJson<List<RiderPayoutRecord>>(raw, type)?.toMutableList()
+        }.getOrNull() ?: return false
+        val removed = current.removeAll { it.id == payoutId }
+        if (removed) {
+            firebasePrefs.edit().putString(key, gson.toJson(current)).apply()
+        }
+        return removed
+    }
+
+    fun upsertRejectedOfferFromCloud(riderId: String, offerId: String): Boolean {
+        val key = "rider_rejected_$riderId"
+        val current = firebasePrefs.getStringSet(key, emptySet())?.toMutableSet() ?: mutableSetOf()
+        if (current.contains(offerId)) return false
+        current.add(offerId)
+        firebasePrefs.edit().putStringSet(key, current).apply()
+        return true
+    }
+
+    fun deleteRejectedOfferFromCloud(riderId: String, offerId: String): Boolean {
+        val key = "rider_rejected_$riderId"
+        val current = firebasePrefs.getStringSet(key, emptySet())?.toMutableSet() ?: return false
+        if (!current.contains(offerId)) return false
+        current.remove(offerId)
+        firebasePrefs.edit().putStringSet(key, current).apply()
+        return true
     }
 
     fun recordRiderCompletedRide(ride: RiderRideRecord) {

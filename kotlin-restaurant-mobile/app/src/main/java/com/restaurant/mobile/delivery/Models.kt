@@ -122,6 +122,12 @@ data class RiderRideOffer(
     val status: String = "AVAILABLE" // AVAILABLE, ACCEPTED, DELIVERED
 )
 
+data class RiderRejectedOffer(
+    val riderId: String,
+    val offerId: String,
+    val rejectedAtMs: Long = System.currentTimeMillis()
+)
+
 data class PartnerVerificationRecord(
     val userId: String,
     val role: String,

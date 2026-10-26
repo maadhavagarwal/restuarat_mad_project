@@ -33,6 +33,7 @@ fun RiderPortalScreenView(
     riderId: String,
     riderName: String,
     database: RestroSqlDatabase,
+    cloudEngine: FirebaseCloudEngine? = null,
     onShowToast: (String) -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -63,6 +64,23 @@ fun RiderPortalScreenView(
 
     LaunchedEffect(riderId, currentLang) {
         refreshRiderData()
+    }
+
+    DisposableEffect(riderId, cloudEngine) {
+        val regRides = cloudEngine?.observeRiderRidesRealTime(riderId = riderId, isAdmin = false) { updatedRides ->
+            completedRides = updatedRides
+        }
+        val regPayouts = cloudEngine?.observeRiderPayoutsRealTime(riderId = riderId, isAdmin = false) { updatedPayouts ->
+            payouts = updatedPayouts
+        }
+        val regRejected = cloudEngine?.observeRiderRejectedOffersRealTime(riderId = riderId) {
+            refreshRiderData()
+        }
+        onDispose {
+            regRides?.remove()
+            regPayouts?.remove()
+            regRejected?.remove()
+        }
     }
 
     val now = System.currentTimeMillis()
@@ -296,14 +314,14 @@ fun RiderPortalScreenView(
                                 return@Button
                             }
                             coroutineScope.launch(Dispatchers.IO) {
-                                database.recordRiderPayout(
-                                    RiderPayoutRecord(
-                                        id = "payout-${System.currentTimeMillis()}",
-                                        riderId = riderId,
-                                        amountRupees = amountToWithdraw,
-                                        accountDestination = bankOrUpiInput.ifBlank { "ramesh.rider@okaxis" }
-                                    )
+                                val payoutRecord = RiderPayoutRecord(
+                                    id = "payout-${System.currentTimeMillis()}",
+                                    riderId = riderId,
+                                    amountRupees = amountToWithdraw,
+                                    accountDestination = bankOrUpiInput.ifBlank { "ramesh.rider@okaxis" }
                                 )
+                                database.recordRiderPayout(payoutRecord)
+                                cloudEngine?.saveRiderPayoutToCloud(payoutRecord)
                                 withContext(Dispatchers.Main) {
                                     customWithdrawAmount = ""
                                     refreshRiderData()
@@ -516,6 +534,7 @@ fun RiderPortalScreenView(
                                 onClick = {
                                     coroutineScope.launch(Dispatchers.IO) {
                                         database.rejectRideOffer(riderId, offer.id)
+                                        cloudEngine?.saveRiderRejectedOfferToCloud(riderId, offer.id)
                                         withContext(Dispatchers.Main) {
                                             refreshRiderData()
                                             onShowToast("Offer ${offer.id} rejected. You will not see this offer again.")

@@ -475,4 +475,86 @@ object FirestoreModelMapper {
             null
         }
     }
+
+    // -------------------------------------------------------------
+    // RIDER RIDES
+    // -------------------------------------------------------------
+
+    fun mapToRiderRideRecord(docId: String, data: Map<String, Any?>): RiderRideRecord? {
+        return try {
+            val id = (data["id"] as? String)?.ifBlank { null } ?: docId
+            val riderId = (data["riderId"] as? String)?.ifBlank { null } ?: return null
+            val orderId = (data["orderId"] as? String) ?: ""
+            val restName = (data["restaurantName"] as? String) ?: ""
+            val dropAddress = (data["dropAddress"] as? String) ?: ""
+            val distanceKm = (data["distanceKm"] as? Number)?.toDouble() ?: 0.0
+            val durationMinutes = (data["durationMinutes"] as? Number)?.toInt() ?: 0
+            val incomeRupees = (data["incomeRupees"] as? Number)?.toLong() ?: 0L
+            val completedAtMs = (data["completedAtMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
+
+            RiderRideRecord(
+                id = id,
+                riderId = riderId,
+                orderId = orderId,
+                restaurantName = restName,
+                dropAddress = dropAddress,
+                distanceKm = distanceKm,
+                durationMinutes = durationMinutes,
+                incomeRupees = incomeRupees,
+                completedAtMs = completedAtMs
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // -------------------------------------------------------------
+    // RIDER PAYOUTS
+    // -------------------------------------------------------------
+
+    fun mapToRiderPayoutRecord(docId: String, data: Map<String, Any?>): RiderPayoutRecord? {
+        return try {
+            val id = (data["id"] as? String)?.ifBlank { null } ?: docId
+            val riderId = (data["riderId"] as? String)?.ifBlank { null } ?: return null
+            val amountRupees = (data["amountRupees"] as? Number)?.toLong() ?: return null
+            val accountDestination = (data["accountDestination"] as? String) ?: "Default Account"
+            val status = (data["status"] as? String) ?: "COMPLETED"
+            val timestampMs = (data["timestampMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
+
+            RiderPayoutRecord(
+                id = id,
+                riderId = riderId,
+                amountRupees = amountRupees,
+                accountDestination = accountDestination,
+                status = status,
+                timestampMs = timestampMs
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // -------------------------------------------------------------
+    // RIDER REJECTED OFFERS
+    // -------------------------------------------------------------
+
+    fun mapToRiderRejectedOffer(docId: String, data: Map<String, Any?>): RiderRejectedOffer? {
+        return try {
+            val riderId = (data["riderId"] as? String)?.ifBlank { null }
+                ?: docId.substringBefore('_', "").ifBlank { null }
+                ?: return null
+            val offerId = (data["offerId"] as? String)?.ifBlank { null }
+                ?: docId.substringAfter('_', "").ifBlank { null }
+                ?: return null
+            val rejectedAtMs = (data["rejectedAtMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
+
+            RiderRejectedOffer(
+                riderId = riderId,
+                offerId = offerId,
+                rejectedAtMs = rejectedAtMs
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
 }

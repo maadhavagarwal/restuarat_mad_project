@@ -2565,6 +2565,14 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         val oId = targetOrderId?.ifBlank { null } ?: orderId.ifBlank { orders.firstOrNull()?.id ?: "" }
         if (oId.isBlank()) return@run
 
+        // Attach real-time cloud observation for live rider GPS location if available
+        cloudEngine.observeRiderLocationRealTime(oId) { lat, lng, eta ->
+            liveRiderEtaMins = eta
+            if (lat != 0.0 || lng != 0.0) {
+                liveRiderStatus = if (eta <= 2) "Rider is at your gate" else "Out for delivery"
+            }
+        }
+
         try {
             val trackingJson = try {
                 api.request("/orders/$oId/tracking", "GET", null)

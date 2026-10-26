@@ -2,6 +2,8 @@ package com.restaurant.mobile.delivery
 
 import android.util.Log
 import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentReference
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.EventListener
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ListenerRegistration
@@ -154,6 +156,36 @@ class FirestoreSubscriptionManager {
         val record = SubscriptionRecord(channelId, scope, registration)
         activeSubscriptions[channelId] = record
         logD(TAG, "Subscribed channel '$channelId' (scope: $scope). Total active: ${activeSubscriptions.size}")
+        return registration
+    }
+
+    /**
+     * Attaches a document snapshot listener with deduplication and lifecycle tracking.
+     */
+    fun attachDocumentListener(
+        channelId: String,
+        scope: ChannelScope,
+        docRef: DocumentReference,
+        onSnapshot: (snapshot: DocumentSnapshot, isFromCache: Boolean) -> Unit,
+        onError: (FirebaseFirestoreException) -> Unit = {}
+    ): ListenerRegistration {
+        cancelSubscription(channelId)
+
+        val registration = docRef.addSnapshotListener(EventListener<DocumentSnapshot> { snapshot, error ->
+            if (error != null) {
+                logW(TAG, "Subscription error on document channel '$channelId': ${error.message}")
+                onError(error)
+                return@EventListener
+            }
+            if (snapshot == null) return@EventListener
+
+            val isFromCache = snapshot.metadata.isFromCache
+            onSnapshot(snapshot, isFromCache)
+        })
+
+        val record = SubscriptionRecord(channelId, scope, registration)
+        activeSubscriptions[channelId] = record
+        logD(TAG, "Subscribed document channel '$channelId' (scope: $scope). Total active: ${activeSubscriptions.size}")
         return registration
     }
 

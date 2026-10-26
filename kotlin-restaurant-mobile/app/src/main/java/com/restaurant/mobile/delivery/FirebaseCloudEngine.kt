@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.ListenerRegistration
@@ -49,6 +51,9 @@ class FirebaseCloudEngine(
     private var kotTicketsListenerReg: ListenerRegistration? = null
     private var riderLocationListenerReg: ListenerRegistration? = null
     private var ridersListenerReg: ListenerRegistration? = null
+    private var riderRidesListenerReg: ListenerRegistration? = null
+    private var riderPayoutsListenerReg: ListenerRegistration? = null
+    private var riderRejectedOffersListenerReg: ListenerRegistration? = null
 
     init {
         try {
@@ -890,20 +895,42 @@ class FirebaseCloudEngine(
     fun observeRiderLocationRealTime(
         orderId: String,
         onLocationUpdated: (Double, Double, Int) -> Unit
-    ) {
-        riderLocationListenerReg?.remove()
+    ): ListenerRegistration? {
+        stopObservingRiderLocation(orderId)
         val db = firestore
-        if (db == null || !isFirebaseInitialized) return
-        try {
-            riderLocationListenerReg = db.collection("rider_locations").document(orderId)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
-                    val lat = snapshot.getDouble("latitude") ?: return@addSnapshotListener
-                    val lng = snapshot.getDouble("longitude") ?: return@addSnapshotListener
+        if (db == null || !isFirebaseInitialized) return null
+        val channelId = "rider_locations:$orderId"
+        return try {
+            val docRef = db.collection("rider_locations").document(orderId)
+            val reg = subscriptionManager.attachDocumentListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                docRef = docRef,
+                onSnapshot = { snapshot, _ ->
+                    if (!snapshot.exists()) return@attachDocumentListener
+                    val lat = snapshot.getDouble("latitude") ?: return@attachDocumentListener
+                    val lng = snapshot.getDouble("longitude") ?: return@attachDocumentListener
                     val eta = snapshot.getLong("etaMinutes")?.toInt() ?: 15
                     onLocationUpdated(lat, lng, eta)
+                },
+                onError = { e ->
+                    Log.w(tag, "Rider location sync error on $channelId: ${e.message}")
                 }
-        } catch (_: Exception) {}
+            )
+            riderLocationListenerReg = reg
+            reg
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to observe rider location $channelId: ${e.message}")
+            null
+        }
+    }
+
+    fun stopObservingRiderLocation(orderId: String? = null) {
+        if (orderId != null) {
+            subscriptionManager.cancelSubscription("rider_locations:$orderId")
+        }
+        riderLocationListenerReg?.remove()
+        riderLocationListenerReg = null
     }
 
     // --- RIDER FLEET CLOUD SYNC ---
@@ -1002,6 +1029,319 @@ class FirebaseCloudEngine(
 
             db.collection("riders").document(riderId).update(updates)
         } catch (_: Exception) {}
+    }
+
+    // --- RIDER RIDES, PAYOUTS & REJECTED OFFERS REAL-TIME SYNC ---
+
+    fun observeRiderRidesRealTime(
+        riderId: String = "",
+        isAdmin: Boolean = false,
+        onRidesUpdated: (List<RiderRideRecord>) -> Unit
+    ): ListenerRegistration? {
+        riderRidesListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            val fallback = if (riderId.isNotBlank()) localSqlDb.getRiderRides(riderId) else emptyList()
+            onRidesUpdated(fallback)
+            return null
+        }
+        if (!isAdmin && riderId.isBlank()) {
+            Log.w(tag, "Rider ride observation rejected: missing riderId for non-admin request.")
+            onRidesUpdated(emptyList())
+            return null
+        }
+
+        val channelId = if (isAdmin) "rider_rides:admin" else "rider_rides:rider:$riderId"
+        val query: Query = if (isAdmin) {
+            db.collection("rider_rides")
+        } else {
+            db.collection("rider_rides").whereEqualTo("riderId", riderId)
+        }
+
+        return try {
+            val reg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = if (isAdmin) FirestoreSubscriptionManager.ChannelScope.GLOBAL else FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
+                    for (change in snapshot.documentChanges) {
+                        val doc = change.document
+                        val docId = doc.id
+                        val rId = doc.getString("riderId") ?: riderId
+                        val data = doc.data ?: emptyMap<String, Any?>()
+
+                        when (change.type) {
+                            DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                                if (!subscriptionManager.shouldProcessModification(channelId, docId, data)) {
+                                    continue
+                                }
+                                val ride = FirestoreModelMapper.mapToRiderRideRecord(docId, data)
+                                if (ride != null) {
+                                    localSqlDb.upsertRiderRideFromCloud(ride)
+                                }
+                            }
+                            DocumentChange.Type.REMOVED -> {
+                                subscriptionManager.removePayloadHash(channelId, docId)
+                                localSqlDb.deleteRiderRideFromCloud(docId, rId)
+                            }
+                        }
+                    }
+
+                    val rides = snapshot.documents.mapNotNull { doc ->
+                        val data = doc.data ?: return@mapNotNull null
+                        FirestoreModelMapper.mapToRiderRideRecord(doc.id, data)
+                    }
+                    onRidesUpdated(rides)
+                },
+                onError = { error ->
+                    Log.w(tag, "Rider rides sync error on $channelId: ${error.message}")
+                    val fallback = if (riderId.isNotBlank()) localSqlDb.getRiderRides(riderId) else emptyList()
+                    onRidesUpdated(fallback)
+                }
+            )
+            riderRidesListenerReg = reg
+            reg
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to attach rider rides listener for $channelId: ${e.message}")
+            val fallback = if (riderId.isNotBlank()) localSqlDb.getRiderRides(riderId) else emptyList()
+            onRidesUpdated(fallback)
+            null
+        }
+    }
+
+    fun observeRiderPayoutsRealTime(
+        riderId: String = "",
+        isAdmin: Boolean = false,
+        onPayoutsUpdated: (List<RiderPayoutRecord>) -> Unit
+    ): ListenerRegistration? {
+        riderPayoutsListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            val fallback = if (riderId.isNotBlank()) localSqlDb.getRiderPayouts(riderId) else emptyList()
+            onPayoutsUpdated(fallback)
+            return null
+        }
+        if (!isAdmin && riderId.isBlank()) {
+            Log.w(tag, "Rider payouts observation rejected: riderId required for non-admin scope.")
+            onPayoutsUpdated(emptyList())
+            return null
+        }
+
+        val channelId = if (isAdmin) "rider_payouts:admin" else "rider_payouts:rider:$riderId"
+        val query: Query = if (isAdmin) {
+            db.collection("rider_payouts")
+        } else {
+            db.collection("rider_payouts").whereEqualTo("riderId", riderId)
+        }
+
+        return try {
+            val reg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = if (isAdmin) FirestoreSubscriptionManager.ChannelScope.GLOBAL else FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
+                    for (change in snapshot.documentChanges) {
+                        val doc = change.document
+                        val docId = doc.id
+                        val rId = doc.getString("riderId") ?: riderId
+                        val data = doc.data ?: emptyMap<String, Any?>()
+
+                        // Strict scoping guard: rider cannot see foreign payouts
+                        if (!isAdmin && rId != riderId) {
+                            Log.w(tag, "Security violation: foreign payout doc $docId for rider $rId ignored on $riderId listener")
+                            continue
+                        }
+
+                        when (change.type) {
+                            DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                                if (!subscriptionManager.shouldProcessModification(channelId, docId, data)) {
+                                    continue
+                                }
+                                val payout = FirestoreModelMapper.mapToRiderPayoutRecord(docId, data)
+                                if (payout != null) {
+                                    localSqlDb.upsertRiderPayoutFromCloud(payout)
+                                }
+                            }
+                            DocumentChange.Type.REMOVED -> {
+                                subscriptionManager.removePayloadHash(channelId, docId)
+                                localSqlDb.deleteRiderPayoutFromCloud(docId, rId)
+                            }
+                        }
+                    }
+
+                    val payouts = snapshot.documents.mapNotNull { doc ->
+                        val rId = doc.getString("riderId") ?: ""
+                        if (!isAdmin && rId != riderId) null
+                        else {
+                            val data = doc.data ?: return@mapNotNull null
+                            FirestoreModelMapper.mapToRiderPayoutRecord(doc.id, data)
+                        }
+                    }
+                    onPayoutsUpdated(payouts)
+                },
+                onError = { error ->
+                    Log.w(tag, "Rider payouts sync error on $channelId: ${error.message}")
+                    val fallback = if (riderId.isNotBlank()) localSqlDb.getRiderPayouts(riderId) else emptyList()
+                    onPayoutsUpdated(fallback)
+                }
+            )
+            riderPayoutsListenerReg = reg
+            reg
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to attach rider payouts listener for $channelId: ${e.message}")
+            val fallback = if (riderId.isNotBlank()) localSqlDb.getRiderPayouts(riderId) else emptyList()
+            onPayoutsUpdated(fallback)
+            null
+        }
+    }
+
+    fun observeRiderRejectedOffersRealTime(
+        riderId: String,
+        onRejectedUpdated: (Set<String>) -> Unit
+    ): ListenerRegistration? {
+        riderRejectedOffersListenerReg?.remove()
+        val db = firestore
+        if (db == null || !isFirebaseInitialized || riderId.isBlank()) {
+            val fallback = if (riderId.isNotBlank()) localSqlDb.getRejectedRideIds(riderId) else emptySet()
+            onRejectedUpdated(fallback)
+            return null
+        }
+
+        val channelId = "rider_rejected:rider:$riderId"
+        val query = db.collection("rider_rejected_offers").whereEqualTo("riderId", riderId)
+
+        return try {
+            val reg = subscriptionManager.attachQueryListener(
+                channelId = channelId,
+                scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+                query = query,
+                onSnapshot = { snapshot, _ ->
+                    for (change in snapshot.documentChanges) {
+                        val doc = change.document
+                        val docId = doc.id
+                        val rId = doc.getString("riderId") ?: riderId
+                        val offerId = doc.getString("offerId") ?: docId.substringAfter('_', "")
+                        val data = doc.data ?: emptyMap<String, Any?>()
+
+                        if (rId != riderId) continue
+
+                        when (change.type) {
+                            DocumentChange.Type.ADDED, DocumentChange.Type.MODIFIED -> {
+                                if (!subscriptionManager.shouldProcessModification(channelId, docId, data)) {
+                                    continue
+                                }
+                                val rej = FirestoreModelMapper.mapToRiderRejectedOffer(docId, data)
+                                if (rej != null) {
+                                    localSqlDb.upsertRejectedOfferFromCloud(rej.riderId, rej.offerId)
+                                }
+                            }
+                            DocumentChange.Type.REMOVED -> {
+                                subscriptionManager.removePayloadHash(channelId, docId)
+                                localSqlDb.deleteRejectedOfferFromCloud(rId, offerId)
+                            }
+                        }
+                    }
+
+                    onRejectedUpdated(localSqlDb.getRejectedRideIds(riderId))
+                },
+                onError = { error ->
+                    Log.w(tag, "Rider rejected offers sync error on $channelId: ${error.message}")
+                    onRejectedUpdated(localSqlDb.getRejectedRideIds(riderId))
+                }
+            )
+            riderRejectedOffersListenerReg = reg
+            reg
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to attach rider rejected offers listener: ${e.message}")
+            onRejectedUpdated(localSqlDb.getRejectedRideIds(riderId))
+            null
+        }
+    }
+
+    fun saveRiderRideToCloud(
+        ride: RiderRideRecord,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val map = mapOf(
+                "id" to ride.id,
+                "riderId" to ride.riderId,
+                "orderId" to ride.orderId,
+                "restaurantName" to ride.restaurantName,
+                "dropAddress" to ride.dropAddress,
+                "distanceKm" to ride.distanceKm,
+                "durationMinutes" to ride.durationMinutes,
+                "incomeRupees" to ride.incomeRupees,
+                "completedAtMs" to ride.completedAtMs
+            )
+            db.collection("rider_rides").document(ride.id)
+                .set(map)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun saveRiderPayoutToCloud(
+        payout: RiderPayoutRecord,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val map = mapOf(
+                "id" to payout.id,
+                "riderId" to payout.riderId,
+                "amountRupees" to payout.amountRupees,
+                "accountDestination" to payout.accountDestination,
+                "status" to payout.status,
+                "timestampMs" to payout.timestampMs
+            )
+            db.collection("rider_payouts").document(payout.id)
+                .set(map)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
+    }
+
+    fun saveRiderRejectedOfferToCloud(
+        riderId: String,
+        offerId: String,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        try {
+            val docId = "${riderId}_$offerId"
+            val map = mapOf(
+                "riderId" to riderId,
+                "offerId" to offerId,
+                "rejectedAtMs" to System.currentTimeMillis()
+            )
+            db.collection("rider_rejected_offers").document(docId)
+                .set(map)
+                .addOnSuccessListener { onSuccess() }
+                .addOnFailureListener { onError(it) }
+        } catch (e: Exception) {
+            onError(e)
+        }
     }
 
     // --- CATALOG CLOUD SYNC ---
@@ -1212,6 +1552,10 @@ class FirebaseCloudEngine(
         dishesListenerReg = null
         settingsListenerReg = null
         riderLocationListenerReg = null
+        ridersListenerReg = null
+        riderRidesListenerReg = null
+        riderPayoutsListenerReg = null
+        riderRejectedOffersListenerReg = null
     }
 
     fun cancelUserScopedListeners() {
@@ -1223,5 +1567,9 @@ class FirebaseCloudEngine(
         bookingsListenerReg = null
         userListenerReg = null
         addressesListenerReg = null
+        riderRidesListenerReg = null
+        riderPayoutsListenerReg = null
+        riderRejectedOffersListenerReg = null
+        riderLocationListenerReg = null
     }
 }
