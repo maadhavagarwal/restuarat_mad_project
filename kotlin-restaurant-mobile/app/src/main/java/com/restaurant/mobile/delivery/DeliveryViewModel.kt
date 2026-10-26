@@ -822,11 +822,111 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Settles an active dine-in table tab after successful payment authorization.
-     *
-     * 1. Updates the corresponding dining_tabs record to SETTLED and stores the payment method in SQLite.
-     * 2. Updates the associated table_bookings record to COMPLETED, where applicable.
-     * 3. Updates the floor-plan table status to Available, using the existing table and booking logic.
+     * Verifies a Razorpay payment callback server-side before releasing tables or confirming orders.
+     * Enforces:
+     * 1. Rejects online Dine-In if restaurant.acceptsDiningPayment is false (directs to Counter Bill Request).
+     * 2. Rejects malformed callbacks with missing order ID, payment ID, or signature.
+     * 3. Submits callback to POST /payments/razorpay/verify.
+     * 4. Fails closed: treats callback as unverified on any error, timeout, or backend rejection.
+     * 5. Atomically marks tab settled / places order ONLY after backend confirms verification.
+     */
+    suspend fun verifyAndProcessRazorpayPayment(
+        callback: RazorpayPaymentCallback,
+        isDineIn: Boolean,
+        diningTab: DiningTab? = null,
+        addressId: String = "",
+        paymentMethod: String = "UPI"
+    ): RazorpayVerificationResult {
+        val targetRestId = diningTab?.restaurantId?.ifBlank { restaurantId } ?: restaurantId
+        val rest = catalog.restaurants.find { it.id == targetRestId }
+
+        // 1. Enforce dining payment restriction
+        if (isDineIn && !DineInPaymentRules.isPaymentEligible(rest, isDineIn = true)) {
+            return RazorpayVerificationResult(
+                success = false,
+                verified = false,
+                errorCode = "DINING_PAYMENT_DISABLED",
+                message = "Online dining payment is unavailable for this restaurant. Please request a counter bill."
+            )
+        }
+
+        // 2. Validate callback payload fields
+        if (!DineInPaymentRules.validateRazorpayCallbackPayload(
+                callback.razorpay_order_id,
+                callback.razorpay_payment_id,
+                callback.razorpay_signature
+            )
+        ) {
+            return RazorpayVerificationResult(
+                success = false,
+                verified = false,
+                errorCode = "MALFORMED_CALLBACK",
+                message = "Razorpay payment callback is missing required fields (order ID, payment ID, or signature)."
+            )
+        }
+
+        // 3. Submit to backend /payments/razorpay/verify and wait for verification response
+        val response: Map<String, Any> = try {
+            api.call(
+                "/payments/razorpay/verify",
+                "POST",
+                mapOf(
+                    "razorpay_order_id" to callback.razorpay_order_id.trim(),
+                    "razorpay_payment_id" to callback.razorpay_payment_id.trim(),
+                    "razorpay_signature" to callback.razorpay_signature.trim()
+                )
+            )
+        } catch (e: Exception) {
+            // Fail closed: Network error, timeout, or backend 400 rejection
+            val errCode = if (e is ApiFailure) "HTTP_${e.status}" else "NETWORK_FAILURE"
+            val errMsg = e.message ?: "Server payment verification failed. Please try again."
+            return RazorpayVerificationResult(
+                success = false,
+                verified = false,
+                errorCode = errCode,
+                message = errMsg
+            )
+        }
+
+        // 4. Validate authoritative verification confirmation
+        if (!DineInPaymentRules.isBackendVerificationSuccessful(response)) {
+            val msg = response["message"]?.toString() ?: "Payment could not be verified by server."
+            return RazorpayVerificationResult(
+                success = false,
+                verified = false,
+                errorCode = "VERIFICATION_FAILED",
+                message = msg
+            )
+        }
+
+        // 5. Successful verified payment: atomically process Dine-In tab settlement or delivery checkout
+        val transactionId = callback.razorpay_payment_id.trim()
+        if (isDineIn) {
+            val targetTab = diningTab ?: activeTableTab
+            if (targetTab != null) {
+                recordDineInPaymentAuthorized(targetTab, paymentMethod, transactionId)
+                settleDineInTab(targetTab, paymentMethod, transactionId)
+            }
+        } else {
+            val targetAddress = addressId.ifBlank { addresses.firstOrNull()?.id ?: "addr-default" }
+            checkout(targetAddress, paymentMethod)
+        }
+
+        return RazorpayVerificationResult(
+            success = true,
+            verified = true,
+            orderId = callback.razorpay_order_id,
+            paymentId = transactionId,
+            message = response["message"]?.toString() ?: "Razorpay payment verified successfully."
+        )
+    }
+
+    /**
+     * Settles an active dining tab upon successful payment verification.
+     * Performs atomic transitions:
+     * 1. Marks dining_tabs record as SETTLED.
+     * 2. Marks table_bookings record as COMPLETED.
+     * 3. Releases floor-plan table to Available.
      * 4. Clears activeTableTab, walkInTableError, and cancels real-time observation so the customer
      *    homepage returns to its normal state.
      *

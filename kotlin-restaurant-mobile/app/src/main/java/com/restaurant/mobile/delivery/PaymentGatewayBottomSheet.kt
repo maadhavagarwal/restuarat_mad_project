@@ -3,6 +3,7 @@ package com.restaurant.mobile.delivery
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,7 +35,8 @@ import java.util.UUID
 enum class PaymentProcessingState {
     INPUT,
     VERIFYING,
-    AUTHORIZED
+    AUTHORIZED,
+    FAILED
 }
 
 /**
@@ -42,7 +44,8 @@ enum class PaymentProcessingState {
  * Features:
  * 1. UPI Apps (Google Pay, PhonePe, Paytm) + instant UPI ID validation regex.
  * 2. Card Checkout with formatted inputs, card brand detection, and Luhn algorithm validation.
- * 3. 1.5-second simulated verification animation ("Verifying with Bank..." -> "Payment Authorized ✓").
+ * 3. Server-side cryptographic Razorpay signature verification.
+ * 4. Dining payment eligibility enforcement and Counter Bill Request routing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,7 +55,10 @@ fun PaymentGatewayBottomSheet(
     selectedAddressId: String = "",
     initialMethod: String = "UPI",
     diningTab: DiningTab? = null,
+    razorpayCallback: RazorpayPaymentCallback? = null,
     onPaymentSuccess: ((paymentMethod: String, transactionId: String) -> Unit)? = null,
+    onPaymentFailure: ((errorCode: String, errorMessage: String) -> Unit)? = null,
+    onCounterBillRequested: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val effectiveDiningTab = diningTab ?: if (selectedAddressId.startsWith("DINE_IN")) vm.activeTableTab else null
@@ -71,7 +77,8 @@ fun PaymentGatewayBottomSheet(
         )
     } // 0: UPI, 1: Card, 2: Netbanking
     var processingState by remember { mutableStateOf(PaymentProcessingState.INPUT) }
-    var transactionId by remember { mutableStateOf("rzp_pay_${UUID.randomUUID().toString().take(10).uppercase()}") }
+    var verificationErrorMessage by remember { mutableStateOf("") }
+    var transactionId by remember { mutableStateOf(razorpayCallback?.razorpay_payment_id ?: "rzp_pay_${UUID.randomUUID().toString().take(10).uppercase()}") }
 
     // UPI State
     var selectedUpiApp by rememberSaveable { mutableStateOf("Google Pay") }
@@ -114,43 +121,88 @@ fun PaymentGatewayBottomSheet(
     // Netbanking State
     var selectedBank by rememberSaveable { mutableStateOf("HDFC Bank") }
 
-    // 1.5-second simulated verification animation & auto-settlement completion
+    // Server-side cryptographic Razorpay verification & auto-settlement completion
     LaunchedEffect(processingState) {
         when (processingState) {
             PaymentProcessingState.VERIFYING -> {
                 withContext(Dispatchers.IO) {
+                    val methodLabel = when (selectedTab) {
+                        0 -> "UPI ($selectedUpiApp)"
+                        1 -> "Card ($cardIssuer)"
+                        2 -> "Netbanking ($selectedBank)"
+                        else -> "UPI"
+                    }
+
+                    val targetRestaurant = vm.catalog.restaurants.find {
+                        it.id == effectiveDiningTab?.restaurantId?.ifBlank { vm.restaurantId } ?: vm.restaurantId
+                    }
+
+                    // 1. Enforce restaurant.acceptsDiningPayment for Dine-In
+                    if (isDineIn && !DineInPaymentRules.isPaymentEligible(targetRestaurant, isDineIn = true)) {
+                        withContext(Dispatchers.Main) {
+                            verificationErrorMessage = "Online dining payment is unavailable for this restaurant. Please request a counter bill."
+                            processingState = PaymentProcessingState.FAILED
+                            onPaymentFailure?.invoke("DINING_PAYMENT_DISABLED", verificationErrorMessage)
+                        }
+                        return@withContext
+                    }
+
+                    // 2. Submit genuine callback or create authoritative Razorpay order
                     try {
-                        // 1. Authoritative Razorpay Order Creation
                         val orderResp: Map<String, Any> = vm.api.call(
                             "/payments/razorpay/create-order",
                             "POST",
                             mapOf(
                                 "amount" to effectiveTotal,
                                 "currency" to "INR",
-                                "receipt" to "rcpt_${System.currentTimeMillis()}"
+                                "receipt" to "rcpt_${System.currentTimeMillis()}",
+                                "orderType" to if (isDineIn) "DINE_IN" else "DELIVERY",
+                                "restaurantId" to (targetRestaurant?.id ?: vm.restaurantId),
+                                "tabId" to effectiveDiningTab?.id
                             )
                         )
                         val orderObj = orderResp["order"] as? Map<*, *>
-                        val razorpayOrderId = orderObj?.get("id")?.toString() ?: "order_${System.currentTimeMillis()}"
+                        val createdOrderId = orderObj?.get("id")?.toString() ?: ""
 
-                        // 2. Issuing Bank 256-bit handshake delay
-                        delay(1200L)
+                        delay(800L) // Issuing bank verification delay
 
-                        // 3. Cryptographic Signature Verification
-                        vm.api.call<Map<String, Any>>(
-                            "/payments/razorpay/verify",
-                            "POST",
-                            mapOf(
-                                "razorpay_order_id" to razorpayOrderId,
-                                "razorpay_payment_id" to transactionId,
-                                "razorpay_signature" to "sig_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-                            )
+                        val callbackToVerify = razorpayCallback ?: if (createdOrderId.isNotBlank()) {
+                            null
+                        } else null
+
+                        if (callbackToVerify == null) {
+                            withContext(Dispatchers.Main) {
+                                verificationErrorMessage = "Payment signature callback required: cannot mark payment as verified without genuine Razorpay signature."
+                                processingState = PaymentProcessingState.FAILED
+                                onPaymentFailure?.invoke("MISSING_SIGNATURE", verificationErrorMessage)
+                            }
+                            return@withContext
+                        }
+
+                        val verifyResult = vm.verifyAndProcessRazorpayPayment(
+                            callback = callbackToVerify,
+                            isDineIn = isDineIn,
+                            diningTab = effectiveDiningTab,
+                            addressId = selectedAddressId,
+                            paymentMethod = methodLabel
                         )
+
+                        withContext(Dispatchers.Main) {
+                            if (verifyResult.verified && verifyResult.success) {
+                                transactionId = callbackToVerify.razorpay_payment_id
+                                processingState = PaymentProcessingState.AUTHORIZED
+                            } else {
+                                verificationErrorMessage = verifyResult.message.ifBlank { "Payment verification failed server-side." }
+                                processingState = PaymentProcessingState.FAILED
+                                onPaymentFailure?.invoke(verifyResult.errorCode ?: "VERIFICATION_FAILED", verificationErrorMessage)
+                            }
+                        }
                     } catch (e: Exception) {
-                        // Resilient fallback on local device
-                    }
-                    withContext(Dispatchers.Main) {
-                        processingState = PaymentProcessingState.AUTHORIZED
+                        withContext(Dispatchers.Main) {
+                            verificationErrorMessage = e.message ?: "Payment verification failed."
+                            processingState = PaymentProcessingState.FAILED
+                            onPaymentFailure?.invoke("VERIFICATION_FAILED", verificationErrorMessage)
+                        }
                     }
                 }
             }
@@ -162,16 +214,7 @@ fun PaymentGatewayBottomSheet(
                     2 -> "Netbanking ($selectedBank)"
                     else -> "UPI"
                 }
-                if (isDineIn) {
-                    effectiveDiningTab?.let { tab ->
-                        vm.recordDineInPaymentAuthorized(tab, methodLabel, transactionId)
-                        vm.settleDineInTab(tab, methodLabel, transactionId)
-                    }
-                    onPaymentSuccess?.invoke(methodLabel, transactionId)
-                } else {
-                    vm.checkout(selectedAddressId, methodLabel)
-                    onPaymentSuccess?.invoke(methodLabel, transactionId)
-                }
+                onPaymentSuccess?.invoke(methodLabel, transactionId)
                 onDismiss()
             }
             else -> {}
@@ -679,6 +722,73 @@ fun PaymentGatewayBottomSheet(
                             fontSize = 13.sp,
                             color = RestroTokens.text
                         )
+                    }
+                }
+
+                // Payment Failed / Verification Rejected Screen
+                PaymentProcessingState.FAILED -> {
+                    val targetRestaurant = vm.catalog.restaurants.find {
+                        it.id == effectiveDiningTab?.restaurantId?.ifBlank { vm.restaurantId } ?: vm.restaurantId
+                    }
+                    val isDiningDisabled = isDineIn && !DineInPaymentRules.isPaymentEligible(targetRestaurant, isDineIn = true)
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(RestroTokens.coral.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Error,
+                                contentDescription = null,
+                                tint = RestroTokens.coral,
+                                modifier = Modifier.size(44.dp)
+                            )
+                        }
+                        Text(
+                            if (isDiningDisabled) "Online Dining Pay Unavailable" else "Payment Verification Failed",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = RestroTokens.coral
+                        )
+                        Text(
+                            verificationErrorMessage.ifBlank { "Could not securely verify Razorpay transaction." },
+                            fontSize = 13.sp,
+                            color = RestroTokens.text,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        if (isDiningDisabled) {
+                            OutlinedButton(
+                                onClick = {
+                                    onCounterBillRequested?.invoke()
+                                    onDismiss()
+                                },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, RestroTokens.coral)
+                            ) {
+                                Icon(Icons.Default.Storefront, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Request Counter Bill (${money(effectiveTotal)})", color = RestroTokens.coral, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Button(
+                            onClick = onDismiss,
+                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surfaceElevated),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) {
+                            Text("Close", color = RestroTokens.text, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }

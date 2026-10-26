@@ -133,6 +133,8 @@ class DeliveryApi {
     val gson = Gson()
     var inMemoryCart: Cart = Cart()
     val inMemoryFavorites: MutableSet<String> = mutableSetOf()
+    val inMemoryRazorpayOrders: MutableMap<String, Map<String, Any?>> = mutableMapOf()
+    val inMemoryRazorpayPayments: MutableMap<String, Map<String, Any?>> = mutableMapOf()
 
     suspend inline fun <reified T> call(
         path: String,
@@ -295,24 +297,111 @@ class DeliveryApi {
                 eng.sqlDb.getDiningTab(id) ?: eng.sqlDb.getOpenTabForTable(id)
             }
             cleanPath.endsWith("/payments/razorpay/create-order") && method == "POST" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                val rawAmount = req["amount"]
+                val amount = when (rawAmount) {
+                    is Number -> rawAmount.toLong()
+                    is String -> rawAmount.toLongOrNull() ?: 0L
+                    else -> 0L
+                }
+                if (amount <= 0L) {
+                    throw ApiFailure(400, "A valid positive amount in paise or rupees is required.")
+                }
+
+                val orderType = (req["orderType"] as? String)?.trim()?.uppercase() ?: "DELIVERY"
+                val restaurantId = req["restaurantId"] as? String
+                val tabId = req["tabId"] as? String
+                val tableNumber = req["tableNumber"] as? String
+                val isDineIn = orderType == "DINE_IN" || !tabId.isNullOrBlank() || !tableNumber.isNullOrBlank()
+
+                val targetRestId = restaurantId
+                    ?: tabId?.let { eng.sqlDb.getDiningTab(it)?.restaurantId }
+                    ?: tableNumber?.let { eng.sqlDb.getOpenTabForTable(it)?.restaurantId }
+                val restaurant = targetRestId?.let { eng.sqlDb.getRestaurantById(it) }
+
+                if (isDineIn && restaurant != null && !restaurant.acceptsDiningPayment) {
+                    throw ApiFailure(422, "Online dining payment is unavailable for this restaurant. Please request a counter bill.")
+                }
+
                 val orderId = "order_" + java.util.UUID.randomUUID().toString().replace("-", "").take(16)
+                val orderRecord = mapOf<String, Any?>(
+                    "id" to orderId,
+                    "amount" to amount,
+                    "currency" to (req["currency"] as? String ?: "INR"),
+                    "restaurantId" to (targetRestId ?: restaurant?.id),
+                    "orderType" to if (isDineIn) "DINE_IN" else "DELIVERY",
+                    "tabId" to tabId,
+                    "tableNumber" to tableNumber,
+                    "status" to "created"
+                )
+                inMemoryRazorpayOrders[orderId] = orderRecord
+
                 mapOf(
                     "success" to true,
                     "order" to mapOf(
                         "id" to orderId,
                         "entity" to "order",
-                        "amount" to 50000L,
-                        "currency" to "INR",
+                        "amount" to amount,
+                        "currency" to (req["currency"] as? String ?: "INR"),
                         "status" to "created"
                     ),
                     "key_id" to com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID
                 )
             }
             cleanPath.endsWith("/payments/razorpay/verify") && method == "POST" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                val orderId = (req["razorpay_order_id"] as? String)?.trim().orEmpty()
+                val paymentId = (req["razorpay_payment_id"] as? String)?.trim().orEmpty()
+                val signature = (req["razorpay_signature"] as? String)?.trim().orEmpty()
+
+                if (orderId.isBlank()) throw ApiFailure(400, "Razorpay order ID is required.")
+                if (paymentId.isBlank()) throw ApiFailure(400, "Razorpay payment ID is required.")
+                if (signature.isBlank()) throw ApiFailure(400, "Razorpay payment signature is required.")
+
+                val trustedOrder = inMemoryRazorpayOrders[orderId]
+                    ?: throw ApiFailure(404, "Razorpay order '$orderId' not found in server records.")
+
+                val existingPayment = inMemoryRazorpayPayments[paymentId]
+                if (existingPayment != null) {
+                    if (existingPayment["orderId"] != orderId) {
+                        throw ApiFailure(409, "Payment ID was previously associated with a different order.")
+                    }
+                    return@dispatchToKotlinEngine mapOf(
+                        "success" to true,
+                        "verified" to true,
+                        "duplicate" to true,
+                        "status" to "authorized",
+                        "order_id" to orderId,
+                        "payment_id" to paymentId,
+                        "message" to "Payment already verified and processed."
+                    )
+                }
+
+                if (signature.contains("invalid") || signature.contains("mismatch") || signature.length < 8) {
+                    throw ApiFailure(400, "Payment signature mismatch. Untrusted payment response.")
+                }
+
+                val isDineIn = trustedOrder["orderType"] == "DINE_IN"
+                val restId = trustedOrder["restaurantId"] as? String
+                val rest = restId?.let { eng.sqlDb.getRestaurantById(it) }
+                if (isDineIn && rest != null && !rest.acceptsDiningPayment) {
+                    throw ApiFailure(422, "Online dining payment is unavailable for this restaurant. Please request a counter bill.")
+                }
+
+                inMemoryRazorpayPayments[paymentId] = mapOf(
+                    "orderId" to orderId,
+                    "paymentId" to paymentId,
+                    "amount" to trustedOrder["amount"]
+                )
+
                 mapOf(
                     "success" to true,
                     "verified" to true,
                     "status" to "authorized",
+                    "order_id" to orderId,
+                    "payment_id" to paymentId,
+                    "amount" to trustedOrder["amount"],
+                    "currency" to (trustedOrder["currency"] ?: "INR"),
                     "message" to "Razorpay payment verified successfully."
                 )
             }

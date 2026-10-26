@@ -1294,7 +1294,63 @@ object DineInPaymentRules {
             total = authoritativeTotal
         )
     }
+
+    /**
+     * Checks if a payment is eligible based on restaurant.acceptsDiningPayment.
+     * Online Dine-In is blocked when acceptsDiningPayment is false.
+     * Delivery orders remain eligible regardless of acceptsDiningPayment.
+     */
+    fun isPaymentEligible(restaurant: Restaurant?, isDineIn: Boolean): Boolean {
+        if (!isDineIn) return true
+        return restaurant?.acceptsDiningPayment ?: true
+    }
+
+    /**
+     * Validates callback fields for Razorpay signature verification.
+     * All 3 fields (order ID, payment ID, signature) must be non-blank.
+     */
+    fun validateRazorpayCallbackPayload(orderId: String?, paymentId: String?, signature: String?): Boolean {
+        return !orderId.isNullOrBlank() && !paymentId.isNullOrBlank() && !signature.isNullOrBlank()
+    }
+
+    /**
+     * Validates that backend verification response confirmed payment verification.
+     * Fails closed if response is null, verified is not true, or error is present.
+     */
+    fun isBackendVerificationSuccessful(response: Map<String, Any?>?): Boolean {
+        if (response == null) return false
+        val isVerified = response["verified"] == true
+        val hasError = response["error"] != null
+        return isVerified && !hasError
+    }
+
+    fun isBackendVerificationSuccessful(result: RazorpayVerificationResult?): Boolean {
+        if (result == null) return false
+        return result.success && result.verified && result.errorCode == null && result.orderId.isNotBlank() && result.paymentId.isNotBlank()
+    }
 }
+
+data class RazorpayPaymentCallback(
+    val razorpay_order_id: String,
+    val razorpay_payment_id: String,
+    val razorpay_signature: String
+) {
+    val razorpayOrderId: String get() = razorpay_order_id
+    val razorpayPaymentId: String get() = razorpay_payment_id
+    val razorpaySignature: String get() = razorpay_signature
+}
+
+data class RazorpayVerificationResult(
+    val success: Boolean = true,
+    val verified: Boolean = false,
+    val orderId: String = "",
+    val paymentId: String = "",
+    val amount: Long = 0L,
+    val currency: String = "INR",
+    val duplicate: Boolean = false,
+    val message: String = "",
+    val errorCode: String? = null
+)
 
 object WaiterTablePairingRules {
     /**

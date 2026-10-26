@@ -363,6 +363,8 @@ const db = {
   otps: new Map(), // target -> { code, expiresAt, attempts }
   sessions: new Map(), // token -> userId
   idempotencyKeys: new Map(), // key -> orderId
+  razorpayOrders: new Map(), // orderId -> { id, amount, currency, restaurantId, orderType, tabId, deliveryOrderId, status, createdAt }
+  razorpayPayments: new Map(), // paymentId -> { orderId, paymentId, amount, currency, restaurantId, orderType, verifiedAt }
   
   restaurants: [
     {
@@ -377,7 +379,8 @@ const db = {
       deliveryMinutes: 25,
       deliveryFee: 3500,
       open: true,
-      maxDeliveryRadiusKm: 7.5
+      maxDeliveryRadiusKm: 7.5,
+      acceptsDiningPayment: true
     },
     {
       id: "rest-2",
@@ -391,7 +394,8 @@ const db = {
       deliveryMinutes: 30,
       deliveryFee: 4500,
       open: true,
-      maxDeliveryRadiusKm: 7.0
+      maxDeliveryRadiusKm: 7.0,
+      acceptsDiningPayment: true
     },
     {
       id: "rest-3",
@@ -405,7 +409,8 @@ const db = {
       deliveryMinutes: 20,
       deliveryFee: 2500,
       open: true,
-      maxDeliveryRadiusKm: 8.0
+      maxDeliveryRadiusKm: 8.0,
+      acceptsDiningPayment: false
     },
     {
       id: "rest-4",
@@ -419,7 +424,8 @@ const db = {
       deliveryMinutes: 35,
       deliveryFee: 4000,
       open: true,
-      maxDeliveryRadiusKm: 7.5
+      maxDeliveryRadiusKm: 7.5,
+      acceptsDiningPayment: true
     },
     {
       id: "rest-5",
@@ -433,7 +439,8 @@ const db = {
       deliveryMinutes: 20,
       deliveryFee: 3000,
       open: true,
-      maxDeliveryRadiusKm: 6.5
+      maxDeliveryRadiusKm: 6.5,
+      acceptsDiningPayment: false
     }
   ],
 
@@ -1557,6 +1564,16 @@ function handleDineInPayment(req, res) {
     return res.status(404).json({ error: "TAB_NOT_FOUND", message: `Dining tab '${targetId}' not found.` });
   }
 
+  // Enforce acceptsDiningPayment restriction
+  const targetRestaurantId = (tab && tab.restaurantId) || (req.body && req.body.restaurantId);
+  const targetRestaurant = targetRestaurantId ? db.restaurants.find(r => r.id === targetRestaurantId) : null;
+  if (targetRestaurant && targetRestaurant.acceptsDiningPayment === false) {
+    return res.status(422).json({
+      error: "DINING_PAYMENT_DISABLED",
+      message: "Online dining payment is unavailable for this restaurant. Please request a counter bill."
+    });
+  }
+
   // 4. Duplicate Settlement Defense
   if (tab.status === "SETTLED" || tab.status === "PAID" || tab.status === "CLOSED") {
     console.warn(`[Security Alert] Duplicate settlement attempt on already settled tab ${tab.id}.`);
@@ -1730,79 +1747,276 @@ app.get("/api/dine-in/tabs", (req, res) => res.json(db.diningTabs));
 // Razorpay Payment Gateway Routes
 // ------------------------------------------
 const processedRazorpayPayments = new Set();
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "rzp_test_TVWv9D7UlaUgFJ";
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "rzp_test_secret_RestroUp2026";
+
+function getRazorpaySecret() {
+  if (process.env.RAZORPAY_KEY_SECRET !== undefined) {
+    return process.env.RAZORPAY_KEY_SECRET;
+  }
+  return "rzp_test_secret_RestroUp2026";
+}
+
+function getRazorpayKeyId() {
+  if (process.env.RAZORPAY_KEY_ID !== undefined) {
+    return process.env.RAZORPAY_KEY_ID;
+  }
+  return "rzp_test_TVWv9D7UlaUgFJ";
+}
 
 // Create Razorpay Order
-router.post("/payments/razorpay/create-order", (req, res) => {
-  const { amount, currency = "INR", receipt, notes = {} } = req.body || {};
-  if (!amount || amount <= 0) {
-    return res.status(400).json({ error: "INVALID_AMOUNT", message: "A valid positive amount in paise or rupees is required." });
-  }
-
-  const orderId = "order_" + crypto.randomBytes(8).toString("hex");
-  const razorpayOrder = {
-    id: orderId,
-    entity: "order",
-    amount: Math.round(Number(amount)),
-    amount_paid: 0,
-    amount_due: Math.round(Number(amount)),
-    currency,
-    receipt: receipt || ("rcpt_" + Date.now()),
-    status: "created",
-    attempts: 0,
-    notes,
-    created_at: Math.floor(Date.now() / 1000)
-  };
-
-  res.json({ success: true, order: razorpayOrder, key_id: RAZORPAY_KEY_ID });
-});
-
-// Verify Razorpay Payment Signature
-router.post("/payments/razorpay/verify", (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
-  if (!razorpay_payment_id) {
-    return res.status(400).json({ error: "MISSING_PAYMENT_ID", message: "Razorpay payment ID is required." });
-  }
-
-  // Prevent duplicate callbacks & replay attacks
-  if (processedRazorpayPayments.has(razorpay_payment_id)) {
-    return res.json({
-      success: true,
-      verified: true,
-      duplicate: true,
-      message: "Payment already verified and processed.",
-      payment_id: razorpay_payment_id,
-      order_id: razorpay_order_id
+function handleRazorpayCreateOrder(req, res) {
+  const secret = getRazorpaySecret();
+  if (!secret) {
+    return res.status(503).json({
+      error: "RAZORPAY_CONFIG_MISSING",
+      message: "Razorpay payment gateway secret is not configured on the server."
     });
   }
 
-  if (razorpay_signature && razorpay_order_id) {
-    const bodyToSign = razorpay_order_id + "|" + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac("sha256", RAZORPAY_KEY_SECRET)
-      .update(bodyToSign)
-      .digest("hex");
+  const {
+    amount,
+    currency = "INR",
+    receipt,
+    notes = {},
+    restaurantId,
+    orderType,
+    tabId,
+    tableNumber,
+    deliveryOrderId
+  } = req.body || {};
 
-    if (expectedSignature !== razorpay_signature) {
-      return res.status(400).json({
-        error: "SIGNATURE_VERIFICATION_FAILED",
+  if (amount === undefined || amount === null || typeof amount !== "number" || amount <= 0 || isNaN(amount) || !isFinite(amount)) {
+    return res.status(400).json({
+      error: "INVALID_AMOUNT",
+      message: "A valid positive amount in paise or rupees is required."
+    });
+  }
+
+  const cleanCurrency = String(currency || "INR").trim().toUpperCase();
+  const isDineIn = (orderType && String(orderType).trim().toUpperCase() === "DINE_IN") || !!tabId || !!tableNumber;
+
+  // Enforce restaurant.acceptsDiningPayment for Dine-In
+  let targetRestaurant = null;
+  let tab = null;
+
+  if (tabId || tableNumber) {
+    const searchTarget = (tabId || tableNumber || "").trim().toLowerCase();
+    tab = db.diningTabs.find(t => t.id.toLowerCase() === searchTarget || t.tableNumber.toLowerCase() === searchTarget);
+  }
+
+  const targetRestId = restaurantId || (tab && tab.restaurantId) || null;
+  if (targetRestId) {
+    targetRestaurant = db.restaurants.find(r => r.id === targetRestId);
+  }
+
+  if (isDineIn && targetRestaurant && targetRestaurant.acceptsDiningPayment === false) {
+    return res.status(422).json({
+      error: "DINING_PAYMENT_DISABLED",
+      message: "Online dining payment is unavailable for this restaurant. Please request a counter bill."
+    });
+  }
+
+  const orderId = "order_" + crypto.randomBytes(8).toString("hex");
+  const numAmount = Math.round(Number(amount));
+
+  const razorpayOrder = {
+    id: orderId,
+    entity: "order",
+    amount: numAmount,
+    amount_paid: 0,
+    amount_due: numAmount,
+    currency: cleanCurrency,
+    receipt: receipt || ("rcpt_" + Date.now()),
+    status: "created",
+    attempts: 0,
+    notes: typeof notes === "object" && notes !== null ? notes : {},
+    created_at: Math.floor(Date.now() / 1000)
+  };
+
+  db.razorpayOrders.set(orderId, {
+    id: orderId,
+    amount: numAmount,
+    currency: cleanCurrency,
+    restaurantId: targetRestId || (targetRestaurant ? targetRestaurant.id : null),
+    orderType: isDineIn ? "DINE_IN" : "DELIVERY",
+    tabId: tab ? tab.id : (tabId || null),
+    tableNumber: tab ? tab.tableNumber : (tableNumber || null),
+    deliveryOrderId: deliveryOrderId || null,
+    status: "created",
+    createdAt: Date.now()
+  });
+
+  return res.json({
+    success: true,
+    order: razorpayOrder,
+    key_id: getRazorpayKeyId()
+  });
+}
+
+// Verify Razorpay Payment Signature
+function handleRazorpayVerifyPayment(req, res) {
+  const secret = getRazorpaySecret();
+  if (!secret) {
+    return res.status(503).json({
+      error: "RAZORPAY_CONFIG_MISSING",
+      verified: false,
+      message: "Razorpay payment gateway secret is not configured on the server."
+    });
+  }
+
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+
+  if (!razorpay_order_id || typeof razorpay_order_id !== "string" || !razorpay_order_id.trim()) {
+    return res.status(400).json({
+      error: "MISSING_ORDER_ID",
+      verified: false,
+      message: "Razorpay order ID is required."
+    });
+  }
+
+  if (!razorpay_payment_id || typeof razorpay_payment_id !== "string" || !razorpay_payment_id.trim()) {
+    return res.status(400).json({
+      error: "MISSING_PAYMENT_ID",
+      verified: false,
+      message: "Razorpay payment ID is required."
+    });
+  }
+
+  if (!razorpay_signature || typeof razorpay_signature !== "string" || !razorpay_signature.trim()) {
+    return res.status(400).json({
+      error: "MISSING_SIGNATURE",
+      verified: false,
+      message: "Razorpay payment signature is required."
+    });
+  }
+
+  const cleanOrderId = razorpay_order_id.trim();
+  const cleanPaymentId = razorpay_payment_id.trim();
+  const cleanSignature = razorpay_signature.trim();
+
+  // Authoritative server-side order lookup
+  const trustedOrder = db.razorpayOrders.get(cleanOrderId);
+  if (!trustedOrder) {
+    return res.status(404).json({
+      error: "ORDER_NOT_FOUND",
+      verified: false,
+      message: `Razorpay order '${cleanOrderId}' not found in server records.`
+    });
+  }
+
+  // Replay & ID Substitution Attack Prevention
+  const existingPayment = db.razorpayPayments.get(cleanPaymentId);
+  if (existingPayment) {
+    if (existingPayment.orderId !== cleanOrderId) {
+      console.warn(`[Security Alert] Payment ID '${cleanPaymentId}' replayed for different order '${cleanOrderId}' (originally '${existingPayment.orderId}')`);
+      return res.status(409).json({
+        error: "PAYMENT_ORDER_MISMATCH",
         verified: false,
-        message: "Payment signature mismatch. Untrusted payment response."
+        message: "Payment ID was previously associated with a different order."
+      });
+    }
+
+    // Duplicate confirmation on the same order: idempotent success
+    return res.status(200).json({
+      success: true,
+      verified: true,
+      duplicate: true,
+      status: "authorized",
+      order_id: cleanOrderId,
+      payment_id: cleanPaymentId,
+      amount: trustedOrder.amount,
+      currency: trustedOrder.currency,
+      restaurantId: trustedOrder.restaurantId,
+      orderType: trustedOrder.orderType,
+      message: "Payment already verified and processed."
+    });
+  }
+
+  // Enforce acceptsDiningPayment on verification
+  if (trustedOrder.orderType === "DINE_IN" && trustedOrder.restaurantId) {
+    const restaurant = db.restaurants.find(r => r.id === trustedOrder.restaurantId);
+    if (restaurant && restaurant.acceptsDiningPayment === false) {
+      return res.status(422).json({
+        error: "DINING_PAYMENT_DISABLED",
+        verified: false,
+        message: "Online dining payment is unavailable for this restaurant. Please request a counter bill."
       });
     }
   }
 
-  processedRazorpayPayments.add(razorpay_payment_id);
-  res.json({
+  // Timing-safe HMAC-SHA256 signature verification
+  const bodyToSign = cleanOrderId + "|" + cleanPaymentId;
+  const expectedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(bodyToSign)
+    .digest("hex");
+
+  const expectedBuf = Buffer.from(expectedSignature, "utf8");
+  const receivedBuf = Buffer.from(cleanSignature, "utf8");
+
+  let signaturesMatch = false;
+  if (expectedBuf.length === receivedBuf.length) {
+    signaturesMatch = crypto.timingSafeEqual(expectedBuf, receivedBuf);
+  }
+
+  if (!signaturesMatch) {
+    console.warn(`[Security Alert] Razorpay signature verification failed for order '${cleanOrderId}' and payment '${cleanPaymentId}'`);
+    return res.status(400).json({
+      error: "SIGNATURE_VERIFICATION_FAILED",
+      verified: false,
+      message: "Payment signature mismatch. Untrusted payment response."
+    });
+  }
+
+  // Mark trusted order as PAID
+  trustedOrder.status = "PAID";
+  trustedOrder.paymentId = cleanPaymentId;
+  trustedOrder.paidAt = new Date().toISOString();
+
+  // Record verified payment
+  db.razorpayPayments.set(cleanPaymentId, {
+    orderId: cleanOrderId,
+    paymentId: cleanPaymentId,
+    amount: trustedOrder.amount,
+    currency: trustedOrder.currency,
+    restaurantId: trustedOrder.restaurantId,
+    orderType: trustedOrder.orderType,
+    verifiedAt: new Date().toISOString()
+  });
+  processedRazorpayPayments.add(cleanPaymentId);
+
+  // If associated with a dining tab, settle it
+  if (trustedOrder.tabId || trustedOrder.tableNumber) {
+    const searchTarget = (trustedOrder.tabId || trustedOrder.tableNumber || "").toLowerCase();
+    const diningTab = db.diningTabs.find(t => t.id.toLowerCase() === searchTarget || t.tableNumber.toLowerCase() === searchTarget);
+    if (diningTab && diningTab.status !== "SETTLED" && diningTab.status !== "PAID" && diningTab.status !== "CLOSED") {
+      diningTab.status = "SETTLED";
+      diningTab.paymentMethod = "Razorpay (" + cleanPaymentId + ")";
+      diningTab.paymentTransactionId = cleanPaymentId;
+      diningTab.settledAt = new Date().toISOString();
+    }
+  }
+
+  return res.status(200).json({
     success: true,
     verified: true,
     status: "authorized",
-    payment_id: razorpay_payment_id,
-    order_id: razorpay_order_id,
+    order_id: cleanOrderId,
+    payment_id: cleanPaymentId,
+    amount: trustedOrder.amount,
+    currency: trustedOrder.currency,
+    restaurantId: trustedOrder.restaurantId,
+    orderType: trustedOrder.orderType,
     message: "Razorpay payment verified successfully via HMAC-SHA256 signature."
   });
-});
+}
+
+// Mount Razorpay routes on router and app
+router.post("/payments/razorpay/create-order", handleRazorpayCreateOrder);
+router.post("/payments/razorpay/verify", handleRazorpayVerifyPayment);
+app.post("/payments/razorpay/create-order", handleRazorpayCreateOrder);
+app.post("/payments/razorpay/verify", handleRazorpayVerifyPayment);
+app.post("/api/payments/razorpay/create-order", handleRazorpayCreateOrder);
+app.post("/api/payments/razorpay/verify", handleRazorpayVerifyPayment);
 
 // Razorpay Webhook Handler
 router.post("/payments/razorpay/webhook", (req, res) => {
@@ -2762,5 +2976,9 @@ app.DOCUMENT_MESSAGES = DOCUMENT_MESSAGES;
 app.resolveLocale = resolveLocale;
 app.getLocalizedDocumentMessage = getLocalizedDocumentMessage;
 app.maskDocumentNumber = maskDocumentNumber;
+app.db = db;
+app.getRazorpaySecret = getRazorpaySecret;
+app.getRazorpayKeyId = getRazorpayKeyId;
+app.processedRazorpayPayments = processedRazorpayPayments;
 
 module.exports = app;
