@@ -242,7 +242,13 @@ object RestroGeminiService {
 
         val namesStr = selected.joinToString(", ") { "• " + it.localizedName(targetLanguage) + " (₹" + (it.price / 100) + ")" }
 
-        val notice = if (errorContext?.contains("402") == true || errorContext?.contains("prepayment", ignoreCase = true) == true) {
+        val notice = if (errorContext?.contains("429") == true || errorContext?.contains("RESOURCE_EXHAUSTED", ignoreCase = true) == true || errorContext?.contains("quota", ignoreCase = true) == true) {
+            when (targetLanguage) {
+                "hi" -> "✨ [जेमिनी 3.8 फ़्लैश कनेक्टेड · गूगल क्लाउड प्रोजेक्ट कोटा सीमा 0/समाप्त (429) · स्थानीय रेस्टो शेफ़ सक्रिय]\n\n"
+                "mr" -> "✨ [जेमिनी 3.8 फ्लॅश कनेक्टेड · गुगल क्लाउड प्रोजेक्ट कोटा मर्यादा 0/पूर्ण (429) · स्थानिक शेफ इंजिन सक्रिय]\n\n"
+                else -> "✨ [Gemini 3.8 Flash Connected · Google Cloud Quota Limit 0 / Exhausted (HTTP 429); using Restro Local Neural Chef]\n\n"
+            }
+        } else if (errorContext?.contains("402") == true || errorContext?.contains("prepayment", ignoreCase = true) == true) {
             when (targetLanguage) {
                 "hi" -> "✨ [जेमिनी 3.8 फ़्लैश कॉन्फ़िगर है · गूगल एआई स्टूडियो क्रेडिट समाप्त होने पर स्थानीय शेफ इंजन सक्रिय]\n\n"
                 "mr" -> "✨ [जेमिनी 3.8 फ्लॅश कॉन्फिगर केले आहे · गुगल एआय स्टुडिओ क्रेडिट संपल्याने स्थानिक शेफ इंजिन सक्रिय]\n\n"

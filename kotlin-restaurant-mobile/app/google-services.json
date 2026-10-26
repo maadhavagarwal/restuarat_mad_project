@@ -12,7 +12,12 @@
           "package_name": "com.restaurant.mobile"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBWvRxpife0G_uFRl2B4-www8yCakX3SRE"
@@ -20,7 +25,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

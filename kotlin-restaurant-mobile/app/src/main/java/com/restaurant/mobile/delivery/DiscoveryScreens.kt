@@ -68,7 +68,25 @@ fun AuthScreen(vm: DeliveryViewModel) {
             val gEmail = account?.email ?: ""
             val gName = account?.displayName ?: ""
             val gId = account?.id ?: ""
-            if (gEmail.isNotBlank()) {
+            val idToken = account?.idToken
+
+            if (!idToken.isNullOrBlank()) {
+                val credential = com.google.firebase.auth.GoogleAuthProvider.getCredential(idToken, null)
+                com.google.firebase.auth.FirebaseAuth.getInstance().signInWithCredential(credential)
+                    .addOnSuccessListener { authResult ->
+                        val fbUser = authResult.user
+                        val finalEmail = fbUser?.email?.ifBlank { gEmail } ?: gEmail
+                        val finalName = fbUser?.displayName?.ifBlank { gName } ?: gName
+                        val fbUid = fbUser?.uid ?: gId
+                        vm.authWithGoogle(finalEmail, finalName, fbUid)
+                        showToast("Signed in with Google: " + finalEmail)
+                    }
+                    .addOnFailureListener { fbErr ->
+                        android.util.Log.w("DiscoveryScreens", "Firebase signInWithCredential fallback: ${fbErr.message}")
+                        vm.authWithGoogle(gEmail, gName, gId)
+                        showToast("Signed in as " + gEmail)
+                    }
+            } else if (gEmail.isNotBlank()) {
                 vm.authWithGoogle(gEmail, gName, gId)
                 showToast("Signed in as " + gEmail)
             } else {
@@ -95,16 +113,15 @@ fun AuthScreen(vm: DeliveryViewModel) {
         try {
             val webClientId = try {
                 val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-                if (resId != 0) context.getString(resId) else ""
-            } catch (_: Exception) { "" }
+                if (resId != 0) context.getString(resId) else "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com"
+            } catch (_: Exception) { "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com" }
 
             val gsoBuilder = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
                 com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
             ).requestEmail().requestProfile()
 
-            if (webClientId.isNotBlank()) {
-                gsoBuilder.requestIdToken(webClientId)
-            }
+            val effectiveWebClientId = webClientId.ifBlank { "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com" }
+            gsoBuilder.requestIdToken(effectiveWebClientId)
 
             val gso = gsoBuilder.build()
             val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, gso)
