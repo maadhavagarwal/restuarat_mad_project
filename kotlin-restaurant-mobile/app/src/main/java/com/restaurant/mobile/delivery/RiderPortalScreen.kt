@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,7 +65,28 @@ fun RiderPortalScreenView(
     var liveRemainingKm by remember { mutableDoubleStateOf(0.0) }
     var liveDynamicEtaMins by remember { mutableIntStateOf(0) }
     var isWithin500m by remember { mutableStateOf(false) }
+    var isOrderPickedUp by rememberSaveable { mutableStateOf(false) }
     val appContext = LocalContext.current
+
+    val openGoogleMapsDirections: (Double, Double, String) -> Unit = { latitude, longitude, destinationName ->
+        try {
+            val navUri = android.net.Uri.parse("google.navigation:q=$latitude,$longitude&mode=d")
+            val mapIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, navUri).apply {
+                setPackage("com.google.android.apps.maps")
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            appContext.startActivity(mapIntent)
+        } catch (_: Exception) {
+            val encoded = java.net.URLEncoder.encode(destinationName.ifBlank { "$latitude,$longitude" }, "UTF-8")
+            val webUri = android.net.Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$latitude,$longitude&destination_place_id=$encoded")
+            val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, webUri).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                appContext.startActivity(fallbackIntent)
+            } catch (_: Exception) {}
+        }
+    }
 
     LaunchedEffect(activeRideOffer?.id) {
         val currentOffer = activeRideOffer ?: return@LaunchedEffect
@@ -527,7 +549,7 @@ fun RiderPortalScreenView(
                                 strokeWidth = 2.dp
                             )
                             Spacer(Modifier.width(8.dp))
-                            Text("Processing RazorpayX Payout...", fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(RestroI18n.t("rzp_processing"), fontWeight = FontWeight.Bold, color = Color.White)
                         } else {
                             Icon(Icons.Default.AccountBalanceWallet, null, tint = Color.White, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
@@ -655,12 +677,18 @@ fun RiderPortalScreenView(
 
         // 3.5 Active Live Delivery GPS Broadcast Banner (when a ride is accepted/in-progress)
         activeRideOffer?.let { active ->
+            val restObj = deliveryVm?.catalog?.restaurants?.find { it.id == active.restaurantId }
+            val restLat = restObj?.latitude ?: 19.1136
+            val restLng = restObj?.longitude ?: 72.8697
+            val dropLat = 19.0596
+            val dropLng = 72.8295
+
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF064E3B)),
-                    border = BorderStroke(1.5.dp, Color(0xFF10B981))
+                    colors = CardDefaults.cardColors(containerColor = if (!isOrderPickedUp) Color(0xFF0F2B48) else Color(0xFF064E3B)),
+                    border = BorderStroke(1.5.dp, if (!isOrderPickedUp) Color(0xFF38BDF8) else Color(0xFF10B981))
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
@@ -675,74 +703,196 @@ fun RiderPortalScreenView(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Default.GpsFixed, null, tint = Color(0xFF34D399), modifier = Modifier.size(20.dp))
+                                Icon(
+                                    imageVector = if (!isOrderPickedUp) Icons.Default.DirectionsBike else Icons.Default.GpsFixed,
+                                    contentDescription = null,
+                                    tint = if (!isOrderPickedUp) Color(0xFF38BDF8) else Color(0xFF34D399),
+                                    modifier = Modifier.size(20.dp)
+                                )
                                 Text(
-                                    text = "LIVE GPS BROADCAST • ORDER #${active.orderId}",
-                                    color = Color(0xFF34D399),
+                                    text = if (!isOrderPickedUp) RestroI18n.t("rider_stage1_title").uppercase() else RestroI18n.t("rider_stage2_title").uppercase(),
+                                    color = if (!isOrderPickedUp) Color(0xFF38BDF8) else Color(0xFF34D399),
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 12.sp
                                 )
                             }
-                            if (isWithin500m) {
-                                Surface(
-                                    color = Color(0xFFFEF3C7),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text(
-                                        text = "WITHIN 500M PERIMETER",
-                                        color = Color(0xFFB45309),
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
-                                }
+                            Surface(
+                                color = if (!isOrderPickedUp) Color(0xFF1E3A8A) else Color(0xFF065F46),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "ORDER #${active.orderId}",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
                             }
                         }
 
                         Text(
-                            text = "${active.restaurantName} → ${active.dropAddress}",
+                            text = if (!isOrderPickedUp) "${active.restaurantName} (${active.pickupAddress})" else active.dropAddress,
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
 
                         Text(
-                            text = "Coordinates: $liveGpsLat, $liveGpsLng • Remaining: ${if (liveRemainingKm < 1.0) "${(liveRemainingKm * 1000).toInt()} m" else "$liveRemainingKm km"} • Dynamic ETA: $liveDynamicEtaMins mins",
-                            color = Color(0xFFD1FAE5),
+                            text = "GPS: $liveGpsLat, $liveGpsLng • Est: ${if (liveRemainingKm < 1.0) "${(liveRemainingKm * 1000).toInt()} m" else "$liveRemainingKm km"} • ETA: $liveDynamicEtaMins mins",
+                            color = if (!isOrderPickedUp) Color(0xFFBAE6FD) else Color(0xFFD1FAE5),
                             fontSize = 12.sp
                         )
 
-                        Button(
-                            onClick = {
-                                coroutineScope.launch(Dispatchers.IO) {
-                                    database.markRideOfferCompleted(riderId, active)
-                                    deliveryVm?.notifyOrderDelivered(active.orderId)
-                                    deliveryVm?.riderDispatchEngine?.releaseRider(riderId)
-                                    withContext(Dispatchers.Main) {
-                                        activeRideOffer = null
-                                        refreshRiderData()
-                                        onShowToast("Delivery #${active.orderId} completed! +₹${active.riderIncomeRupees} credited.")
-                                    }
+                        // Embedded Interactive Google Maps View for Rider
+                        EmbeddedRiderGoogleMapView(
+                            riderLat = liveGpsLat,
+                            riderLng = liveGpsLng,
+                            destinationLat = if (!isOrderPickedUp) restLat else dropLat,
+                            destinationLng = if (!isOrderPickedUp) restLng else dropLng,
+                            restaurantName = active.restaurantName,
+                            destinationAddress = active.dropAddress,
+                            isDeliveringToCustomer = isOrderPickedUp,
+                            etaMinutes = liveDynamicEtaMins,
+                            distanceKm = liveRemainingKm,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+
+                        if (!isOrderPickedUp) {
+                            // STAGE 1: Navigate to Restaurant & Mark Picked Up
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        openGoogleMapsDirections(restLat, restLng, active.restaurantName)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
+                                    border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Navigation, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(RestroI18n.t("rider_open_maps"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.TaskAlt, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "Complete Delivery & Collect ₹${active.riderIncomeRupees}",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
+
+                                Button(
+                                    onClick = {
+                                        isOrderPickedUp = true
+                                        onShowToast("Order #${active.orderId} picked up! Opening Google Maps to customer...")
+                                        openGoogleMapsDirections(dropLat, dropLng, active.dropAddress)
+                                    },
+                                    modifier = Modifier.weight(1.3f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.ShoppingBag, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(RestroI18n.t("rider_mark_picked_up"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        } else {
+                            // STAGE 2: Navigate to Customer & Complete Delivery
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        openGoogleMapsDirections(dropLat, dropLng, active.dropAddress)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF34D399)),
+                                    border = BorderStroke(1.dp, Color(0xFF34D399)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.Navigation, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(RestroI18n.t("rider_open_maps"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            database.markRideOfferCompleted(riderId, active)
+                                            val rideRecord = RiderRideRecord(
+                                                id = "ride-${active.id}",
+                                                riderId = riderId,
+                                                orderId = active.orderId,
+                                                restaurantName = active.restaurantName,
+                                                dropAddress = active.dropAddress,
+                                                distanceKm = active.distanceKm,
+                                                durationMinutes = active.estimatedMinutes,
+                                                incomeRupees = active.riderIncomeRupees,
+                                                completedAtMs = System.currentTimeMillis()
+                                            )
+                                            cloudEngine?.saveRiderRideToCloud(rideRecord)
+                                            deliveryVm?.notifyOrderDelivered(active.orderId)
+                                            deliveryVm?.riderDispatchEngine?.releaseRider(riderId)
+                                            withContext(Dispatchers.Main) {
+                                                activeRideOffer = null
+                                                isOrderPickedUp = false
+                                                refreshRiderData()
+                                                onShowToast("Delivery #${active.orderId} completed! +₹${active.riderIncomeRupees} credited.")
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1.4f),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(Icons.Default.TaskAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(RestroI18n.t("rider_complete_order"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
+        if (activeRideOffer != null) {
+            // Rider is actively on a delivery: Block accepting any new rides
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
+                    border = BorderStroke(1.5.dp, Color(0xFFF59E0B))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            color = Color(0xFFF59E0B),
+                            shape = CircleShape,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        Column {
+                            Text(
+                                text = "Active Delivery in Progress (Order #${activeRideOffer?.orderId})",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color(0xFF92400E)
+                            )
+                            Text(
+                                text = "You cannot accept another ride while this order is active. Complete delivery to unlock new ride offers.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFB45309)
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
         // 4. Choose Ride Offers Feed (Shows Ride km, Estimated Time, Income; Reject hides offer permanently)
         item {
             Row(
@@ -922,27 +1072,16 @@ fun RiderPortalScreenView(
                             Button(
                                 onClick = {
                                     activeRideOffer = offer
+                                    isOrderPickedUp = false
                                     liveRemainingKm = offer.distanceKm
                                     liveDynamicEtaMins = offer.estimatedMinutes
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        database.markRideOfferCompleted(riderId, offer)
-                                        val rideRecord = RiderRideRecord(
-                                            id = "ride-${offer.id}",
-                                            riderId = riderId,
-                                            orderId = offer.orderId,
-                                            restaurantName = offer.restaurantName,
-                                            dropAddress = offer.dropAddress,
-                                            distanceKm = offer.distanceKm,
-                                            durationMinutes = offer.estimatedMinutes,
-                                            incomeRupees = offer.riderIncomeRupees,
-                                            completedAtMs = System.currentTimeMillis()
-                                        )
-                                        cloudEngine?.saveRiderRideToCloud(rideRecord)
-                                        withContext(Dispatchers.Main) {
-                                            refreshRiderData()
-                                            onShowToast("Ride accepted! Live GPS broadcast active for Order #${offer.orderId}. +₹${offer.riderIncomeRupees} added to wallet.")
-                                        }
-                                    }
+
+                                    val restObj = deliveryVm?.catalog?.restaurants?.find { it.id == offer.restaurantId }
+                                    val restLat = restObj?.latitude ?: 19.1136
+                                    val restLng = restObj?.longitude ?: 72.8697
+
+                                    openGoogleMapsDirections(restLat, restLng, offer.restaurantName)
+                                    onShowToast("Ride accepted! Opening Google Maps directions to ${offer.restaurantName}...")
                                 },
                                 modifier = Modifier.weight(1.4f),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
@@ -962,6 +1101,7 @@ fun RiderPortalScreenView(
                 }
             }
         }
+        } // End of activeRideOffer == null else block
     }
 
     selectedPayoutReceipt?.let { receipt ->
@@ -973,7 +1113,7 @@ fun RiderPortalScreenView(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = Color(0xFF0F172A))
                     Spacer(Modifier.width(8.dp))
-                    Text("RazorpayX Receipt", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(RestroI18n.t("rzp_receipt"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
             },
             text = {
@@ -994,7 +1134,7 @@ fun RiderPortalScreenView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Amount", fontSize = 13.sp, color = Color(0xFF64748B))
+                        Text(RestroI18n.t("label_amount"), fontSize = 13.sp, color = Color(0xFF64748B))
                         Text("₹${receipt.amountRupees}", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF059669))
                     }
 
@@ -1003,7 +1143,7 @@ fun RiderPortalScreenView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Status", fontSize = 13.sp, color = Color(0xFF64748B))
+                        Text(RestroI18n.t("label_status"), fontSize = 13.sp, color = Color(0xFF64748B))
                         Text(receipt.status, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
 
@@ -1012,7 +1152,7 @@ fun RiderPortalScreenView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Method", fontSize = 13.sp, color = Color(0xFF64748B))
+                        Text(RestroI18n.t("label_method"), fontSize = 13.sp, color = Color(0xFF64748B))
                         Text(receipt.payoutMethod, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
 
@@ -1021,7 +1161,7 @@ fun RiderPortalScreenView(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Destination", fontSize = 13.sp, color = Color(0xFF64748B))
+                        Text(RestroI18n.t("label_destination"), fontSize = 13.sp, color = Color(0xFF64748B))
                         Text(receipt.destinationMasked, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
 
@@ -1031,7 +1171,7 @@ fun RiderPortalScreenView(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Reference ID", fontSize = 12.sp, color = Color(0xFF64748B))
+                            Text(RestroI18n.t("label_reference_id"), fontSize = 12.sp, color = Color(0xFF64748B))
                             Text(receipt.referenceId, fontSize = 12.sp, color = Color(0xFF334155))
                         }
                     }
@@ -1042,7 +1182,7 @@ fun RiderPortalScreenView(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Bank UTR", fontSize = 12.sp, color = Color(0xFF64748B))
+                            Text(RestroI18n.t("label_bank_utr"), fontSize = 12.sp, color = Color(0xFF64748B))
                             Text(receipt.utr, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E40AF))
                         }
                     }
@@ -1067,7 +1207,7 @@ fun RiderPortalScreenView(
                 ) {
                     Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Share")
+                    Text(RestroI18n.t("action_share"))
                 }
             },
             dismissButton = {
@@ -1080,11 +1220,11 @@ fun RiderPortalScreenView(
                     ) {
                         Icon(Icons.Default.ContentCopy, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Copy")
+                        Text(RestroI18n.t("action_copy"))
                     }
                     Spacer(Modifier.width(6.dp))
                     TextButton(onClick = { selectedPayoutReceipt = null }) {
-                        Text("Close")
+                        Text(RestroI18n.t("action_close"))
                     }
                 }
             }

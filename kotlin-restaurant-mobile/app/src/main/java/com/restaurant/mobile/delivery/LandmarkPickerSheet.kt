@@ -142,9 +142,9 @@ fun LandmarkPickerSheet(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
-                        Text("Select Delivery Landmark", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text(RestroI18n.t("select_landmark_title"), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     }
-                    Text("Nearest restaurants recalculate live by distance", fontSize = 12.sp, color = RestroTokens.muted)
+                    Text(RestroI18n.t("select_landmark_sub"), fontSize = 12.sp, color = RestroTokens.muted)
                 }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, "Dismiss")
@@ -186,13 +186,13 @@ fun LandmarkPickerSheet(
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Use My Current Hardware GPS Location",
+                            RestroI18n.t("use_hardware_gps"),
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = RestroTokens.coral
                         )
                         Text(
-                            "Detect live coordinates via Android LocationManager",
+                            RestroI18n.t("detect_gps_sub"),
                             fontSize = 12.sp,
                             color = RestroTokens.muted
                         )
@@ -243,7 +243,7 @@ fun LandmarkPickerSheet(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text(preset.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(preset.name.localizedAddress(), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     if (preset.isDemoOutOfRange) {
                                         Surface(
                                             color = Color(0xFFEF4444).copy(alpha = 0.2f),
@@ -259,7 +259,7 @@ fun LandmarkPickerSheet(
                                         }
                                     }
                                 }
-                                Text(preset.description, fontSize = 12.sp, color = RestroTokens.muted)
+                                Text(preset.description.localizedAddress(), fontSize = 12.sp, color = RestroTokens.muted)
                             }
                             if (isSelected) {
                                 Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.coral)

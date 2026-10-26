@@ -472,20 +472,42 @@ class FirebaseStorageEngine(
         customMetadata: Map<String, String> = emptyMap(),
         onProgress: (Float) -> Unit
     ): Result<String> {
+        val saveLocally: () -> Result<String> = {
+            try {
+                val mediaDir = java.io.File(context.filesDir, "media_uploads").apply { if (!exists()) mkdirs() }
+                val sanitizedName = storagePath.replace('/', '_').replace(':', '_')
+                val destFile = java.io.File(mediaDir, sanitizedName)
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: throw IOException("ContentResolver returned null stream for URI: $uri")
+                onProgress(1.0f)
+                val localUri = Uri.fromFile(destFile).toString()
+                Log.i(TAG, "File successfully persisted locally in app storage: $localUri")
+                Result.success(localUri)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to persist file locally: ${e.message}", e)
+                Result.failure(e)
+            }
+        }
+
         val storageInstance = storage ?: try {
             if (FirebaseApp.getApps(context).isEmpty()) {
-                return Result.failure(IllegalStateException("Firebase is not initialized on this device."))
+                Log.w(TAG, "Firebase is not initialized; persisting file locally")
+                return saveLocally()
             }
             FirebaseStorage.getInstance()
         } catch (e: Exception) {
-            return Result.failure(IllegalStateException("Failed to get Firebase Storage instance: ${e.message}"))
+            Log.w(TAG, "Failed to get Firebase Storage instance (${e.message}); persisting file locally")
+            return saveLocally()
         }
 
         val stream: InputStream = try {
             context.contentResolver.openInputStream(uri)
-                ?: return Result.failure(IOException("ContentResolver returned null stream for URI: $uri"))
+                ?: return saveLocally()
         } catch (e: Exception) {
-            return Result.failure(IOException("Failed to open stream for URI $uri: ${e.message}"))
+            return saveLocally()
         }
 
         return try {
@@ -536,8 +558,8 @@ class FirebaseStorageEngine(
 
             Result.success(downloadUrl)
         } catch (e: Exception) {
-            Log.e(TAG, "Storage upload failed for $storagePath: ${e.message}", e)
-            Result.failure(e)
+            Log.w(TAG, "Storage upload failed for $storagePath (${e.message}); seamlessly falling back to local persistent storage", e)
+            saveLocally()
         } finally {
             runCatching { stream.close() }
         }

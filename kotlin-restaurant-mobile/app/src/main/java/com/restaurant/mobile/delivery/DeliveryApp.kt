@@ -149,7 +149,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                         shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                                     ) {
                                         Text(
-                                            "LIVE GPS",
+                                            RestroI18n.t("live_gps"),
                                             color = RestroTokens.coral,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
@@ -168,7 +168,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                                         modifier = Modifier.size(13.dp)
                                     )
                                     Text(
-                                        text = vm.currentLandmark,
+                                        text = vm.currentLandmark.localizedAddress(),
                                         color = RestroTokens.text,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,

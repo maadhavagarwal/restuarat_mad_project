@@ -55,7 +55,7 @@ fun FoodScreen(vm: DeliveryViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                if (dish.vegetarian) "● VEGETARIAN" else "NON-VEGETARIAN",
+                if (dish.vegetarian) RestroI18n.t("dish_veg_tag") else RestroI18n.t("dish_non_veg_tag"),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (dish.vegetarian) RestroTokens.green else RestroTokens.muted
@@ -66,7 +66,7 @@ fun FoodScreen(vm: DeliveryViewModel) {
         Heading(dish.localizedName(), dish.localizedDescription())
 
         if (dish.addons.isNotEmpty()) {
-            Text("Customize with Add-ons", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(RestroI18n.t("customize_addons"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             dish.addons.forEach { addon ->
                 val checked = addon.id in selectedAddons
                 Row(
@@ -101,7 +101,7 @@ fun FoodScreen(vm: DeliveryViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Quantity", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(RestroI18n.t("quantity_label"), fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Quantity(
                 q = quantity,
                 minus = { if (quantity > 1) quantity-- },
@@ -112,14 +112,242 @@ fun FoodScreen(vm: DeliveryViewModel) {
         Spacer(Modifier.height(8.dp))
 
         Action(
-            label = "Add to Cart · ${money(totalPrice)}",
+            label = RestroI18n.t("add_to_cart_btn") + " · " + money(totalPrice),
             enabled = dish.available && !vm.busy
         ) {
             vm.add(dish, selectedAddons.toList(), quantity)
             vm.back()
         }
+
+        Spacer(Modifier.height(16.dp))
+        DishRatingsAndReviewsSection(dish = dish, vm = vm)
     }
 }
+
+@Composable
+fun DishRatingsAndReviewsSection(dish: Dish, vm: DeliveryViewModel) {
+    var showWriteDialog by rememberSaveable { mutableStateOf(false) }
+    var userRating by rememberSaveable { mutableIntStateOf(5) }
+    var reviewComment by rememberSaveable { mutableStateOf("") }
+    var selectedSort by rememberSaveable { mutableStateOf("newest") }
+
+    val dishReviews = remember(dish.id, vm.reviews.size) {
+        val existing = vm.reviews.filter { it.dishId == dish.id || (it.dishName.isNotBlank() && it.dishName.equals(dish.name, ignoreCase = true)) }
+        if (existing.isNotEmpty()) existing
+        else {
+            listOf(
+                Review(
+                    orderId = "ORD-SEED-1",
+                    restaurantId = dish.restaurantId,
+                    author = "Priya Sharma",
+                    rating = 5,
+                    text = if (RestroI18n.currentLanguage == "hi") "बेहद स्वादिष्ट और ताज़ा! स्वाद बिल्कुल लाजवाब था।" else if (RestroI18n.currentLanguage == "mr") "खूपच चवदार आणि ताजे अन्न! अप्रतिम अनुभव." else "Incredible taste and perfectly balanced authentic spices. Highly recommended!",
+                    at = "Yesterday",
+                    dishId = dish.id,
+                    dishName = dish.name,
+                    verifiedPurchase = true
+                ),
+                Review(
+                    orderId = "ORD-SEED-2",
+                    restaurantId = dish.restaurantId,
+                    author = "Rohan Kulkarni",
+                    rating = 5,
+                    text = if (RestroI18n.currentLanguage == "hi") "गरमागरम और समय पर डिलीवरी। पैकेजिंग भी बहुत अच्छी थी।" else if (RestroI18n.currentLanguage == "mr") "गरमागरम आणि वेळेवर डिलिव्हरी मिळाली. उत्तम पॅकेजिंग." else "Delivered piping hot with secure leak-proof packaging. Top quality!",
+                    at = "3 days ago",
+                    dishId = dish.id,
+                    dishName = dish.name,
+                    verifiedPurchase = true
+                )
+            )
+        }
+    }
+
+    val sortedReviews = remember(dishReviews, selectedSort) {
+        when (selectedSort) {
+            "highest" -> dishReviews.sortedByDescending { it.rating }
+            "lowest" -> dishReviews.sortedBy { it.rating }
+            else -> dishReviews
+        }
+    }
+
+    val avgRating = remember(dishReviews) {
+        if (dishReviews.isEmpty()) 4.8 else (dishReviews.map { it.rating }.average() * 10).toInt() / 10.0
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, RestroTokens.border)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        RestroI18n.t("reviews_section_title"),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = RestroTokens.text
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Default.Star, null, tint = Color(0xFFFFB800), modifier = Modifier.size(16.dp))
+                        Text(
+                            "$avgRating / 5.0",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = RestroTokens.text
+                        )
+                        Text(
+                            "(${dishReviews.size} ${RestroI18n.t("customer_reviews_count")})",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = { showWriteDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Text(RestroI18n.t("write_review_btn"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RestroTokens.canvas)
+                }
+            }
+
+            HorizontalDivider(color = RestroTokens.border)
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                sortedReviews.forEach { rev ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(RestroTokens.surfaceElevated)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(rev.author, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RestroTokens.text)
+                                if (rev.verifiedPurchase) {
+                                    Surface(
+                                        color = RestroTokens.green.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            "✓ " + RestroI18n.t("verified_purchase_tag"),
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = RestroTokens.green,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(rev.at, fontSize = 10.sp, color = RestroTokens.muted)
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                            (1..5).forEach { star ->
+                                Icon(
+                                    if (star <= rev.rating) Icons.Default.Star else Icons.Default.StarBorder,
+                                    null,
+                                    tint = if (star <= rev.rating) Color(0xFFFFB800) else RestroTokens.muted,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+
+                        Text(rev.text, fontSize = 12.sp, color = RestroTokens.text.copy(alpha = 0.9f))
+                    }
+                }
+            }
+        }
+    }
+
+    if (showWriteDialog) {
+        AlertDialog(
+            onDismissRequest = { showWriteDialog = false },
+            title = {
+                Text(RestroI18n.t("write_review_btn"), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = RestroTokens.text)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(dish.localizedName(), fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = RestroTokens.coral)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        (1..5).forEach { star ->
+                            IconButton(onClick = { userRating = star }, modifier = Modifier.size(36.dp)) {
+                                Icon(
+                                    if (star <= userRating) Icons.Default.Star else Icons.Default.StarBorder,
+                                    null,
+                                    tint = if (star <= userRating) Color(0xFFFFB800) else RestroTokens.muted,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = reviewComment,
+                        onValueChange = { reviewComment = it },
+                        placeholder = { Text(RestroI18n.t("review_input_hint")) },
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (reviewComment.isNotBlank()) {
+                            val newRev = Review(
+                                orderId = "ORD-${System.currentTimeMillis() % 10000}",
+                                restaurantId = dish.restaurantId,
+                                author = vm.profile?.name ?: "Priya Sharma",
+                                rating = userRating,
+                                text = reviewComment,
+                                at = "Just now",
+                                dishId = dish.id,
+                                dishName = dish.name,
+                                verifiedPurchase = true
+                            )
+                            vm.addReview(newRev)
+                            reviewComment = ""
+                            showWriteDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(RestroI18n.t("submit_btn"), color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWriteDialog = false }) {
+                    Text(RestroI18n.t("cancel_btn"), color = RestroTokens.muted)
+                }
+            },
+            containerColor = RestroTokens.surface,
+            shape = RoundedCornerShape(18.dp)
+        )
+    }
+}
+
 
 // 2. Cart Screen
 @Composable
@@ -161,7 +389,7 @@ fun CartScreen(vm: DeliveryViewModel) {
             ) {
                 Photo(dish?.image ?: "", dish?.name ?: "Item", Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(dish?.name ?: "Dish", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(dish?.localizedName() ?: "Dish", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     val lineTotal = (dish?.price ?: 0L) * line.quantity
                     Text(money(lineTotal), color = RestroTokens.coral, fontSize = 13.sp)
                     if (line.addons.isNotEmpty()) {
@@ -335,23 +563,23 @@ fun CartScreen(vm: DeliveryViewModel) {
         HorizontalDivider(color = RestroTokens.border)
 
         // Bill Breakdown
-        Text("Bill Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = RestroTokens.text)
+        Text(RestroI18n.t("bill_summary"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = RestroTokens.text)
 
         val q = vm.quote ?: vm.computeQuote()
 
-        BillRow("Item Subtotal", q.subtotal)
-        BillRow("Delivery Partner Fee", q.delivery)
-        BillRow("Taxes & Charges (5% GST)", q.tax)
+        BillRow(RestroI18n.t("bill_subtotal"), q.subtotal)
+        BillRow(RestroI18n.t("delivery_partner_fee"), q.delivery)
+        BillRow(RestroI18n.t("bill_tax"), q.tax)
         if (q.discount > 0L) {
             val couponName = if (vm.cart.coupon.isNotBlank()) " (${vm.cart.coupon})" else ""
-            BillRow("Coupon Discount$couponName", -q.discount)
+            BillRow(RestroI18n.t("bill_discount") + couponName, -q.discount)
         }
         HorizontalDivider(color = RestroTokens.border)
-        BillRow("To Pay", q.total)
+        BillRow(RestroI18n.t("bill_total"), q.total)
 
         Spacer(Modifier.height(8.dp))
 
-        Action("Proceed to Checkout", enabled = !vm.busy) {
+        Action(RestroI18n.t("btn_checkout"), enabled = !vm.busy) {
             vm.loadQuote()
         }
     }
@@ -373,8 +601,8 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
                     modifier = Modifier.size(64.dp),
                     tint = RestroTokens.muted
                 )
-                Heading("Your cart is empty", "Add delicious dishes to your bag before checking out.")
-                Action("Browse Menus") { vm.route = "Home" }
+                Heading(RestroI18n.t("empty_cart_title"), RestroI18n.t("empty_cart_desc"))
+                Action(RestroI18n.t("browse_menus")) { vm.route = "Home" }
             }
         }
         return
@@ -394,9 +622,9 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
     }
 
     Page {
-        Heading("Checkout", "Confirm delivery address and payment")
+        Heading(RestroI18n.t("checkout_title"), RestroI18n.t("checkout_sub"))
 
-        Text("Delivery Address", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(RestroI18n.t("delivery_address"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
 
         if (vm.addresses.isEmpty()) {
             Card(
@@ -411,7 +639,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Default Delivery Location", fontWeight = FontWeight.Bold)
+                            Text(RestroI18n.t("default_address"), fontWeight = FontWeight.Bold)
                             Text("Flat 402, SV Road, Goregaon West, Mumbai", color = RestroTokens.muted, fontSize = 13.sp)
                         }
                         Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.green)
@@ -419,7 +647,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
                     TextButton(onClick = { vm.route = "Edit address" }) {
                         Icon(Icons.Default.AddLocationAlt, null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Add custom address")
+                        Text(RestroI18n.t("add_custom_address"))
                     }
                 }
             }
@@ -451,13 +679,13 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
             TextButton(onClick = { vm.route = "Edit address" }) {
                 Icon(Icons.Default.Add, null)
                 Spacer(Modifier.width(4.dp))
-                Text("Add another address")
+                Text(RestroI18n.t("add_another_address"))
             }
         }
 
         HorizontalDivider(color = RestroTokens.border)
 
-        Text("Select Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = RestroTokens.text)
+        Text(RestroI18n.t("select_payment_method"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = RestroTokens.text)
 
         val paymentOptions = listOf(
             Triple("Cash on delivery", "Cash or UPI on Delivery", Icons.Default.Payments),
@@ -571,6 +799,10 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
             totalAmount = (vm.quote ?: vm.computeQuote()).total,
             selectedAddressId = addrId,
             initialMethod = selectedPaymentMethod,
+            onPaymentSuccess = { methodLabel, txId ->
+                showPaymentSheet = false
+                vm.checkout(addrId, methodLabel)
+            },
             onDismiss = { showPaymentSheet = false }
         )
     }
@@ -673,7 +905,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Order Summary", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(RestroI18n.t("order_summary"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 confirmedOrder.quote.lines.forEach { line ->
                                     Row(
                                         Modifier.fillMaxWidth(),
@@ -687,11 +919,11 @@ fun OrdersScreen(vm: DeliveryViewModel) {
 
                                 // Price Breakdown
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Item Subtotal", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text(RestroI18n.t("bill_subtotal"), fontSize = 12.sp, color = RestroTokens.muted)
                                     Text("₹${confirmedOrder.quote.subtotal / 100}", fontSize = 12.sp)
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Delivery Partner Fee", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text(RestroI18n.t("delivery_partner_fee"), fontSize = 12.sp, color = RestroTokens.muted)
                                     Text(
                                         if (confirmedOrder.quote.delivery == 0L) "FREE" else "₹${confirmedOrder.quote.delivery / 100}",
                                         fontSize = 12.sp,
@@ -700,17 +932,17 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                                 }
                                 if (confirmedOrder.quote.discount > 0L) {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text("Coupon Savings", fontSize = 12.sp, color = RestroTokens.green)
+                                        Text(RestroI18n.t("coupon_savings"), fontSize = 12.sp, color = RestroTokens.green)
                                         Text("-₹${confirmedOrder.quote.discount / 100}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
                                     }
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Taxes & Packaging (5%)", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text(RestroI18n.t("bill_tax"), fontSize = 12.sp, color = RestroTokens.muted)
                                     Text("₹${confirmedOrder.quote.tax / 100}", fontSize = 12.sp)
                                 }
                                 HorizontalDivider(color = RestroTokens.muted.copy(alpha = 0.2f), thickness = 0.5.dp)
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Grand Total Paid", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(RestroI18n.t("grand_total_paid"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     Text("₹${confirmedOrder.quote.total / 100}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = RestroTokens.coral)
                                 }
                                 Text(
@@ -1342,6 +1574,10 @@ fun AddressesScreen(vm: DeliveryViewModel) {
         var city by rememberSaveable { mutableStateOf("Mumbai") }
         var postcode by rememberSaveable { mutableStateOf("560103") }
         var phone by rememberSaveable { mutableStateOf(vm.profile?.phone ?: "+91 98765 43210") }
+        val startLat = if (vm.currentLatitude != 0.0) vm.currentLatitude else 19.0596
+        val startLng = if (vm.currentLongitude != 0.0) vm.currentLongitude else 72.8295
+        var latitude by rememberSaveable { mutableStateOf<Double?>(startLat) }
+        var longitude by rememberSaveable { mutableStateOf<Double?>(startLng) }
 
         Page {
             Heading("Save Delivery Address", "Where should we deliver your food?")
@@ -1349,10 +1585,65 @@ fun AddressesScreen(vm: DeliveryViewModel) {
             // Interactive Mini Map Pin Selector
             Text("Tap to Pin Exact Location", fontWeight = FontWeight.Bold, fontSize = 14.sp)
             AddressPickerMiniMap(
+                initialLat = latitude ?: 19.0596,
+                initialLng = longitude ?: 72.8295,
                 onLocationSelected = { lat, lng, landmark ->
-                    line = if (line.isBlank()) "Near $landmark" else "$line, $landmark"
+                    latitude = lat
+                    longitude = lng
+                    line = landmark
+                    if (landmark.contains("Mumbai", ignoreCase = true)) {
+                        city = "Mumbai"
+                    }
+                    val pinMatch = Regex("[1-9][0-9]{5}").find(landmark)
+                    if (pinMatch != null) {
+                        postcode = pinMatch.value
+                    }
                 }
             )
+
+            // Pinned Coordinates Confirmation Card
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = RestroTokens.surface,
+                border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.4f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Place, null, tint = RestroTokens.coral, modifier = Modifier.size(22.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Pinned Map Coordinates",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            color = RestroTokens.coral
+                        )
+                        Text(
+                            if (latitude != null && longitude != null)
+                                "Lat: " + String.format(java.util.Locale.US, "%.5f", latitude) + ", Lng: " + String.format(java.util.Locale.US, "%.5f", longitude)
+                            else "No pin coordinates selected",
+                            fontSize = 11.sp,
+                            color = RestroTokens.muted
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val lat = if (vm.currentLatitude != 0.0) vm.currentLatitude else 19.0596
+                            val lng = if (vm.currentLongitude != 0.0) vm.currentLongitude else 72.8295
+                            latitude = lat
+                            longitude = lng
+                            line = vm.currentLandmark.ifBlank { "Current GPS Location, Mumbai" }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("My GPS", fontSize = 11.sp, color = RestroTokens.coral)
+                    }
+                }
+            }
 
             Field("Label (e.g. Home, Office, Gym)", label, { label = it })
             Field("House / Flat / Street address", line, { line = it })
@@ -1370,7 +1661,9 @@ fun AddressesScreen(vm: DeliveryViewModel) {
                         line = line,
                         city = city,
                         postcode = postcode,
-                        phone = phone
+                        phone = phone,
+                        latitude = latitude,
+                        longitude = longitude
                     )
                 )
             }
@@ -1397,6 +1690,9 @@ fun AddressesScreen(vm: DeliveryViewModel) {
                     Column(Modifier.weight(1f)) {
                         Text(addr.label, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         Text("${addr.line}, ${addr.city} ${addr.postcode}", color = RestroTokens.muted, fontSize = 13.sp)
+                        if (addr.latitude != null && addr.longitude != null) {
+                            Text("📍 Pin: ${"%.4f".format(addr.latitude)}, ${"%.4f".format(addr.longitude)}", color = RestroTokens.coral, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        }
                         Text("Ph: ${addr.phone}", color = RestroTokens.muted, fontSize = 12.sp)
                     }
                     IconButton(onClick = { vm.deleteAddress(addr.id) }) {
@@ -1727,7 +2023,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         color = RestroTokens.coral
                     )
                     Text(
-                        "Orders",
+                        RestroI18n.t("orders_count_stat"),
                         fontSize = 11.sp,
                         color = RestroTokens.muted
                     )
@@ -1756,7 +2052,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         color = Color(0xFF3B82F6)
                     )
                     Text(
-                        "Bookings",
+                        RestroI18n.t("bookings_count_stat"),
                         fontSize = 11.sp,
                         color = RestroTokens.muted
                     )
@@ -1782,7 +2078,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         color = RestroTokens.green
                     )
                     Text(
-                        "Addresses",
+                        RestroI18n.t("addresses_count_stat"),
                         fontSize = 11.sp,
                         color = RestroTokens.muted
                     )
@@ -1792,7 +2088,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
         // 4. APPEARANCE & THEME (Light & Dark Mode)
         Text(
-            "Appearance & Display",
+            RestroI18n.t("profile_sec_appearance"),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = RestroTokens.text
@@ -1833,7 +2129,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                                 color = RestroTokens.text
                             )
                             Text(
-                                if (isDark) "Dark mode active (gentle on eyes)" else "Light mode active (high contrast & bright)",
+                                if (isDark) RestroI18n.t("dark_mode_sub") else RestroI18n.t("light_mode_sub"),
                                 fontSize = 12.sp,
                                 color = RestroTokens.muted
                             )
@@ -1964,7 +2260,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                                     color = RestroTokens.text
                                 )
                                 Text(
-                                    "14-step guided feature walkthrough",
+                                    RestroI18n.t("guided_tour_sub"),
                                     fontSize = 11.sp,
                                     color = RestroTokens.muted
                                 )
@@ -1983,7 +2279,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
         // 5. Orders & Dining Section
         Text(
-            "Orders & Reservations",
+            RestroI18n.t("profile_sec_orders"),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = RestroTokens.text
@@ -1999,15 +2295,15 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             Column {
                 AccountOptionRow(
                     icon = Icons.Default.ReceiptLong,
-                    title = "Past Orders & Invoices",
-                    subtitle = "View itemized receipts, live tracking and 1-click reorder",
+                    title = RestroI18n.t("past_orders_title"),
+                    subtitle = RestroI18n.t("past_orders_sub"),
                     onClick = { vm.route = "Orders" }
                 )
                 HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
                 AccountOptionRow(
                     icon = Icons.Default.EventSeat,
-                    title = "Dine-In Table Bookings",
-                    subtitle = "Inspect reservation dates, guests and QR check-in status",
+                    title = RestroI18n.t("dine_in_bookings_title"),
+                    subtitle = RestroI18n.t("dine_in_bookings_sub"),
                     onClick = {
                         vm.loadUserTableBookings()
                         vm.route = "MyBookings"
@@ -2016,8 +2312,8 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                 HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
                 AccountOptionRow(
                     icon = Icons.Default.Favorite,
-                    title = "Favorite Restaurants",
-                    subtitle = "Quick access to your saved dining spots",
+                    title = RestroI18n.t("fav_restaurants_title"),
+                    subtitle = RestroI18n.t("fav_restaurants_sub"),
                     onClick = { vm.route = "Favorites" }
                 )
             }
@@ -2025,7 +2321,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
         // 6. Security & Addresses Section
         Text(
-            "Security & Preferences",
+            RestroI18n.t("profile_sec_security"),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = RestroTokens.text
@@ -2041,15 +2337,15 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             Column {
                 AccountOptionRow(
                     icon = Icons.Default.LocationOn,
-                    title = "Saved Delivery Addresses",
-                    subtitle = "Manage Home, Work and GPS drop coordinates",
+                    title = RestroI18n.t("saved_addresses_title"),
+                    subtitle = RestroI18n.t("saved_addresses_sub"),
                     onClick = { vm.route = "Addresses" }
                 )
                 HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
                 AccountOptionRow(
                     icon = Icons.Default.LockReset,
-                    title = "Change & Update Password",
-                    subtitle = "Manage your login credentials & account protection",
+                    title = RestroI18n.t("change_password_title"),
+                    subtitle = RestroI18n.t("change_password_sub"),
                     onClick = {
                         oldPassword = ""
                         newPassword = ""
@@ -2063,7 +2359,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
         // 7. Support & About
         Text(
-            "Help & Information",
+            RestroI18n.t("profile_sec_help"),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             color = RestroTokens.text
@@ -2079,15 +2375,15 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             Column {
                 AccountOptionRow(
                     icon = Icons.Default.SupportAgent,
-                    title = "24x7 Customer Support",
-                    subtitle = "Speak to our care team or report order issues",
+                    title = RestroI18n.t("customer_support_title"),
+                    subtitle = RestroI18n.t("customer_support_sub"),
                     onClick = { showHelpSupportDialog = true }
                 )
                 HorizontalDivider(color = RestroTokens.border, modifier = Modifier.padding(horizontal = 16.dp))
                 AccountOptionRow(
                     icon = Icons.Default.Info,
-                    title = "About Restro Enterprise",
-                    subtitle = "v2.4.0 Production Build • Terms & Privacy",
+                    title = RestroI18n.t("about_enterprise_title"),
+                    subtitle = RestroI18n.t("about_enterprise_sub"),
                     onClick = { showAboutDialog = true }
                 )
             }
@@ -2116,13 +2412,13 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Staff Management Portal",
+                            RestroI18n.t("staff_portal_title"),
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp,
                             color = RestroTokens.text
                         )
                         Text(
-                            "Access Waiter POS, KDS Kitchen Display and Admin Analytics",
+                            RestroI18n.t("staff_portal_sub"),
                             fontSize = 12.sp,
                             color = RestroTokens.muted
                         )
@@ -2149,7 +2445,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             ) {
                 Icon(Icons.Default.Logout, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Sign Out of Restro", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(RestroI18n.t("sign_out_btn"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         } else {
             Button(
@@ -2162,7 +2458,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             ) {
                 Icon(Icons.Default.Login, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Sign In or Register", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(RestroI18n.t("sign_in_register_btn"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
 
@@ -2178,7 +2474,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.Edit, null, tint = RestroTokens.coral)
-                        Text("Edit Profile Details", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
+                        Text(RestroI18n.t("edit_profile_title"), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
                     }
                 },
                 text = {
@@ -2186,7 +2482,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         OutlinedTextField(
                             value = editName,
                             onValueChange = { editName = it },
-                            label = { Text("Full Name") },
+                            label = { Text(RestroI18n.t("full_name_label")) },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -2212,7 +2508,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Save Changes", color = Color.White)
+                        Text(RestroI18n.t("save_changes_btn"), color = Color.White)
                     }
                 },
                 dismissButton = {
@@ -2232,7 +2528,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.LockReset, null, tint = RestroTokens.coral)
-                        Text("Change Password", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = RestroTokens.text)
+                        Text(RestroI18n.t("change_password_title"), fontWeight = FontWeight.Bold, fontSize = 16.sp, color = RestroTokens.text)
                     }
                 },
                 text = {
@@ -2240,7 +2536,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         OutlinedTextField(
                             value = oldPassword,
                             onValueChange = { oldPassword = it },
-                            label = { Text("Current Password") },
+                            label = { Text(RestroI18n.t("current_password_label")) },
                             placeholder = { Text("••••••••") },
                             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                             singleLine = true,
@@ -2250,7 +2546,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         OutlinedTextField(
                             value = newPassword,
                             onValueChange = { newPassword = it },
-                            label = { Text("New Password (min 6 chars)") },
+                            label = { Text(RestroI18n.t("new_password_label")) },
                             placeholder = { Text("••••••••") },
                             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                             singleLine = true,
@@ -2260,7 +2556,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         OutlinedTextField(
                             value = confirmPassword,
                             onValueChange = { confirmPassword = it },
-                            label = { Text("Confirm New Password") },
+                            label = { Text(RestroI18n.t("confirm_password_label")) },
                             placeholder = { Text("••••••••") },
                             visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                             singleLine = true,
@@ -2298,7 +2594,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Update Password", color = Color.White)
+                        Text(RestroI18n.t("update_password_btn"), color = Color.White)
                     }
                 },
                 dismissButton = {
@@ -2316,11 +2612,11 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             AlertDialog(
                 onDismissRequest = { showLogoutConfirmDialog = false },
                 title = {
-                    Text("Sign Out", fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
+                    Text(RestroI18n.t("logout_dialog_title"), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = RestroTokens.text)
                 },
                 text = {
                     Text(
-                        "Are you sure you want to sign out from your Restro account? Your active cart and orders will be preserved upon re-login.",
+                        RestroI18n.t("logout_dialog_desc"),
                         fontSize = 13.sp,
                         color = RestroTokens.muted
                     )
@@ -2334,12 +2630,12 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Sign Out", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(RestroI18n.t("logout_dialog_title"), color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showLogoutConfirmDialog = false }) {
-                        Text("Stay Signed In", color = RestroTokens.text)
+                        Text(RestroI18n.t("stay_signed_in"), color = RestroTokens.text)
                     }
                 },
                 containerColor = RestroTokens.surface,

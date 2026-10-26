@@ -1,5 +1,7 @@
 package com.restaurant.mobile.delivery
 
+import androidx.compose.foundation.BorderStroke
+
 import android.content.Intent
 import android.net.Uri
 import android.webkit.JavascriptInterface
@@ -36,6 +38,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.cos
@@ -80,11 +83,21 @@ fun DeliveryInteractiveMap(
 
     val restaurants = vm.catalog.restaurants
     val selectedRestaurant = restaurants.find { it.id == selectedRestaurantId } ?: restaurants.firstOrNull()
-    var mapEngine by rememberSaveable { mutableStateOf("Street") }
+    var mapEngine by rememberSaveable { mutableStateOf("GMaps") }
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF14171C))) {
         when (mapEngine) {
-            "GMaps", "OSM", "Street" -> {
+            "GMaps" -> {
+                RealGoogleMapsWebView(
+                    latitude = vm.currentLatitude,
+                    longitude = vm.currentLongitude,
+                    restaurants = restaurants,
+                    selectedRestaurantId = selectedRestaurantId,
+                    onSelectRestaurant = { selectedRestaurantId = it },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            "OSM", "Street" -> {
                 RealOpenStreetMapWebView(
                     latitude = vm.currentLatitude,
                     longitude = vm.currentLongitude,
@@ -297,7 +310,7 @@ fun DeliveryInteractiveMap(
                     Icon(Icons.Default.Explore, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
                     val dynamicCity = vm.currentLandmark.split(",").firstOrNull()?.trim() ?: "Local"
                     Text(
-                        "$dynamicCity Food Map · ${restaurants.size} Partners",
+                        dynamicCity.localizedAddress() + " " + RestroI18n.t("city_map_title") + " · " + restaurants.size + " " + RestroI18n.t("restaurants_count_label"),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = RestroTokens.text
@@ -306,6 +319,20 @@ fun DeliveryInteractiveMap(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = {
+                        mapEngine = if (mapEngine == "GMaps") "OSM" else "GMaps"
+                    },
+                    modifier = Modifier.size(36.dp).background(RestroTokens.surface.copy(alpha = 0.95f), CircleShape)
+                ) {
+                    Icon(
+                        Icons.Default.Layers,
+                        contentDescription = "Switch Map Engine ($mapEngine)",
+                        tint = if (mapEngine == "GMaps") RestroTokens.coral else Color(0xFF60A5FA),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
                 IconButton(
                     onClick = {
                         val sel = selectedRestaurant ?: restaurants.firstOrNull()
@@ -378,49 +405,55 @@ fun DeliveryInteractiveMap(
                 colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
                 shape = RoundedCornerShape(20.dp)
             ) {
-                Row(
+                Column(
                     modifier = Modifier.padding(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Photo(
-                        selectedRestaurant.image,
-                        selectedRestaurant.name,
-                        Modifier
-                            .size(76.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                    )
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            selectedRestaurant.name,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            maxLines = 1,
-                            color = RestroTokens.text
+                        Photo(
+                            selectedRestaurant.image,
+                            selectedRestaurant.localizedName(),
+                            Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(14.dp))
                         )
-                        Text(
-                            selectedRestaurant.cuisine,
-                            fontSize = 12.sp,
-                            color = RestroTokens.muted,
-                            maxLines = 1
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            Icon(Icons.Default.TwoWheeler, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
                             Text(
-                                "${selectedRestaurant.deliveryMinutes} min · ${money(selectedRestaurant.deliveryFee)} delivery",
-                                fontSize = 12.sp,
-                                color = RestroTokens.coral,
-                                fontWeight = FontWeight.SemiBold
+                                selectedRestaurant.localizedName(),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = RestroTokens.text
                             )
+                            Text(
+                                selectedRestaurant.localizedCuisine(),
+                                fontSize = 12.sp,
+                                color = RestroTokens.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(Icons.Default.TwoWheeler, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
+                                Text(
+                                    "${selectedRestaurant.deliveryMinutes} " + RestroI18n.t("mins_unit") + " · " + money(selectedRestaurant.deliveryFee),
+                                    fontSize = 12.sp,
+                                    color = RestroTokens.coral,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
                         }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
                             onClick = {
                                 try {
@@ -436,33 +469,37 @@ fun DeliveryInteractiveMap(
                                     } catch (_: Exception) {}
                                 }
                             },
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(38.dp)
                         ) {
                             Icon(Icons.Default.Directions, contentDescription = "Open in Google Maps", tint = RestroTokens.coral)
                         }
+                    }
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedButton(
-                            onClick = {
-                                selectedRestaurantId = ""
-                            },
-                            shape = RoundedCornerShape(14.dp),
+                            onClick = { selectedRestaurantId = "" },
+                            shape = RoundedCornerShape(12.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, RestroTokens.coral),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Layers, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Full Map", color = RestroTokens.coral, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(RestroI18n.t("full_map"), color = RestroTokens.coral, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Button(
-                            onClick = {
-                                vm.openRestaurant(selectedRestaurant.id)
-                            },
+                            onClick = { vm.openRestaurant(selectedRestaurant.id) },
                             colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                            shape = RoundedCornerShape(14.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Text("Menu", color = RestroTokens.canvas, fontWeight = FontWeight.Bold)
+                            Text(RestroI18n.t("view_menu"), color = RestroTokens.canvas, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -499,7 +536,7 @@ fun OrderTrackingRouteMap(
 
     var proximityAlertFired by rememberSaveable(order?.id) { mutableStateOf(false) }
     var deliveredAlertFired by rememberSaveable(order?.id) { mutableStateOf(order?.status == "Delivered") }
-    var mapMode by rememberSaveable(order?.id) { mutableStateOf("Street") }
+    var mapMode by rememberSaveable(order?.id) { mutableStateOf("GoogleMaps") }
     var cloudRiderLat by rememberSaveable(order?.id) { mutableDoubleStateOf(order?.riderLatitude ?: 0.0) }
     var cloudRiderLng by rememberSaveable(order?.id) { mutableDoubleStateOf(order?.riderLongitude ?: 0.0) }
 
@@ -567,7 +604,7 @@ fun OrderTrackingRouteMap(
     val liveEtaMinutes = (remainingPrepMins + remainingTransitMins).coerceAtLeast(if (animatedProgress >= 1.0f) 0 else 1)
 
     val distanceText = if (remainingDistanceKm <= 0.05) {
-        "At your gate"
+        RestroI18n.t("at_your_gate_label")
     } else if (remainingDistanceKm < 1.0) {
         "${(remainingDistanceKm * 1000).toInt()} m"
     } else {
@@ -627,7 +664,7 @@ fun OrderTrackingRouteMap(
                         .background(if (animatedProgress >= 1.0f) RestroTokens.green else Color(0xFF10B981))
                 )
                 Text(
-                    text = if (animatedProgress >= 1.0f) "DELIVERY COMPLETE" else "10S LIVE GPS HEARTBEAT",
+                    text = if (animatedProgress >= 1.0f) RestroI18n.t("delivery_complete_label") else RestroI18n.t("gps_heartbeat_label"),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (animatedProgress >= 1.0f) RestroTokens.green else Color(0xFF10B981),
@@ -671,7 +708,7 @@ fun OrderTrackingRouteMap(
                             tint = RestroTokens.green,
                             modifier = Modifier.size(13.dp)
                         )
-                        Text("Google Maps App ↗", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
+                        Text(RestroI18n.t("gmaps_app_btn"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = RestroTokens.green)
                     }
                 }
             }
@@ -924,7 +961,7 @@ fun OrderTrackingRouteMap(
                     ) {
                         Icon(Icons.Default.NotificationsActive, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
                         Text(
-                            "🛵 Ramesh is at your gate! Please meet your delivery partner.",
+                            RestroI18n.t("rider_gate_alert"),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -949,92 +986,329 @@ fun OrderTrackingRouteMap(
 /**
  * Interactive Address Pin Picker Map for Edit Address screen.
  */
+/**
+ * Interactive Address Pin Picker Map powered by Google Maps JavaScript API with Leaflet fallback.
+ * Allows tapping/dragging a pin, reverse geocoding to Indian landmarks, and 1-tap locality presets.
+ */
+@android.annotation.SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun AddressPickerMiniMap(
     onLocationSelected: (lat: Double, lng: Double, landmark: String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialLat: Double = 19.0596,
+    initialLng: Double = 72.8295
 ) {
-    var pinOffset by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
-    var locationName by remember { mutableStateOf("Goregaon West, Mumbai") }
+    var pinnedAddress by rememberSaveable { mutableStateOf("Bandra West (Linking Road), Mumbai") }
+    var currentLat by rememberSaveable { mutableStateOf(initialLat) }
+    var currentLng by rememberSaveable { mutableStateOf(initialLng) }
+    var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
+    val apiKey = com.restaurant.mobile.BuildConfig.MAPS_API_KEY.ifBlank { "AIzaSyC51qVAdTuym7zIMscR9qROaDd7OxeIfV4" }
 
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(180.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1D24)),
-        shape = RoundedCornerShape(18.dp)
-    ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures { tap ->
-                            val normX = (tap.x / size.width).coerceIn(0.1f, 0.9f)
-                            val normY = (tap.y / size.height).coerceIn(0.1f, 0.9f)
-                            pinOffset = Offset(normX, normY)
+    val localities = remember {
+        listOf(
+            Triple("Bandra West", 19.0596, 72.8295),
+            Triple("Andheri West", 19.1363, 72.8277),
+            Triple("Powai", 19.1176, 72.9060),
+            Triple("Juhu", 19.1075, 72.8263),
+            Triple("BKC", 19.0657, 72.8679),
+            Triple("Lower Parel", 19.0022, 72.8290)
+        )
+    }
 
-                            // Pick neighborhood based on coordinates
-                            val landmark = if (normX < 0.4f && normY < 0.5f) {
-                                "Goregaon West (SV Rd)"
-                            } else if (normX > 0.6f && normY < 0.5f) {
-                                "Powai Hiranandani"
-                            } else if (normX < 0.5f && normY >= 0.5f) {
-                                "Bandra West (Linking Rd)"
-                            } else {
-                                "Andheri West (Lokhandwala)"
-                            }
-                            locationName = "$landmark, Mumbai"
-                            val lat = 19.1400 + (normY * 0.05)
-                            val lng = 72.8300 + (normX * 0.05)
-                            onLocationSelected(lat, lng, landmark)
-                        }
+    val pickerHtml = remember(apiKey, initialLat, initialLng) {
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            
+            <style>
+                html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #121418; overflow: hidden; }
+                .center-pin {
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -100%);
+                    pointer-events: none;
+                    z-index: 1000;
+                    font-size: 28px;
+                    filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+                }
+            </style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script>
+                var map, marker, geocoder, isGoogle = false;
+                var curLat = $initialLat, curLng = $initialLng;
+
+                function notifyAndroid(lat, lng, addr) {
+                    curLat = lat;
+                    curLng = lng;
+                    if (window.AndroidBridge && window.AndroidBridge.onLocationPinned) {
+                        window.AndroidBridge.onLocationPinned(lat, lng, addr);
                     }
-            ) {
-                val w = size.width
-                val h = size.height
-
-                // Road grid
-                for (i in 1..4) {
-                    drawLine(
-                        color = Color(0xFF282D38),
-                        start = Offset(0f, h * (i * 0.22f)),
-                        end = Offset(w, h * (i * 0.22f)),
-                        strokeWidth = 3f
-                    )
-                }
-                for (i in 1..4) {
-                    drawLine(
-                        color = Color(0xFF282D38),
-                        start = Offset(w * (i * 0.22f), 0f),
-                        end = Offset(w * (i * 0.22f), h),
-                        strokeWidth = 3f
-                    )
                 }
 
-                // Selected Pin
-                val px = w * pinOffset.x
-                val py = h * pinOffset.y
+                window.initGoogleMap = function() {
+                    try {
+                        isGoogle = true;
+                        geocoder = new google.maps.Geocoder();
+                        var centerPos = { lat: curLat, lng: curLng };
+                        map = new google.maps.Map(document.getElementById('map'), {
+                            zoom: 15,
+                            center: centerPos,
+                            disableDefaultUI: true,
+                            zoomControl: true,
+                            gestureHandling: "greedy",
+                            styles: [
+                                { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
+                                { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
+                                { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
+                                { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
+                                { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
+                                { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
+                                { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] }
+                            ]
+                        });
 
-                drawCircle(color = RestroTokens.coral.copy(alpha = 0.3f), radius = 18f, center = Offset(px, py))
-                drawCircle(color = RestroTokens.coral, radius = 10f, center = Offset(px, py))
-                drawCircle(color = Color.White, radius = 4f, center = Offset(px, py))
-            }
+                        marker = new google.maps.Marker({
+                            position: centerPos,
+                            map: map,
+                            draggable: true,
+                            animation: google.maps.Animation.DROP,
+                            title: "Delivery Pin"
+                        });
 
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(8.dp),
-                color = RestroTokens.surface.copy(alpha = 0.95f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        google.maps.event.addListener(map, 'click', function(ev) {
+                            var lat = ev.latLng.lat();
+                            var lng = ev.latLng.lng();
+                            marker.setPosition(ev.latLng);
+                            reverseGeocode(lat, lng);
+                        });
+
+                        google.maps.event.addListener(marker, 'dragend', function(ev) {
+                            var lat = ev.latLng.lat();
+                            var lng = ev.latLng.lng();
+                            reverseGeocode(lat, lng);
+                        });
+
+                        reverseGeocode(curLat, curLng);
+                    } catch (e) {
+                        initLeafletFallback();
+                    }
+                }
+
+                function reverseGeocode(lat, lng) {
+                    if (geocoder) {
+                        geocoder.geocode({ location: { lat: lat, lng: lng } }, function(results, status) {
+                            var label = "Pinned Location (" + lat.toFixed(4) + ", " + lng.toFixed(4) + ")";
+                            if (status === 'OK' && results && results[0]) {
+                                label = results[0].formatted_address;
+                            }
+                            notifyAndroid(lat, lng, label);
+                        });
+                    } else {
+                        notifyAndroid(lat, lng, "Location near " + lat.toFixed(4) + ", " + lng.toFixed(4));
+                    }
+                }
+
+                window.initLeafletFallback = function() {
+                    if (map && isGoogle) return;
+                    try {
+                        var script = document.createElement('script');
+                        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+                        script.onload = function() {
+                            map = L.map('map', { zoomControl: false }).setView([curLat, curLng], 15);
+                            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                                maxZoom: 19
+                            }).addTo(map);
+
+                            var customIcon = L.divIcon({
+                                html: '<span style="font-size:28px;">📍</span>',
+                                iconSize: [32, 32],
+                                iconAnchor: [16, 32]
+                            });
+
+                            marker = L.marker([curLat, curLng], { icon: customIcon, draggable: true }).addTo(map);
+
+                            map.on('click', function(e) {
+                                marker.setLatLng(e.latlng);
+                                notifyAndroid(e.latlng.lat, e.latlng.lng, "Pinned Location (" + e.latlng.lat.toFixed(4) + ", " + e.latlng.lng.toFixed(4) + ")");
+                            });
+
+                            marker.on('dragend', function(e) {
+                                var pos = marker.getLatLng();
+                                notifyAndroid(pos.lat, pos.lng, "Pinned Location (" + pos.lat.toFixed(4) + ", " + pos.lng.toFixed(4) + ")");
+                            });
+                        };
+                        document.head.appendChild(script);
+                    } catch(err) {}
+                }
+
+                window.panToPreset = function(lat, lng, name) {
+                    curLat = lat;
+                    curLng = lng;
+                    if (isGoogle && map) {
+                        var pos = new google.maps.LatLng(lat, lng);
+                        map.panTo(pos);
+                        map.setZoom(16);
+                        if (marker) marker.setPosition(pos);
+                        reverseGeocode(lat, lng);
+                    } else if (map && map.setView) {
+                        map.setView([lat, lng], 16);
+                        if (marker) marker.setLatLng([lat, lng]);
+                        notifyAndroid(lat, lng, name + ", Mumbai");
+                    }
+                }
+
+                setTimeout(function() {
+                    if (!map) initLeafletFallback();
+                }, 4000);
+            </script>
+            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey&callback=initGoogleMap&loading=async" async defer onerror="initLeafletFallback()"></script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1D24)),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        android.webkit.WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+                            settings.setSupportZoom(true)
+                            settings.builtInZoomControls = false
+                            setOnTouchListener { v, event ->
+                                when (event.action) {
+                                    android.view.MotionEvent.ACTION_DOWN,
+                                    android.view.MotionEvent.ACTION_MOVE -> {
+                                        v.parent?.requestDisallowInterceptTouchEvent(true)
+                                    }
+                                    android.view.MotionEvent.ACTION_UP,
+                                    android.view.MotionEvent.ACTION_CANCEL -> {
+                                        v.parent?.requestDisallowInterceptTouchEvent(false)
+                                    }
+                                }
+                                false
+                            }
+                            webViewClient = object : android.webkit.WebViewClient() {
+                                override fun onReceivedError(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
+                                    super.onReceivedError(view, request, error)
+                                    view?.evaluateJavascript("if (window.initLeafletFallback) window.initLeafletFallback();", null)
+                                }
+                            }
+                            addJavascriptInterface(object {
+                                @android.webkit.JavascriptInterface
+                                fun onLocationPinned(lat: Double, lng: Double, address: String) {
+                                    post {
+                                        currentLat = lat
+                                        currentLng = lng
+                                        pinnedAddress = address
+                                        onLocationSelected(lat, lng, address)
+                                    }
+                                }
+                            }, "AndroidBridge")
+                            loadDataWithBaseURL("https://maps.googleapis.com", pickerHtml, "text/html", "UTF-8", null)
+                            webViewRef = this
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Status chip at top
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(8.dp),
+                    color = Color(0xFF1E293B).copy(alpha = 0.9f),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, Color(0xFF334155))
                 ) {
-                    Icon(Icons.Default.Place, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
-                    Text("Pin: $locationName (Tap map to move)", fontSize = 11.sp, color = RestroTokens.text)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.Place, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
+                        Text(
+                            "Tap map or drag pin to select exact delivery spot",
+                            fontSize = 11.sp,
+                            color = Color(0xFFE2E8F0),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // Pinned location display
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = RestroTokens.surface,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.3f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Selected Location", fontSize = 10.sp, color = RestroTokens.muted)
+                    Text(
+                        pinnedAddress,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = RestroTokens.text,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        // Quick Locality Presets
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Quick Mumbai Localities:", fontSize = 11.sp, color = RestroTokens.muted, fontWeight = FontWeight.Medium)
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp)
+            ) {
+                items(localities.size) { idx ->
+                    val (name, lat, lng) = localities[idx]
+                    Surface(
+                        onClick = {
+                            currentLat = lat
+                            currentLng = lng
+                            val fullLoc = "$name, Mumbai"
+                            pinnedAddress = fullLoc
+                            onLocationSelected(lat, lng, fullLoc)
+                            webViewRef?.evaluateJavascript("panToPreset($lat, $lng, '$name');", null)
+                        },
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF27272A),
+                        border = BorderStroke(1.dp, Color(0xFF3F3F46))
+                    ) {
+                        Text(
+                            text = "📍 $name",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFFF4F4F5),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
                 }
             }
         }
@@ -1069,19 +1343,26 @@ fun RealGoogleMapsWebView(
     modifier: Modifier = Modifier
 ) {
     val apiKey = com.restaurant.mobile.BuildConfig.MAPS_API_KEY
-    val htmlContent = remember(latitude, longitude, restaurants, selectedRestaurantId) {
+    val activeRestaurant = restaurants.find { it.id == selectedRestaurantId } ?: restaurants.firstOrNull()
+    val targetLat = activeRestaurant?.latitude ?: latitude
+    val targetLng = activeRestaurant?.longitude ?: longitude
+
+    val htmlContent = remember(latitude, longitude, targetLat, targetLng, restaurants, selectedRestaurantId) {
         val markersJs = restaurants.map { r ->
-            val safeName = r.name.replace("'", "\\'")
-            val safeCuisine = r.cuisine.replace("'", "\\'")
+            val safeName = r.localizedName().replace("'", "\\'")
+            val safeCuisine = r.localizedCuisine().replace("'", "\\'")
+            val isSelected = r.id == selectedRestaurantId
             """
             var m_${r.id.replace("-", "_")} = new google.maps.Marker({
                 position: { lat: ${r.latitude}, lng: ${r.longitude} },
                 map: map,
-                title: '$safeName'
+                title: '$safeName',
+                animation: ${if (isSelected) "google.maps.Animation.BOUNCE" else "null"}
             });
             var info_${r.id.replace("-", "_")} = new google.maps.InfoWindow({
-                content: '<div style="color:#111;font-family:sans-serif;padding:4px;"><b>$safeName</b><br><small>$safeCuisine · ⏱️ ${r.deliveryMinutes} mins</small></div>'
+                content: '<div style="color:#111;font-family:sans-serif;padding:4px;"><b>$safeName</b><br><small>$safeCuisine · ⏱️ ${r.deliveryMinutes} ${RestroI18n.t("mins_unit")}</small></div>'
             });
+            ${if (isSelected) "info_${r.id.replace("-", "_")}.open(map, m_${r.id.replace("-", "_")});" else ""}
             m_${r.id.replace("-", "_")}.addListener('click', function() {
                 info_${r.id.replace("-", "_")}.open(map, m_${r.id.replace("-", "_")});
                 if (window.AndroidBridge) {
@@ -1091,66 +1372,183 @@ fun RealGoogleMapsWebView(
             """.trimIndent()
         }.joinToString("\n")
 
+        val leafletMarkersJs = restaurants.map { r ->
+            val safeName = r.localizedName().replace("'", "\\'")
+            val safeCuisine = r.localizedCuisine().replace("'", "\\'")
+            """
+            L.circleMarker([${r.latitude}, ${r.longitude}], {
+                radius: 9,
+                fillColor: '#FF5722',
+                color: '#FFFFFF',
+                weight: 2,
+                fillOpacity: 0.95
+            }).addTo(lmap)
+              .bindPopup('<b>$safeName</b><br><small>$safeCuisine · ⏱️ ${r.deliveryMinutes} ${RestroI18n.t("mins_unit")}</small>')
+              .on('click', function() {
+                  if (window.AndroidBridge) {
+                      window.AndroidBridge.onRestaurantClicked('${r.id}');
+                  }
+              });
+            """.trimIndent()
+        }.joinToString("\n")
+
         """
         <!DOCTYPE html>
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey"></script>
+            
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
-                body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171C; }
+                html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #e5e3df; }
+                #map { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
+                .gm-style-iw { color: #111; font-family: sans-serif; font-size: 13px; }
+                .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 10px; font-family: sans-serif; }
+                .leaflet-popup-tip { background: #1E232B; }
             </style>
         </head>
         <body>
             <div id="map"></div>
             <script>
-                var map;
-                try {
-                    map = new google.maps.Map(document.getElementById('map'), {
-                        center: { lat: $latitude, lng: $longitude },
-                        zoom: 13,
-                        disableDefaultUI: true,
-                        styles: [
-                            { "elementType": "geometry", "stylers": [{ "color": "#212121" }] },
-                            { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
-                            { "elementType": "labels.text.fill", "stylers": [{ "color": "#757575" }] },
-                            { "elementType": "labels.text.stroke", "stylers": [{ "color": "#212121" }] },
-                            { "featureType": "administrative", "elementType": "geometry", "stylers": [{ "color": "#757575" }] },
-                            { "featureType": "road", "elementType": "geometry.fill", "stylers": [{ "color": "#2c2c2c" }] },
-                            { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#000000" }] }
-                        ]
-                    });
-                    new google.maps.Circle({
-                        strokeColor: "#FF5722",
-                        strokeOpacity: 0.8,
-                        strokeWeight: 2,
-                        fillColor: "#FF5722",
-                        fillOpacity: 0.15,
-                        map: map,
-                        center: { lat: $latitude, lng: $longitude },
-                        radius: 6500
-                    });
-                    $markersJs
-                } catch(e) {
-                    document.getElementById('map').innerHTML = '<div style="color:white;padding:20px;text-align:center;">Google Maps Initialized</div>';
+                var map = null;
+                var lmap = null;
+                var mapLoaded = false;
+
+                function fitMap() {
+                    var m = document.getElementById('map');
+                    if (m) {
+                        var w = window.innerWidth || document.documentElement.clientWidth || screen.width;
+                        var h = window.innerHeight || document.documentElement.clientHeight || screen.height;
+                        if (w > 0 && h > 0) {
+                            m.style.width = w + 'px';
+                            m.style.height = h + 'px';
+                        }
+                    }
+                    if (window.google && window.map) {
+                        google.maps.event.trigger(map, 'resize');
+                    }
+                    if (window.lmap) {
+                        window.lmap.invalidateSize();
+                    }
                 }
+                window.addEventListener('resize', fitMap);
+                window.addEventListener('orientationchange', fitMap);
+
+                function initGoogleMap() {
+                    if (mapLoaded) return;
+                    mapLoaded = true;
+                    fitMap();
+                    try {
+                        var centerPt = { lat: $targetLat, lng: $targetLng };
+                        map = new google.maps.Map(document.getElementById('map'), {
+                            center: centerPt,
+                            zoom: 14,
+                            disableDefaultUI: false,
+                            mapTypeControl: false,
+                            streetViewControl: false,
+                            fullscreenControl: false
+                        });
+                        fitMap();
+                        new google.maps.Circle({
+                            strokeColor: "#FF5722",
+                            strokeOpacity: 0.85,
+                            strokeWeight: 2,
+                            fillColor: "#FF5722",
+                            fillOpacity: 0.12,
+                            map: map,
+                            center: centerPt,
+                            radius: 4500
+                        });
+                        $markersJs
+                        setTimeout(function() {
+                            fitMap();
+                            if (window.google && window.google.maps && map) {
+                                google.maps.event.trigger(map, 'resize');
+                                map.setCenter(centerPt);
+                            }
+                        }, 100);
+                        setTimeout(fitMap, 400);
+                    } catch(e) {
+                        console.error("Google Maps JS API error, falling back", e);
+                        initDirectTilesFallback();
+                    }
+                }
+
+                function initDirectTilesFallback() {
+                    if (mapLoaded) return;
+                    mapLoaded = true;
+                    fitMap();
+                    try {
+                        var container = document.getElementById('map');
+                        container.innerHTML = '';
+                        lmap = L.map('map', { zoomControl: false }).setView([$targetLat, $targetLng], 14);
+                        L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                            maxZoom: 20,
+                            attribution: '&copy; Google Maps'
+                        }).addTo(lmap);
+                        L.circleMarker([$targetLat, $targetLng], {
+                            radius: 8,
+                            fillColor: '#3B82F6',
+                            color: '#FFFFFF',
+                            weight: 2,
+                            fillOpacity: 1
+                        }).addTo(lmap);
+                        L.circle([$targetLat, $targetLng], {
+                            color: '#FF5722',
+                            fillColor: '#FF5722',
+                            fillOpacity: 0.1,
+                            weight: 2,
+                            radius: 4500
+                        }).addTo(lmap);
+                        $leafletMarkersJs
+                        setTimeout(fitMap, 150);
+                    } catch(err) {
+                        console.error("Fallback tile error", err);
+                    }
+                }
+
+                setTimeout(function() {
+                    if (!mapLoaded) {
+                        initDirectTilesFallback();
+                    }
+                }, 2800);
             </script>
+            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey&language=${RestroI18n.currentLanguage}&callback=initGoogleMap&loading=async" async defer onerror="initDirectTilesFallback()"></script>
         </body>
         </html>
         """.trimIndent()
     }
 
+    val selRest = restaurants.find { it.id == selectedRestaurantId }
+    val selLat = selRest?.latitude ?: targetLat
+    val selLng = selRest?.longitude ?: targetLng
+
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
             android.webkit.WebView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.setGeolocationEnabled(true)
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
                 addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
                     fun onRestaurantClicked(restId: String) {
                         onSelectRestaurant(restId)
                     }
                 }, "AndroidBridge")
+                webChromeClient = object : android.webkit.WebChromeClient() {
+                    override fun onConsoleMessage(message: android.webkit.ConsoleMessage?): Boolean {
+                        android.util.Log.d("GoogleMapsWebView", "${message?.message()} -- line ${message?.lineNumber()}")
+                        return true
+                    }
+                }
                 webViewClient = object : android.webkit.WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                         return false
@@ -1160,7 +1558,11 @@ fun RealGoogleMapsWebView(
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL("https://maps.google.com", htmlContent, "text/html", "UTF-8", null)
+            // Smoothly pan to the selected restaurant and re-fit
+            webView.evaluateJavascript(
+                "if (window.fitMap) { window.fitMap(); } if (window.map && window.map.panTo) { window.map.panTo(new google.maps.LatLng($selLat, $selLng)); window.map.setZoom(15); } else if (window.lmap && window.lmap.panTo) { window.lmap.panTo([$selLat, $selLng]); }",
+                null
+            )
         },
         modifier = modifier
     )
@@ -1185,8 +1587,8 @@ fun RealOpenStreetMapWebView(
         val markersJs = restaurants.map { r ->
             val isSelected = r.id == selectedRestaurantId
             val markerColor = if (isSelected) "#FF5722" else "#1976D2"
-            val safeName = r.name.replace("'", "\\'")
-            val safeCuisine = r.cuisine.replace("'", "\\'")
+            val safeName = r.localizedName().replace("'", "\\'")
+            val safeCuisine = r.localizedCuisine().replace("'", "\\'")
             """
             L.circleMarker([${r.latitude}, ${r.longitude}], {
                 radius: ${if (isSelected) 11 else 7},
@@ -1210,10 +1612,11 @@ fun RealOpenStreetMapWebView(
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
-                body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171C; }
+                body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #14171C; }
+                #map { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
                 .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 12px; font-family: sans-serif; }
                 .leaflet-popup-tip { background: #1E232B; }
             </style>
@@ -1221,6 +1624,24 @@ fun RealOpenStreetMapWebView(
         <body>
             <div id="map"></div>
             <script>
+                function fitOsmMap() {
+                    var m = document.getElementById('map');
+                    if (m) {
+                        var w = window.innerWidth || document.documentElement.clientWidth || screen.width;
+                        var h = window.innerHeight || document.documentElement.clientHeight || screen.height;
+                        if (w > 0 && h > 0) {
+                            m.style.width = w + 'px';
+                            m.style.height = h + 'px';
+                        }
+                    }
+                    if (window.map) {
+                        window.map.invalidateSize();
+                    }
+                }
+                window.addEventListener('resize', fitOsmMap);
+                window.addEventListener('orientationchange', fitOsmMap);
+
+                fitOsmMap();
                 var map = L.map('map', { zoomControl: false }).setView([$latitude, $longitude], 13);
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                     maxZoom: 19,
@@ -1249,6 +1670,8 @@ fun RealOpenStreetMapWebView(
                 }).addTo(map);
 
                 $markersJs
+                setTimeout(fitOsmMap, 100);
+                setTimeout(fitOsmMap, 400);
             </script>
         </body>
         </html>
@@ -1258,8 +1681,14 @@ fun RealOpenStreetMapWebView(
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
             android.webkit.WebView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
                 settings.userAgentString = "RestroMobile/1.0 (Android; com.restaurant.mobile)"
                 addJavascriptInterface(object {
                     @android.webkit.JavascriptInterface
@@ -1276,7 +1705,8 @@ fun RealOpenStreetMapWebView(
             }
         },
         update = { webView ->
-            webView.loadDataWithBaseURL("https://cartocdn.com", htmlContent, "text/html", "UTF-8", null)
+            // Update center without reloading DOM
+            webView.evaluateJavascript("if (window.map && window.map.panTo) { window.map.panTo([$latitude, $longitude]); }", null)
         },
         modifier = modifier
     )
@@ -1309,16 +1739,35 @@ fun RealOrderTrackingOsmWebView(
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
-                body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171C; }
+                body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #14171C; }
+                #map { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
                 .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 10px; font-family: sans-serif; font-size: 12px; }
             </style>
         </head>
         <body>
             <div id="map"></div>
             <script>
+                function fitOsmTrackMap() {
+                    var m = document.getElementById('map');
+                    if (m) {
+                        var w = window.innerWidth || document.documentElement.clientWidth || screen.width;
+                        var h = window.innerHeight || document.documentElement.clientHeight || screen.height;
+                        if (w > 0 && h > 0) {
+                            m.style.width = w + 'px';
+                            m.style.height = h + 'px';
+                        }
+                    }
+                    if (window.map) {
+                        window.map.invalidateSize();
+                    }
+                }
+                window.addEventListener('resize', fitOsmTrackMap);
+                window.addEventListener('orientationchange', fitOsmTrackMap);
+
+                fitOsmTrackMap();
                 var map = L.map('map', { zoomControl: false }).setView([$midLat, $midLng], 14);
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                     maxZoom: 19,
@@ -1362,6 +1811,9 @@ fun RealOrderTrackingOsmWebView(
                         riderMarker.setLatLng([lat, lng]);
                     }
                 };
+
+                setTimeout(fitOsmTrackMap, 100);
+                setTimeout(fitOsmTrackMap, 400);
             </script>
         </body>
         </html>
@@ -1371,8 +1823,14 @@ fun RealOrderTrackingOsmWebView(
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
             android.webkit.WebView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
                 settings.userAgentString = "RestroMobile/1.0 (Android; com.restaurant.mobile)"
                 webViewClient = object : android.webkit.WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): Boolean {
@@ -1420,113 +1878,203 @@ fun RealOrderTrackingGoogleMapsWebView(
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey"></script>
+            
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
-                body, html, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #14171D; }
+                html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #e5e3df; }
+                #map { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
                 .gm-style-iw { color: #111; font-family: sans-serif; font-size: 12px; }
+                .leaflet-popup-content-wrapper { background: #1E232B; color: #FFF; border-radius: 10px; font-family: sans-serif; font-size: 12px; }
             </style>
         </head>
         <body>
             <div id="map"></div>
             <script>
-                var map;
-                var riderMarker;
-                try {
-                    map = new google.maps.Map(document.getElementById('map'), {
-                        center: { lat: $midLat, lng: $midLng },
-                        zoom: 14,
-                        disableDefaultUI: true,
-                        zoomControl: false,
-                        styles: [
-                            { "elementType": "geometry", "stylers": [{ "color": "#1D212A" }] },
-                            { "elementType": "labels.text.fill", "stylers": [{ "color": "#8EC3B9" }] },
-                            { "elementType": "labels.text.stroke", "stylers": [{ "color": "#1A1D24" }] },
-                            { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#2C3240" }] },
-                            { "featureType": "road", "elementType": "geometry.stroke", "stylers": [{ "color": "#212530" }] },
-                            { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#3D4456" }] },
-                            { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#11141A" }] }
-                        ]
-                    });
+                var map = null;
+                var lmap = null;
+                var riderMarker = null;
+                var lRiderMarker = null;
+                var isRouteLoaded = false;
 
-                    // Restaurant Marker (Coral)
-                    var restMarker = new google.maps.Marker({
-                        position: { lat: $restaurantLat, lng: $restaurantLng },
-                        map: map,
-                        title: '$safeRestName',
-                        icon: {
-                            path: google.maps.SymbolPath.CIRCLE,
-                            scale: 8,
-                            fillColor: '#FF5722',
-                            fillOpacity: 1,
-                            strokeColor: '#FFFFFF',
-                            strokeWeight: 2
+                function fitMap() {
+                    var m = document.getElementById('map');
+                    if (m) {
+                        var w = window.innerWidth || document.documentElement.clientWidth || screen.width;
+                        var h = window.innerHeight || document.documentElement.clientHeight || screen.height;
+                        if (w > 0 && h > 0) {
+                            m.style.width = w + 'px';
+                            m.style.height = h + 'px';
                         }
-                    });
-                    var restInfo = new google.maps.InfoWindow({
-                        content: '<div style="color:#111;font-weight:bold;padding:2px;">🏪 $safeRestName</div>'
-                    });
-                    restMarker.addListener('click', function() { restInfo.open(map, restMarker); });
-
-                    // Customer Destination Marker (Green)
-                    var userMarker = new google.maps.Marker({
-                        position: { lat: $userLat, lng: $userLng },
-                        map: map,
-                        title: 'Delivery Address',
-                        icon: {
-                            path: google.maps.SymbolPath.CIRCLE,
-                            scale: 8,
-                            fillColor: '#10B981',
-                            fillOpacity: 1,
-                            strokeColor: '#FFFFFF',
-                            strokeWeight: 2
-                        }
-                    });
-                    var userInfo = new google.maps.InfoWindow({
-                        content: '<div style="color:#111;font-weight:bold;padding:2px;">📍 Delivery Location</div>'
-                    });
-                    userMarker.addListener('click', function() { userInfo.open(map, userMarker); });
-
-                    // Route Polyline
-                    new google.maps.Polyline({
-                        path: [
-                            { lat: $restaurantLat, lng: $restaurantLng },
-                            { lat: $userLat, lng: $userLng }
-                        ],
-                        geodesic: true,
-                        strokeColor: '#FF5722',
-                        strokeOpacity: 0.85,
-                        strokeWeight: 4,
-                        map: map
-                    });
-
-                    // Moving Rider Marker (Blue Scooter)
-                    riderMarker = new google.maps.Marker({
-                        position: { lat: $restaurantLat, lng: $restaurantLng },
-                        map: map,
-                        title: 'Delivery Partner',
-                        icon: {
-                            path: google.maps.SymbolPath.CIRCLE,
-                            scale: 10,
-                            fillColor: '#3B82F6',
-                            fillOpacity: 1,
-                            strokeColor: '#FFFFFF',
-                            strokeWeight: 3
-                        }
-                    });
-                    var riderInfo = new google.maps.InfoWindow({
-                        content: '<div style="color:#111;font-weight:bold;padding:2px;">🛵 Delivery Partner (Live)</div>'
-                    });
-                    riderMarker.addListener('click', function() { riderInfo.open(map, riderMarker); });
-
-                    window.updateRider = function(lat, lng) {
-                        if (riderMarker) {
-                            riderMarker.setPosition(new google.maps.LatLng(lat, lng));
-                        }
-                    };
-                } catch(e) {
-                    console.error("Google Maps load error", e);
+                    }
+                    if (window.google && window.map) {
+                        google.maps.event.trigger(map, 'resize');
+                    }
+                    if (window.lmap) {
+                        window.lmap.invalidateSize();
+                    }
                 }
+                window.addEventListener('resize', fitMap);
+                window.addEventListener('orientationchange', fitMap);
+
+                function initGoogleRouteMap() {
+                    if (isRouteLoaded) return;
+                    isRouteLoaded = true;
+                    fitMap();
+                    try {
+                        map = new google.maps.Map(document.getElementById('map'), {
+                            center: { lat: $midLat, lng: $midLng },
+                            zoom: 14,
+                            disableDefaultUI: false,
+                            mapTypeControl: false,
+                            streetViewControl: false,
+                            fullscreenControl: false
+                        });
+                        fitMap();
+
+                        // Restaurant Marker (Coral)
+                        var restMarker = new google.maps.Marker({
+                            position: { lat: $restaurantLat, lng: $restaurantLng },
+                            map: map,
+                            title: '$safeRestName',
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 8,
+                                fillColor: '#FF5722',
+                                fillOpacity: 1,
+                                strokeColor: '#FFFFFF',
+                                strokeWeight: 2
+                            }
+                        });
+                        var restInfo = new google.maps.InfoWindow({
+                            content: '<div style="color:#111;font-weight:bold;padding:2px;">🏪 $safeRestName</div>'
+                        });
+                        restMarker.addListener('click', function() { restInfo.open(map, restMarker); });
+
+                        // Customer Destination Marker (Green)
+                        var userMarker = new google.maps.Marker({
+                            position: { lat: $userLat, lng: $userLng },
+                            map: map,
+                            title: 'Delivery Address',
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 8,
+                                fillColor: '#10B981',
+                                fillOpacity: 1,
+                                strokeColor: '#FFFFFF',
+                                strokeWeight: 2
+                            }
+                        });
+                        var userInfo = new google.maps.InfoWindow({
+                            content: '<div style="color:#111;font-weight:bold;padding:2px;">📍 Delivery Location</div>'
+                        });
+                        userMarker.addListener('click', function() { userInfo.open(map, userMarker); });
+
+                        // Route Polyline
+                        new google.maps.Polyline({
+                            path: [
+                                { lat: $restaurantLat, lng: $restaurantLng },
+                                { lat: $userLat, lng: $userLng }
+                            ],
+                            geodesic: true,
+                            strokeColor: '#FF5722',
+                            strokeOpacity: 0.85,
+                            strokeWeight: 4,
+                            map: map
+                        });
+
+                        // Moving Rider Marker (Blue Scooter)
+                        riderMarker = new google.maps.Marker({
+                            position: { lat: $restaurantLat, lng: $restaurantLng },
+                            map: map,
+                            title: 'Delivery Partner',
+                            icon: {
+                                path: google.maps.SymbolPath.CIRCLE,
+                                scale: 10,
+                                fillColor: '#3B82F6',
+                                fillOpacity: 1,
+                                strokeColor: '#FFFFFF',
+                                strokeWeight: 3
+                            }
+                        });
+                        var riderInfo = new google.maps.InfoWindow({
+                            content: '<div style="color:#111;font-weight:bold;padding:2px;">🛵 Delivery Partner (Live)</div>'
+                        });
+                        riderMarker.addListener('click', function() { riderInfo.open(map, riderMarker); });
+
+                        setTimeout(function() {
+                            fitMap();
+                            if (window.google && window.google.maps && map) {
+                                google.maps.event.trigger(map, 'resize');
+                            }
+                        }, 100);
+                        setTimeout(fitMap, 400);
+                    } catch(e) {
+                        console.error("Google Maps route error, fallback to tiles", e);
+                        initDirectRouteFallback();
+                    }
+                }
+
+                function initDirectRouteFallback() {
+                    if (isRouteLoaded) return;
+                    isRouteLoaded = true;
+                    fitMap();
+                    try {
+                        var container = document.getElementById('map');
+                        container.innerHTML = '';
+                        lmap = L.map('map', { zoomControl: false }).setView([$midLat, $midLng], 14);
+                        L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                            maxZoom: 20,
+                            attribution: '&copy; Google Maps'
+                        }).addTo(lmap);
+
+                        L.circleMarker([$restaurantLat, $restaurantLng], {
+                            radius: 8,
+                            fillColor: '#FF5722',
+                            color: '#FFF',
+                            weight: 2,
+                            fillOpacity: 1
+                        }).addTo(lmap).bindPopup('<b>$safeRestName</b>');
+
+                        L.circleMarker([$userLat, $userLng], {
+                            radius: 8,
+                            fillColor: '#10B981',
+                            color: '#FFF',
+                            weight: 2,
+                            fillOpacity: 1
+                        }).addTo(lmap).bindPopup('<b>Delivery Destination</b>');
+
+                        var latlngs = [[$restaurantLat, $restaurantLng], [$userLat, $userLng]];
+                        L.polyline(latlngs, { color: '#FF5722', weight: 4, dashArray: '6, 6' }).addTo(lmap);
+
+                        lRiderMarker = L.circleMarker([$restaurantLat, $restaurantLng], {
+                            radius: 9,
+                            fillColor: '#3B82F6',
+                            color: '#FFF',
+                            weight: 3,
+                            fillOpacity: 1
+                        }).addTo(lmap).bindPopup('<b>🛵 Delivery Partner (Live)</b>');
+                        setTimeout(fitMap, 150);
+                    } catch(err) {
+                        console.error("Leaflet fallback route error", err);
+                    }
+                }
+
+                window.updateRider = function(lat, lng) {
+                    if (riderMarker) {
+                        riderMarker.setPosition(new google.maps.LatLng(lat, lng));
+                    }
+                    if (lRiderMarker) {
+                        lRiderMarker.setLatLng([lat, lng]);
+                    }
+                };
+
+                setTimeout(function() {
+                    if (!isRouteLoaded) {
+                        initDirectRouteFallback();
+                    }
+                }, 2800);
             </script>
+            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey&language=${RestroI18n.currentLanguage}&callback=initGoogleRouteMap&loading=async" async defer onerror="initDirectRouteFallback()"></script>
         </body>
         </html>
         """.trimIndent()
@@ -1535,8 +2083,18 @@ fun RealOrderTrackingGoogleMapsWebView(
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { ctx ->
             android.webkit.WebView(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
+                settings.databaseEnabled = true
+                settings.setGeolocationEnabled(true)
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
                 webViewClient = object : android.webkit.WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                         return false
@@ -1546,7 +2104,7 @@ fun RealOrderTrackingGoogleMapsWebView(
             }
         },
         update = { webView ->
-            webView.evaluateJavascript("if (window.updateRider) { window.updateRider($currentRiderLat, $currentRiderLng); }", null)
+            webView.evaluateJavascript("if (window.fitMap) { window.fitMap(); } if (window.updateRider) { window.updateRider($currentRiderLat, $currentRiderLng); }", null)
         },
         modifier = modifier
     )

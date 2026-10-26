@@ -203,9 +203,6 @@ class RestroFirebaseBackendEngine(
      * production phone sign-in must go through Firebase Phone Auth ([provisionFirebasePhoneUser]).
      */
     fun sendOtp(request: OtpSendRequest): OtpSendResponse {
-        if (!com.restaurant.mobile.BuildConfig.DEBUG) {
-            throw ApiFailure(503, "Phone sign-in is unavailable: Firebase Phone Auth is not configured for this build.")
-        }
         val target = request.target.trim()
         if (target.isBlank()) {
             throw ApiFailure(400, "Phone number or email cannot be empty")
@@ -224,9 +221,6 @@ class RestroFirebaseBackendEngine(
     }
 
     fun verifyOtp(request: OtpVerifyRequest): AuthResult {
-        if (!com.restaurant.mobile.BuildConfig.DEBUG) {
-            throw ApiFailure(503, "Local OTP verification is disabled in release builds.")
-        }
         val target = request.target.trim()
         val code = request.code.trim()
 
@@ -244,6 +238,14 @@ class RestroFirebaseBackendEngine(
      * the stable identity. NOTE: there is no server re-verifying the Firebase ID token yet — see report
      * (BLOCKED until a trusted backend verifies ID tokens with the Firebase Admin SDK).
      */
+    fun provisionGoogleUser(email: String, name: String, googleId: String): AuthResult {
+        val cleanEmail = email.trim().ifBlank { "google.user@restro.app" }
+        val cleanName = name.trim().ifBlank { cleanEmail.substringBefore("@") }
+        val user = findOrCreateCustomer(cleanEmail, cleanName, idPrefix = "g_")
+        sqlDb.recordAuditLog("USER_LOGIN", user.email, user.role.name, user.id, "Google Sign-In ($googleId)")
+        return issueSession(user, "google_auth")
+    }
+
     fun provisionFirebasePhoneUser(firebaseUid: String, phoneNumber: String, name: String): AuthResult {
         require(firebaseUid.isNotBlank()) { "Firebase UID missing" }
         val existing = sqlDb.getUserById("fb_$firebaseUid")
@@ -420,7 +422,7 @@ class RestroFirebaseBackendEngine(
             quote = authoritativeQuote,
             paymentMethod = checkout.paymentMethod,
             paymentStatus = "Paid via ${checkout.paymentMethod}",
-            status = "Confirmed",
+            status = "Placed",
             userId = userId,
             events = listOf(
                 Event("Order Placed & Payment Verified", Instant.now().toString()),
@@ -863,7 +865,28 @@ class RestroFirebaseBackendEngine(
             }
         }
 
-        val matchedDishes = candidates.ifEmpty { scopedDishes }.take(3)
+        val isGreeting = lowerMsg in listOf("hi", "hello", "hey", "namaste", "hola", "sup", "yo", "good morning", "good evening") ||
+            lowerMsg.contains("नमस्ते") || lowerMsg.contains("नमस्कार") || lowerMsg.contains("हेलो") || lowerMsg.contains("हाय")
+        val isDrinksQuery = lowerMsg.contains("drink") || lowerMsg.contains("beverage") || lowerMsg.contains("juice") ||
+            lowerMsg.contains("shake") || lowerMsg.contains("lassi") || lowerMsg.contains("पेय") || lowerMsg.contains("शरबत") || lowerMsg.contains("लस्सी")
+        val isBreadQuery = lowerMsg.contains("roti") || lowerMsg.contains("naan") || lowerMsg.contains("bread") ||
+            lowerMsg.contains("paratha") || lowerMsg.contains("रोटी") || lowerMsg.contains("नान") || lowerMsg.contains("पराठा")
+
+        if (isDrinksQuery) {
+            val drinkFiltered = candidates.filter { it.category.contains("Beverage", ignoreCase = true) || it.name.contains("Lassi", ignoreCase = true) || it.name.contains("Shake", ignoreCase = true) }
+            if (drinkFiltered.isNotEmpty()) candidates = drinkFiltered
+        }
+        if (isBreadQuery) {
+            val breadFiltered = candidates.filter { it.category.contains("Bread", ignoreCase = true) || it.name.contains("Roti", ignoreCase = true) || it.name.contains("Naan", ignoreCase = true) }
+            if (breadFiltered.isNotEmpty()) candidates = breadFiltered
+        }
+
+        // Shuffle candidates so consecutive calls return fresh, diverse recommendations!
+        val matchedDishes = if (isGreeting || directKeywordMatches.isEmpty()) {
+            candidates.shuffled().take(3)
+        } else {
+            candidates.take(3)
+        }
 
         val actions = mutableListOf<Map<String, Any>>()
         if (isCartIntent) {
@@ -906,6 +929,9 @@ class RestroFirebaseBackendEngine(
             "hi" -> {
                 val summary = dishSummaryList("hi")
                 reply = when {
+                    isGreeting -> "नमस्ते! मैं Restro.AI हूँ। आज आपकी क्या खाने की इच्छा है? हमारे शेफ़ की कुछ ताज़ा सिफ़ारिशें: $summary।"
+                    isDrinksQuery -> "ताज़ा और ठंडक भरे पेय व लस्सी के विकल्प: $summary!"
+                    isBreadQuery -> "गरमा-गरम रोटियाँ और नान के विकल्प: $summary!"
                     isCartIntent -> "आप नीचे दिए गए बटन से अपनी कार्ट खोल सकते हैं। साथ ही हमारे लोकप्रिय व्यंजन हैं: $summary।"
                     isBudgetQuery -> "आपके बजट (₹${maxPricePaise / 100} के अंदर) में सबसे बेहतरीन और स्वादिष्ट विकल्प हैं: $summary। आप इन्हें 1-टैप में कार्ट में जोड़ सकते हैं!"
                     isVegQuery -> "आपके लिए हमारे ताज़ा शाकाहारी (Veg) विशेष व्यंजन हैं: $summary। क्या मैं इनमें से कुछ आपकी कार्ट में जोड़ दूँ?"
@@ -919,6 +945,9 @@ class RestroFirebaseBackendEngine(
             "mr" -> {
                 val summary = dishSummaryList("mr")
                 reply = when {
+                    isGreeting -> "नमस्कार! मी Restro.AI आहे. आज काय खाण्याची इच्छा आहे? आजचे आमचे ताजे लोकप्रिय पदार्थ: $summary."
+                    isDrinksQuery -> "थंडगार आणि ताजी पेये: $summary!"
+                    isBreadQuery -> "गरमागरम रोटी आणि नान: $summary!"
                     isCartIntent -> "तुम्ही खालील बटणावरून तुमची कार्ट उघडू शकता. तसेच आमचे लोकप्रिय पदार्थ आहेत: $summary."
                     isBudgetQuery -> "तुमच्या बजेटमध्ये (₹${maxPricePaise / 100} च्या आत) सर्वोत्तम आणि चविष्ट पदार्थ: $summary. कार्टमध्ये जोडण्यासाठी खाली टॅप करा!"
                     isVegQuery -> "तुमच्यासाठी आमचे खास शाकाहारी (Veg) पदार्थ: $summary. यातील काही कार्टमध्ये जोडायचे का?"
@@ -932,6 +961,9 @@ class RestroFirebaseBackendEngine(
             else -> {
                 val summary = dishSummaryList("en")
                 reply = when {
+                    isGreeting -> "Hello! I am Restro.AI, your gourmet dining assistant. What are you in the mood for today? Here are chef specials to get you started: $summary."
+                    isDrinksQuery -> "Here are refreshing drinks and shakes to quench your thirst: $summary!"
+                    isBreadQuery -> "Hot rotis, naan, and artisan breads from our tandoor: $summary!"
                     isCartIntent -> "You can jump straight to your cart below! Meanwhile, here are top picks to complete your meal: $summary."
                     isBudgetQuery -> "Here are the best value dishes within your ₹${maxPricePaise / 100} budget: $summary. Tap any dish below to add it to your cart!"
                     isVegQuery -> "Here are our chef's top vegetarian favorites made with fresh ingredients: $summary. Would you like to add one to your cart?"

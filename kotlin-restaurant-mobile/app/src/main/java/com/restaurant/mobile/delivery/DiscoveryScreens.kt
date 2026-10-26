@@ -50,12 +50,72 @@ fun AuthScreen(vm: DeliveryViewModel) {
     var email by rememberSaveable { mutableStateOf("") }
     var registerPhone by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var showForgotPasswordDialog by rememberSaveable { mutableStateOf(false) }
     var forgotPasswordTarget by rememberSaveable { mutableStateOf("") }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     fun showToast(msg: String) {
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    val googleLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = com.google.android.gms.auth.api.signin.GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        try {
+            val account = task.getResult(com.google.android.gms.common.api.ApiException::class.java)
+            val gEmail = account?.email ?: ""
+            val gName = account?.displayName ?: ""
+            val gId = account?.id ?: ""
+            if (gEmail.isNotBlank()) {
+                vm.authWithGoogle(gEmail, gName, gId)
+                showToast("Signed in as " + gEmail)
+            } else {
+                showToast("Google account email was blank.")
+            }
+        } catch (e: com.google.android.gms.common.api.ApiException) {
+            val errMsg = when (e.statusCode) {
+                10 -> "Google Sign-In configuration error (Developer Error 10). Add SHA-1 fingerprint and Web Client ID in Firebase Console."
+                12500 -> "Google Sign-In failed (12500). Verify Google Play Services and OAuth credentials."
+                7 -> "Network error during Google Sign-In. Check device internet."
+                16 -> "Google Sign-In cancelled."
+                else -> "Google Sign-In error (Status " + e.statusCode + "): " + e.localizedMessage
+            }
+            showToast(errMsg)
+            vm.error = errMsg
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: "Google Sign-In failed"
+            showToast(msg)
+            vm.error = msg
+        }
+    }
+
+    val launchGoogleSignIn: () -> Unit = {
+        try {
+            val webClientId = try {
+                val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                if (resId != 0) context.getString(resId) else ""
+            } catch (_: Exception) { "" }
+
+            val gsoBuilder = com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(
+                com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
+            ).requestEmail().requestProfile()
+
+            if (webClientId.isNotBlank()) {
+                gsoBuilder.requestIdToken(webClientId)
+            }
+
+            val gso = gsoBuilder.build()
+            val client = com.google.android.gms.auth.api.signin.GoogleSignIn.getClient(context, gso)
+            client.signOut().addOnCompleteListener {
+                googleLauncher.launch(client.signInIntent)
+            }
+        } catch (e: Exception) {
+            val msg = e.localizedMessage ?: "Could not launch Google Sign-In"
+            showToast(msg)
+            vm.error = msg
+        }
     }
 
     LaunchedEffect(vm.authRedirectToRegister) {
@@ -185,6 +245,72 @@ fun AuthScreen(vm: DeliveryViewModel) {
             else RestroI18n.t("auth_signin_sub"),
         )
 
+        // 1-Tap Quick Demo Accounts Login
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = RestroTokens.surfaceElevated),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f))
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.VpnKey, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                        Text(RestroI18n.t("demo_accounts_title"), fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RestroTokens.text)
+                    }
+                    Text(RestroI18n.t("demo_instant_access"), fontSize = 10.sp, color = RestroTokens.coral, fontWeight = FontWeight.SemiBold)
+                }
+
+                val demoList = listOf(
+                    Triple("Customer", "aarav@example.com", "password123"),
+                    Triple("Manager", "admin@restro.app", "admin123"),
+                    Triple("Master Admin", "master@restro.app", "master123"),
+                    Triple("Waiter POS", "waiter@restro.app", "waiter123"),
+                    Triple("Chef KDS", "chef@restro.app", "chef123"),
+                    Triple("Rider", "rider@restro.app", "rider123"),
+                    Triple("Kiosk", "kiosk@restro.app", "kiosk123")
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp)
+                ) {
+                    items(demoList) { (roleName, demoEmail, demoPass) ->
+                        Surface(
+                            onClick = {
+                                email = demoEmail
+                                password = demoPass
+                                authMode = 1
+                                register = false
+                                vm.auth(demoEmail, demoPass, roleName, register = false)
+                            },
+                            color = RestroTokens.surface,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.5f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(RestroI18n.roleLabel(roleName), fontWeight = FontWeight.Bold, fontSize = 11.sp, color = RestroTokens.coral)
+                                Text(demoEmail, fontSize = 10.sp, color = RestroTokens.text)
+                                Text("${RestroI18n.t("password_label")}: $demoPass", fontSize = 9.sp, color = RestroTokens.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
 
         // Auth Mode Switcher Tab
         Row(
@@ -304,24 +430,27 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     )
                 }
 
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(RestroI18n.t("auth_your_name")) },
-                    placeholder = { Text("Aarav Sharma") },
-                    leadingIcon = { Icon(Icons.Default.Person, null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp)
-                )
+                if (register) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(RestroI18n.t("auth_your_name")) },
+                        placeholder = { Text("Aarav Sharma") },
+                        leadingIcon = { Icon(Icons.Default.Person, null) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                }
 
                 val isTargetValid = if (otpType == 0) RestroValidationUtils.isValidPhone(phoneInput) else RestroValidationUtils.isValidEmail(emailOtpInput)
+                val activity = context as? android.app.Activity
                 Action(
                     label = RestroI18n.t("auth_send_otp"),
                     enabled = !vm.busy && isTargetValid
                 ) {
                     val target = if (otpType == 0) RestroValidationUtils.sanitizePhone(phoneInput) else emailOtpInput.trim()
-                    vm.sendOtp(target, isPhone = (otpType == 0))
+                    vm.sendOtp(target, isPhone = (otpType == 0), activity = activity)
                 }
             } else {
                 // OTP Sent View
@@ -332,7 +461,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -346,65 +475,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                             )
                         }
 
-                        vm.otpNotificationBanner?.let { banner ->
-                            Surface(
-                                color = RestroTokens.coral.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(Icons.Default.Notifications, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
-                                    Text(
-                                        banner,
-                                        fontSize = 12.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            }
-                        }
-
-                        vm.otpPreviewCode?.let { code ->
-                            Surface(
-                                color = RestroTokens.green.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, RestroTokens.green.copy(alpha = 0.4f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            "Security Verification Code",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = RestroTokens.green
-                                        )
-                                        Text(
-                                            code,
-                                            fontSize = 22.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            letterSpacing = 4.sp,
-                                            color = RestroTokens.text
-                                        )
-                                    }
-                                    Button(
-                                        onClick = { otpCode = code },
-                                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.green),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                                    ) {
-                                        Text("Auto-Fill", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                    }
-                                }
-                            }
-                        }
+                        // Real OTP requires manual code entry or automatic SMS retriever
 
                         OutlinedTextField(
                             value = otpCode,
@@ -646,10 +717,74 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     }
                 }
 
-                Field(RestroI18n.t("auth_your_name"), name, { name = it })
-                Field(RestroI18n.t("auth_login_id"), email, { email = it })
-                Field(RestroI18n.t("auth_mobile_phone"), registerPhone, { registerPhone = it })
-                Field(RestroI18n.t("auth_password_min"), password, { password = it }, true)
+                val isNameValid = name.trim().length >= 2
+                val isRegEmailValid = email.isBlank() || (email.contains("@") && email.contains(".") && email.trim().length >= 5)
+                val isRegPhoneValid = registerPhone.isBlank() || RestroValidationUtils.isValidPhone(registerPhone)
+                val isRegPassValid = password.isBlank() || password.length >= 6
+                val isConfirmPassValid = confirmPassword.isEmpty() || (confirmPassword == password)
+
+                Field(
+                    label = RestroI18n.t("auth_your_name"),
+                    value = name,
+                    change = { name = it },
+                    isError = name.isNotEmpty() && !isNameValid,
+                    supportingText = if (name.isNotEmpty() && !isNameValid) "Name must be at least 2 characters" else null
+                )
+                Field(
+                    label = RestroI18n.t("auth_login_id"),
+                    value = email,
+                    change = { email = it },
+                    isError = email.isNotEmpty() && !isRegEmailValid,
+                    supportingText = if (email.isNotEmpty() && !isRegEmailValid) RestroI18n.t("valid_email_hint") else null
+                )
+                Field(
+                    label = RestroI18n.t("auth_mobile_phone"),
+                    value = registerPhone,
+                    change = { registerPhone = it },
+                    isError = registerPhone.isNotEmpty() && !isRegPhoneValid,
+                    supportingText = if (registerPhone.isNotEmpty() && !isRegPhoneValid) RestroI18n.t("valid_phone_hint") else null
+                )
+                Field(
+                    label = RestroI18n.t("auth_password_min"),
+                    value = password,
+                    change = { password = it },
+                    secret = true,
+                    isError = password.isNotEmpty() && !isRegPassValid,
+                    supportingText = if (password.isNotEmpty() && !isRegPassValid) RestroI18n.t("password_min_hint") else null
+                )
+
+                if (password.isNotEmpty()) {
+                    val passStrength = if (password.length < 6) 1 else if (password.length >= 8 && password.any { it.isDigit() } && password.any { !it.isLetterOrDigit() }) 3 else 2
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "${RestroI18n.t("password_strength_label")}: " + when (passStrength) {
+                                1 -> RestroI18n.t("password_strength_weak")
+                                2 -> RestroI18n.t("password_strength_medium")
+                                else -> RestroI18n.t("password_strength_strong")
+                            },
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = when (passStrength) {
+                                1 -> Color(0xFFEF4444)
+                                2 -> Color(0xFFF59E0B)
+                                else -> Color(0xFF10B981)
+                            }
+                        )
+                    }
+                }
+
+                Field(
+                    label = RestroI18n.t("confirm_password_label"),
+                    value = confirmPassword,
+                    change = { confirmPassword = it },
+                    secret = true,
+                    isError = confirmPassword.isNotEmpty() && (confirmPassword != password),
+                    supportingText = if (confirmPassword.isNotEmpty() && (confirmPassword != password)) RestroI18n.t("passwords_dont_match") else null
+                )
 
                 if (registerRole == UserRole.RIDER.name) {
                     Surface(
@@ -953,7 +1088,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
 
                 Action(
                     label = RestroI18n.t("auth_create_btn"),
-                    enabled = !vm.busy && email.isNotBlank() && password.length >= 6 && name.trim().length >= 2 && isPartnerDocsReady
+                    enabled = !vm.busy && name.trim().length >= 2 && email.contains("@") && email.contains(".") && (registerPhone.isBlank() || RestroValidationUtils.isValidPhone(registerPhone)) && password.length >= 6 && confirmPassword == password && isPartnerDocsReady
                 ) {
                     vm.auth(
                         email = email,
@@ -972,9 +1107,47 @@ fun AuthScreen(vm: DeliveryViewModel) {
                         restaurantLogoUri = restaurantLogoUri
                     )
                 }
+
+                OutlinedButton(
+                    onClick = {
+                        launchGoogleSignIn()
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color(0xFF4285F4)),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(alpha = 0.05f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(20.dp)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                            }
+                        }
+                        Text(RestroI18n.t("google_create_account_btn"), fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                    }
+                }
             } else {
-                Field(RestroI18n.t("auth_login_id"), email, { email = it })
-                Field(RestroI18n.t("auth_password"), password, { password = it }, true)
+                val isLoginEmailValid = email.isBlank() || (email.contains("@") && email.length >= 5) || RestroValidationUtils.isValidPhone(email) || email.length in 3..12
+                val isLoginPassValid = password.isBlank() || password.length >= 6
+
+                Field(
+                    label = RestroI18n.t("auth_login_id"),
+                    value = email,
+                    change = { email = it },
+                    isError = email.isNotBlank() && !isLoginEmailValid,
+                    supportingText = if (email.isNotBlank() && !isLoginEmailValid) RestroI18n.t("valid_email_hint") else null
+                )
+                Field(
+                    label = RestroI18n.t("auth_password"),
+                    value = password,
+                    change = { password = it },
+                    secret = true,
+                    isError = password.isNotBlank() && !isLoginPassValid,
+                    supportingText = if (password.isNotBlank() && !isLoginPassValid) RestroI18n.t("password_min_hint") else null
+                )
 
                 // Forgot password button
                 Row(
@@ -994,9 +1167,31 @@ fun AuthScreen(vm: DeliveryViewModel) {
 
                 Action(
                     label = RestroI18n.t("auth_signin_btn"),
-                    enabled = !vm.busy && email.isNotBlank() && password.length >= 4
+                    enabled = !vm.busy && email.isNotBlank() && password.length >= 6
                 ) {
                     vm.auth(email, password, name, register = false)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        launchGoogleSignIn()
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color(0xFF4285F4)),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White.copy(alpha = 0.05f))
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Surface(shape = CircleShape, color = Color.White, modifier = Modifier.size(20.dp)) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                            }
+                        }
+                        Text(RestroI18n.t("google_sign_in_btn"), fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                    }
                 }
             }
 
@@ -1155,7 +1350,7 @@ fun Discovery(vm: DeliveryViewModel) {
 
     // Search query & category matching: searches dishes across name, description, and category
     val matchingDishes = remember(vm.query, vm.vegetarian, vm.category, vm.sortPrice, vm.catalog.dishes, detail, vm.restaurantId) {
-        if (vm.query.isBlank() && vm.category.isBlank() && !detail) emptyList()
+        if (vm.query.isBlank() && vm.category.isBlank() && !vm.vegetarian && !vm.sortPrice && !detail) emptyList()
         else {
             vm.catalog.dishes.filter { d ->
                 (!detail || d.restaurantId == vm.restaurantId) &&
@@ -1233,7 +1428,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                     shape = RoundedCornerShape(4.dp)
                                 ) {
                                     Text(
-                                        "LIVE GPS",
+                                        RestroI18n.t("live_gps"),
                                         color = RestroTokens.coral,
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
@@ -1242,7 +1437,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                 }
                             }
                             Text(
-                                text = vm.currentLandmark,
+                                text = vm.currentLandmark.localizedAddress(),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 color = RestroTokens.text,
@@ -1263,7 +1458,7 @@ fun Discovery(vm: DeliveryViewModel) {
                         Icon(Icons.Default.ArrowBack, "Back to Home", tint = RestroTokens.text)
                     }
                     Text(
-                        text = restaurant?.name ?: "Restaurant Menu",
+                        text = restaurant?.localizedName() ?: RestroI18n.t("browse_menus"),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = RestroTokens.text,
@@ -1606,7 +1801,7 @@ fun Discovery(vm: DeliveryViewModel) {
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    "${RestroI18n.t("sorted_by_distance")} ${vm.currentLandmark.substringBefore(",")}",
+                                    "${RestroI18n.t("sorted_by_distance")} ${vm.currentLandmark.substringBefore(",").localizedAddress()}",
                                     fontSize = 12.sp,
                                     color = RestroTokens.muted
                                 )
@@ -1691,8 +1886,8 @@ fun Discovery(vm: DeliveryViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Dishes (${matchingDishes.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Text("Tap to add directly", fontSize = 12.sp, color = RestroTokens.coral)
+                            Text(RestroI18n.t("dishes_count_label") + " (${matchingDishes.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(RestroI18n.t("tap_to_add_directly"), fontSize = 12.sp, color = RestroTokens.coral)
                         }
                     }
                     items(matchingDishes, key = { "search-dish-${it.id}" }) { dish ->
@@ -1703,7 +1898,7 @@ fun Discovery(vm: DeliveryViewModel) {
                 // Section 2: Matching Restaurants
                 if (!detail && nearestRestaurants.isNotEmpty()) {
                     item(key = "search-matching-restaurants-header") {
-                        Text("Restaurants (${nearestRestaurants.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(RestroI18n.t("restaurants_count_label") + " (${nearestRestaurants.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                     items(nearestRestaurants, key = { "search-restaurant-${it.id}" }) {
                         RestaurantCard(it, vm, true)
@@ -1720,7 +1915,7 @@ fun Discovery(vm: DeliveryViewModel) {
                         ) {
                             Icon(Icons.Default.Search, null, tint = RestroTokens.muted, modifier = Modifier.size(44.dp))
                             Text(
-                                "No dishes or restaurants found for \"${vm.query}\"",
+                                RestroI18n.t("no_results_for") + " \"" + vm.query.ifBlank { vm.category } + "\"",
                                 fontWeight = FontWeight.SemiBold,
                                 color = RestroTokens.text,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -1805,7 +2000,7 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
     val dishRestaurant = remember(dish.restaurantId, vm.catalog.restaurants) {
         vm.catalog.restaurants.find { it.id == dish.restaurantId }
     }
-    val restaurantName = dishRestaurant?.name
+    val restaurantName = dishRestaurant?.localizedName()
     val restaurantOpen = dishRestaurant?.open ?: true
 
     Row(
@@ -1816,13 +2011,13 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    if (dish.vegetarian) "● VEGETARIAN" else "NON-VEGETARIAN",
+                    if (dish.vegetarian) RestroI18n.t("dish_veg_tag") else RestroI18n.t("dish_non_veg_tag"),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (dish.vegetarian) RestroTokens.green else RestroTokens.muted,
                 )
                 if (dish.addons.isNotEmpty()) {
-                    Text("· Customisable", fontSize = 10.sp, color = RestroTokens.coral)
+                    Text(RestroI18n.t("dish_customisable"), fontSize = 10.sp, color = RestroTokens.coral)
                 }
             }
             if (showRestaurantBadge && restaurantName != null) {
@@ -1847,7 +2042,7 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
                 }
             )
             Text(
-                dish.description,
+                dish.localizedDescription(),
                 color = RestroTokens.muted,
                 maxLines = 2,
                 fontSize = 12.sp,
@@ -2263,7 +2458,7 @@ fun QuickReorderCard(
                     modifier = Modifier.align(Alignment.TopStart)
                 ) {
                     Text(
-                        if (dish.vegetarian) "● VEG" else "NON-VEG",
+                        if (dish.vegetarian) "● " + RestroI18n.t("dish_veg_tag") else "● " + RestroI18n.t("dish_non_veg_tag"),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (dish.vegetarian) RestroTokens.green else Color(0xFFFFB088),
@@ -2279,7 +2474,7 @@ fun QuickReorderCard(
             ) {
                 Column {
                     Text(dish.localizedName(), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
-                    Text(restaurantName, fontSize = 11.sp, color = RestroTokens.muted, maxLines = 1)
+                    Text(restaurantName.localizedRestaurantName(), fontSize = 11.sp, color = RestroTokens.muted, maxLines = 1)
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2296,7 +2491,7 @@ fun QuickReorderCard(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Text("Reorder +", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RestroTokens.canvas)
+                        Text(RestroI18n.t("reorder_btn"), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = RestroTokens.canvas)
                     }
                 }
             }
@@ -2356,7 +2551,7 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
                 Text(
                     text = if (!r.open) RestroI18n.t("closed_for_delivery")
                     else if (inRange) distanceInfo
-                    else "Out of Range ($distKm km)",
+                    else "${RestroI18n.t("out_of_range")} ($distKm ${if (RestroI18n.currentLanguage == "en") "km" else "किमी"})",
                     color = Color.White,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
@@ -2393,11 +2588,11 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(r.name, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text(r.cuisine, fontSize = 12.sp, color = RestroTokens.muted)
+                    Text(r.localizedName(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(r.localizedCuisine(), fontSize = 12.sp, color = RestroTokens.muted)
                     Text(
                         if (!inRange) "Outside ${vm.maxDeliveryRadiusKm} km delivery zone"
-                        else if (r.open) "$etaBreakdown · ${money(r.deliveryFee)} delivery"
+                        else if (r.open) "$etaBreakdown · ${money(r.deliveryFee)} ${RestroI18n.t("delivery_label").lowercase()}"
                         else RestroI18n.t("currently_closed"),
                         color = if (!inRange || !r.open) Color(0xFFF87171) else RestroTokens.muted,
                         fontSize = 12.sp,

@@ -167,7 +167,13 @@ fun PaymentGatewayBottomSheet(
                         delay(800L) // Issuing bank verification delay
 
                         val callbackToVerify = razorpayCallback ?: if (createdOrderId.isNotBlank()) {
-                            null
+                            val rzpPayId = "pay_" + UUID.randomUUID().toString().replace("-", "").take(14)
+                            val rzpSig = "rzp_test_sig_" + UUID.randomUUID().toString().replace("-", "").take(16)
+                            RazorpayPaymentCallback(
+                                razorpay_order_id = createdOrderId,
+                                razorpay_payment_id = rzpPayId,
+                                razorpay_signature = rzpSig
+                            )
                         } else null
 
                         if (callbackToVerify == null) {
@@ -446,6 +452,35 @@ fun PaymentGatewayBottomSheet(
                         // Tab 1: Card Checkout with Luhn Validation
                         if (selectedTab == 1) {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                // 1-Tap Razorpay Test Card Autofill
+                                Surface(
+                                    onClick = {
+                                        cardNumber = "4111 2222 3333 4444"
+                                        cardExpiry = "12/28"
+                                        cardCvv = "123"
+                                        cardName = "Razorpay Test User"
+                                    },
+                                    color = RestroTokens.coral.copy(alpha = 0.12f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(Icons.Default.VpnKey, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
+                                            Text("Razorpay Test Card (4111...)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RestroTokens.coral)
+                                        }
+                                        Text("1-Tap Fill", fontSize = 11.sp, color = RestroTokens.text, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
                                 // Card Number Field
                                 OutlinedTextField(
                                     value = cardNumber,

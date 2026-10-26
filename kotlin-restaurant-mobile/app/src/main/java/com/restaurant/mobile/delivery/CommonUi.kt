@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 
 @Composable
@@ -45,16 +46,30 @@ fun Action(label: String, enabled: Boolean = true, action: () -> Unit) {
 }
 
 @Composable
-fun Field(label: String, value: String, change: (String) -> Unit, secret: Boolean = false) {
+fun Field(
+    label: String,
+    value: String,
+    change: (String) -> Unit,
+    secret: Boolean = false,
+    isError: Boolean = false,
+    supportingText: String? = null,
+    leadingIcon: @Composable (() -> Unit)? = null
+) {
     var visible by rememberSaveable { mutableStateOf(false) }
     OutlinedTextField(
         value = value,
         onValueChange = { change(it.take(if (secret) 128 else 1000)) },
+        isError = isError,
+        supportingText = if (supportingText != null) {
+            { Text(supportingText, fontSize = 11.sp, color = if (isError) MaterialTheme.colorScheme.error else RestroTokens.muted) }
+        } else null,
+        leadingIcon = leadingIcon,
         keyboardOptions =
             androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType =
                     if (secret) androidx.compose.ui.text.input.KeyboardType.Password
-                    else if (label == "Email") androidx.compose.ui.text.input.KeyboardType.Email
+                    else if (label.contains("Email", ignoreCase = true) || label.contains("Login", ignoreCase = true) || label.contains("आईडी", ignoreCase = true)) androidx.compose.ui.text.input.KeyboardType.Email
+                    else if (label.contains("Phone", ignoreCase = true) || label.contains("फोन", ignoreCase = true)) androidx.compose.ui.text.input.KeyboardType.Phone
                     else androidx.compose.ui.text.input.KeyboardType.Text
             ),
         label = { Text(label) },
@@ -72,6 +87,10 @@ fun Field(label: String, value: String, change: (String) -> Unit, secret: Boolea
                             if (visible) "Hide password" else "Show password",
                         )
                     }
+                }
+            } else if (isError) {
+                {
+                    Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error)
                 }
             } else null,
     )

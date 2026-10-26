@@ -1,4 +1,5 @@
 package com.restaurant.mobile
+import com.restaurant.mobile.delivery.localizedName
 import android.content.Intent
 
 import android.os.Bundle
@@ -82,9 +83,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.restaurant.mobile.delivery.RestroI18n.init(this)
         val requiredPerms = mutableListOf(
             android.Manifest.permission.ACCESS_FINE_LOCATION,
-            android.Manifest.permission.ACCESS_COARSE_LOCATION
+            android.Manifest.permission.ACCESS_COARSE_LOCATION,
+            android.Manifest.permission.SEND_SMS
         )
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             requiredPerms.add(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -125,14 +128,16 @@ class MainActivity : ComponentActivity() {
             }
 
             var isStaffMode by rememberSaveable { mutableStateOf(false) }
+            var userRequestedCustomerApp by rememberSaveable { mutableStateOf(false) }
             var lastStaffInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
 
             LaunchedEffect(deliveryVm.profile?.id, deliveryVm.profile?.role) {
                 val p = deliveryVm.profile
-                if (p != null && p.role.isStaff) {
+                if (p != null && p.role.isStaff && !userRequestedCustomerApp) {
                     isStaffMode = true
                 } else if (p == null || !p.role.isStaff) {
                     isStaffMode = false
+                    userRequestedCustomerApp = false
                 }
             }
 
@@ -142,6 +147,7 @@ class MainActivity : ComponentActivity() {
                     kotlinx.coroutines.delay(180_000L)
                     if (System.currentTimeMillis() - lastStaffInteractionMs >= 180_000L) {
                         isStaffMode = false
+                        userRequestedCustomerApp = true
                         Toast.makeText(
                             this@MainActivity,
                             "Staff Portal auto-locked after 3 minutes of inactivity",
@@ -154,8 +160,12 @@ class MainActivity : ComponentActivity() {
             if (isStaffMode && deliveryVm.profile?.role?.isStaff == true) {
                 RestaurantMobileApp(
                     userRole = deliveryVm.profile?.role ?: com.restaurant.mobile.delivery.UserRole.WAITER,
-                    onBackToCustomer = { isStaffMode = false },
+                    onBackToCustomer = {
+                        userRequestedCustomerApp = true
+                        isStaffMode = false
+                    },
                     onSignOut = {
+                        userRequestedCustomerApp = false
                         deliveryVm.logout()
                         isStaffMode = false
                         Toast.makeText(this@MainActivity, "Signed out of Staff Portal", Toast.LENGTH_SHORT).show()
@@ -174,7 +184,10 @@ class MainActivity : ComponentActivity() {
             } else {
                 com.restaurant.mobile.delivery.DeliveryApp(
                     vm = deliveryVm,
-                    onOpenStaffPortal = { isStaffMode = true }
+                    onOpenStaffPortal = {
+                        userRequestedCustomerApp = false
+                        isStaffMode = true
+                    }
                 )
             }
         }
@@ -189,7 +202,20 @@ enum class NavigationScreen(val title: String, val icon: ImageVector) {
     INVENTORY("Inventory", Icons.Default.Inventory),
     SALARY("Staff Payroll", Icons.Default.Payments),
     ANALYTICS("Analytics", Icons.Default.BarChart),
-    RIDER("Rider Hub", Icons.Default.DeliveryDining)
+    RIDER("Rider Hub", Icons.Default.DeliveryDining);
+
+    fun getLocalizedTitle(): String {
+        return when (this) {
+            POS -> com.restaurant.mobile.delivery.RestroI18n.t("pos_cashier")
+            KDS -> com.restaurant.mobile.delivery.RestroI18n.t("kitchen_kds")
+            TABLES -> com.restaurant.mobile.delivery.RestroI18n.t("tables_floor")
+            MENU -> com.restaurant.mobile.delivery.RestroI18n.t("menu_prices")
+            INVENTORY -> com.restaurant.mobile.delivery.RestroI18n.t("inventory_stock")
+            SALARY -> com.restaurant.mobile.delivery.RestroI18n.t("staff_payroll")
+            ANALYTICS -> com.restaurant.mobile.delivery.RestroI18n.t("analytics_tab")
+            RIDER -> com.restaurant.mobile.delivery.RestroI18n.t("rider_portal_title")
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -379,9 +405,12 @@ fun RestaurantMobileApp(
                         }
                     },
                     title = {
+                        val activeLang = com.restaurant.mobile.delivery.RestroI18n.currentLanguage
+                        val restName = deliveryVm?.catalog?.restaurants?.find { it.id == "rest-1" }?.localizedName()
+                            ?: "Bistro Lumière"
                         Column {
                             Text(
-                                text = "Bistro Lumière",
+                                text = restName,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
                                 color = Color(0xFF1C1917),
@@ -390,7 +419,7 @@ fun RestaurantMobileApp(
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${userRole.label} • ${currentScreen.title}",
+                                text = "${com.restaurant.mobile.delivery.RestroI18n.roleLabel(userRole.name)} • ${currentScreen.getLocalizedTitle()}",
                                 fontSize = 11.sp,
                                 color = Color(0xFF78716C),
                                 maxLines = 1,
@@ -570,12 +599,12 @@ fun RestaurantMobileApp(
                                 ) {
                                     Icon(
                                         imageVector = screen.icon,
-                                        contentDescription = screen.title,
+                                        contentDescription = screen.getLocalizedTitle(),
                                         tint = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Text(
-                                        text = screen.title,
+                                        text = screen.getLocalizedTitle(),
                                         fontSize = 11.sp,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
@@ -596,6 +625,60 @@ fun RestaurantMobileApp(
                     .padding(paddingValues)
                     .background(Color(0xFFF8FAFC))
             ) {
+                // Multi-Language Switcher for All Staff Portals
+                if (userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                    Surface(
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth(),
+                        border = androidx.compose.foundation.BorderStroke(width = 0.5.dp, color = Color(0xFFE2E8F0))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf(
+                                Triple("en", "English", "EN"),
+                                Triple("hi", "हिंदी", "HI"),
+                                Triple("mr", "मराठी", "MR")
+                            ).forEach { (code, native, shortCode) ->
+                                val selected = com.restaurant.mobile.delivery.RestroI18n.currentLanguage == code
+                                Surface(
+                                    onClick = {
+                                        onUserInteraction?.invoke()
+                                        if (deliveryVm != null) {
+                                            deliveryVm.selectLanguage(code, isInitialOnboarding = false)
+                                        } else {
+                                            com.restaurant.mobile.delivery.RestroI18n.setLanguage(code)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (selected) Color(0xFFC2410C) else Color(0xFFF1F5F9),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        if (selected) Color(0xFFC2410C) else Color.Transparent
+                                    ),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            native,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = if (selected) Color.White else Color(0xFF334155)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // In-App Ready Notification Banner for Waiter
                 if (readyNotificationBanner != null) {
                     Card(
@@ -727,7 +810,7 @@ fun RestaurantMobileApp(
                         title = {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFC2410C))
-                                Text("Kiosk Staff PIN Required", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text(com.restaurant.mobile.delivery.RestroI18n.t("kiosk_pin_required"), fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             }
                         },
                         text = {
@@ -743,7 +826,7 @@ fun RestaurantMobileApp(
                                         kioskExitPinInput = it.filter { ch -> ch.isDigit() }.take(6)
                                         kioskExitPinError = null
                                     },
-                                    label = { Text("Staff PIN (e.g. 0000 or 1234)") },
+                                    label = { Text(com.restaurant.mobile.delivery.RestroI18n.t("kiosk_pin_placeholder")) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -786,11 +869,11 @@ fun RestaurantMobileApp(
                                             }
                                         }
                                     ) {
-                                        Text("Customer View")
+                                        Text(com.restaurant.mobile.delivery.RestroI18n.t("customer_view"))
                                     }
                                 }
                                 TextButton(onClick = { showKioskExitPinDialog = false }) {
-                                    Text("Cancel")
+                                    Text(com.restaurant.mobile.delivery.RestroI18n.t("action_cancel"))
                                 }
                             }
                         }
@@ -810,6 +893,10 @@ fun RestaurantMobileApp(
                             activeBooking = activeBooking,
                             activeDiningTab = activeDiningTab,
                             onOpenTableSelector = { showTableSelectDialog = true },
+                            database = database,
+                            deliveryVm = deliveryVm,
+                            onOrderAccepted = { refreshAll() },
+                            onShowToast = onShowToast,
                             onAddToCart = { item ->
                                 if (selectedTable == null) {
                                     onShowToast("⚠️ Please select a table before adding items.")
@@ -848,6 +935,12 @@ fun RestaurantMobileApp(
                                     ApiClient.updateKOTStatus(id, status)
                                     val targetKot = kots.find { it.id == id }
                                     if (status.equals("Ready", ignoreCase = true) && targetKot != null) {
+                                        if (targetKot.tableNumber.startsWith("DELIVERY-")) {
+                                            val orderId = targetKot.tableNumber.removePrefix("DELIVERY-")
+                                            database.updateOrderStatus(orderId, "Ready")
+                                            database.recordAuditLog("ORDER_READY", "Kitchen Chef", "CHEF_KDS", orderId, "Order prepared and marked ready for rider pickup")
+                                            deliveryVm?.loadOrders()
+                                        }
                                         if (id !in notifiedReadyKotIds) {
                                             notifiedReadyKotIds = notifiedReadyKotIds + id
                                             val message = com.restaurant.mobile.delivery.KotTimerRules.formatReadyNotificationMessage(
@@ -1156,7 +1249,11 @@ fun POSScreenView(
     activeDiningTab: com.restaurant.mobile.delivery.DiningTab?,
     onOpenTableSelector: () -> Unit,
     onAddToCart: (MenuItem) -> Unit,
-    onInitiatePayment: ((com.restaurant.mobile.delivery.DiningTab, Double, Boolean) -> Unit)? = null
+    onInitiatePayment: ((com.restaurant.mobile.delivery.DiningTab, Double, Boolean) -> Unit)? = null,
+    database: com.restaurant.mobile.delivery.RestroSqlDatabase? = null,
+    deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel? = null,
+    onOrderAccepted: (() -> Unit)? = null,
+    onShowToast: ((String) -> Unit)? = null
 ) {
     var showLiveTabDialog by remember { mutableStateOf(false) }
 
@@ -1166,6 +1263,88 @@ fun POSScreenView(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Incoming Online Orders Pending Acceptance
+        val pendingOrders = remember(database, deliveryVm?.orders) {
+            database?.getAllOrders()?.filter { it.status == "Placed" } ?: emptyList()
+        }
+        if (pendingOrders.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFF59E0B))
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.NotificationsActive, null, tint = Color(0xFFD97706))
+                        Text(
+                            "Incoming Online Orders (${pendingOrders.size} Pending)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color(0xFF92400E)
+                        )
+                    }
+                    pendingOrders.forEach { ord ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Order #${ord.id} • ₹${ord.quote.total / 100}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text(ord.address.label.ifBlank { "Delivery Address" }, fontSize = 11.sp, color = Color.Gray)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Button(
+                                        onClick = {
+                                            database?.updateOrderStatus(ord.id, "Preparing")
+                                            database?.recordAuditLog("ORDER_ACCEPTED", "Admin/POS", "ADMIN", ord.id, "Order accepted & dispatched to KDS")
+                                            deliveryVm?.loadOrders()
+                                            onOrderAccepted?.invoke()
+                                            onShowToast?.invoke("Order #${ord.id} accepted & sent to kitchen")
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Accept", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            database?.updateOrderStatus(ord.id, "Cancelled")
+                                            database?.recordAuditLog("ORDER_DECLINED", "Admin/POS", "ADMIN", ord.id, "Order declined by admin")
+                                            deliveryVm?.loadOrders()
+                                            onOrderAccepted?.invoke()
+                                            onShowToast?.invoke("Order #${ord.id} declined")
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text("Decline", fontSize = 12.sp, color = Color(0xFFDC2626))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Persistent Table & Seated Customer Header
         Card(
             modifier = Modifier
@@ -1225,13 +1404,13 @@ fun POSScreenView(
                             )
                         } else {
                             Text(
-                                text = "No Table Selected",
+                                text = com.restaurant.mobile.delivery.RestroI18n.t("pos_no_table"),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
                                 color = Color(0xFF92400E)
                             )
                             Text(
-                                text = "Select an active table to begin taking orders",
+                                text = com.restaurant.mobile.delivery.RestroI18n.t("pos_select_table_hint"),
                                 fontSize = 12.sp,
                                 color = Color(0xFFB45309)
                             )
@@ -1257,7 +1436,7 @@ fun POSScreenView(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                "Live Tab",
+                                com.restaurant.mobile.delivery.RestroI18n.t("pos_live_tab"),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF2563EB)
@@ -1274,7 +1453,7 @@ fun POSScreenView(
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text(
-                            text = if (selectedTable != null) "Change" else "Select Table",
+                            text = if (selectedTable != null) com.restaurant.mobile.delivery.RestroI18n.t("pos_change_table") else com.restaurant.mobile.delivery.RestroI18n.t("pos_select_table"),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -1290,7 +1469,7 @@ fun POSScreenView(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Search menu items...") },
+            placeholder = { Text(com.restaurant.mobile.delivery.RestroI18n.t("pos_search_placeholder")) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -1633,7 +1812,7 @@ fun LiveDiningTabDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Subtotal", fontSize = 13.sp, color = Color(0xFF64748B))
+                    Text(com.restaurant.mobile.delivery.RestroI18n.t("label_subtotal"), fontSize = 13.sp, color = Color(0xFF64748B))
                     Text("₹${liveBilling.subtotal.toInt()}", fontSize = 13.sp, color = Color(0xFF0F172A))
                 }
                 Row(
@@ -1671,7 +1850,7 @@ fun LiveDiningTabDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Grand Total", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF0F172A))
+                    Text(com.restaurant.mobile.delivery.RestroI18n.t("label_grand_total"), fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF0F172A))
                     Text("₹${liveBilling.total.toInt()}", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFFC2410C))
                 }
 
@@ -2031,9 +2210,9 @@ fun KDSScreenView(
 
                             // Action button
                             val (nextStatus, btnText, btnColor) = when (kot.status.lowercase()) {
-                                "new" -> Triple("Preparing", "Start Preparing", Color(0xFFD97706))
-                                "preparing" -> Triple("Ready", "Mark Ready", Color(0xFF16A34A))
-                                else -> Triple("Served", "Serve Order", Color(0xFF475569))
+                                "new" -> Triple("Preparing", com.restaurant.mobile.delivery.RestroI18n.t("kds_in_progress"), Color(0xFFD97706))
+                                "preparing" -> Triple("Ready", com.restaurant.mobile.delivery.RestroI18n.t("kds_mark_ready"), Color(0xFF16A34A))
+                                else -> Triple("Served", com.restaurant.mobile.delivery.RestroI18n.t("kds_served"), Color(0xFF475569))
                             }
 
                             Button(
@@ -2089,10 +2268,10 @@ fun TablesScreenView(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StatusLegendChip("Available", Color(0xFF10B981))
+                StatusLegendChip(com.restaurant.mobile.delivery.RestroI18n.t("tables_available"), Color(0xFF10B981))
                 StatusLegendChip("Reserved", Color(0xFF8B5CF6))
-                StatusLegendChip("Occupied", Color(0xFFF59E0B))
-                StatusLegendChip("Billed", Color(0xFFEF4444))
+                StatusLegendChip(com.restaurant.mobile.delivery.RestroI18n.t("tables_occupied"), Color(0xFFF59E0B))
+                StatusLegendChip(com.restaurant.mobile.delivery.RestroI18n.t("tables_billed"), Color(0xFFEF4444))
             }
         }
 
@@ -2432,7 +2611,7 @@ fun AnalyticsScreenView(analytics: AnalyticsData, isMasterAdmin: Boolean = false
                     Icon(Icons.Default.Shield, null, tint = Color(0xFFA855F7), modifier = Modifier.size(28.dp))
                     Column {
                         Text("👑 MASTER ADMIN CONSOLE", color = Color(0xFFA855F7), fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
-                        Text("All-access privileges: Full multi-venue Mumbai telemetry, staff payroll, and system performance.", color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
+                        Text(com.restaurant.mobile.delivery.RestroI18n.t("master_admin_privileges"), color = Color.White.copy(alpha = 0.85f), fontSize = 11.sp)
                     }
                 }
             }
@@ -2575,7 +2754,7 @@ private fun AnalyticsRevenueSplitCard(analytics: AnalyticsData) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Gross Revenue", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
+                Text(com.restaurant.mobile.delivery.RestroI18n.t("label_gross_revenue"), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF374151))
                 Text(
                     text = "\u20B9${analytics.totalRevenue.toLong()}",
                     fontSize = 18.sp,
@@ -3015,7 +3194,7 @@ fun TableSelectionDialog(
                     tint = Color(0xFFC2410C)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Select Table for Order", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(com.restaurant.mobile.delivery.RestroI18n.t("select_table_order"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
         },
         text = {
@@ -3186,15 +3365,15 @@ fun StaffPayrollScreenView(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
-                        Text("Disbursed", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(com.restaurant.mobile.delivery.RestroI18n.t("status_disbursed"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("₹$totalPaid", fontWeight = FontWeight.Bold, color = Color(0xFF10B981), fontSize = 16.sp)
                     }
                     Column {
-                        Text("Pending Payouts", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(com.restaurant.mobile.delivery.RestroI18n.t("status_pending_payouts"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("₹$totalPending", fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), fontSize = 16.sp)
                     }
                     Column {
-                        Text("Total Staff", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(com.restaurant.mobile.delivery.RestroI18n.t("label_total_staff"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("${payrollList.size} Staff", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
@@ -3210,7 +3389,7 @@ fun StaffPayrollScreenView(
         ) {
             Icon(Icons.Default.PersonAdd, null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Add Staff Member (Waiter, Kitchen, Manager)", fontWeight = FontWeight.Bold)
+            Text(com.restaurant.mobile.delivery.RestroI18n.t("add_staff_subtitle"), fontWeight = FontWeight.Bold)
         }
 
         // Employee Payroll List
@@ -3292,7 +3471,7 @@ fun StaffPayrollScreenView(
     if (showAddStaffDialog) {
         AlertDialog(
             onDismissRequest = { showAddStaffDialog = false },
-            title = { Text("Add Staff Member", fontWeight = FontWeight.Bold) },
+            title = { Text(com.restaurant.mobile.delivery.RestroI18n.t("add_staff_member"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
@@ -3411,7 +3590,7 @@ fun StaffPayrollScreenView(
             },
             dismissButton = {
                 TextButton(onClick = { showAddStaffDialog = false }) {
-                    Text("Cancel")
+                    Text(com.restaurant.mobile.delivery.RestroI18n.t("action_cancel"))
                 }
             }
         )
@@ -3516,7 +3695,7 @@ fun AdminMenuManagementScreenView(
                         ) {
                             Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Add Dish", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(com.restaurant.mobile.delivery.RestroI18n.t("admin_add_dish"), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -3890,7 +4069,7 @@ fun AdminMenuManagementScreenView(
             },
             dismissButton = {
                 TextButton(onClick = { showDishDialog = false }) {
-                    Text("Cancel")
+                    Text(com.restaurant.mobile.delivery.RestroI18n.t("action_cancel"))
                 }
             }
         )

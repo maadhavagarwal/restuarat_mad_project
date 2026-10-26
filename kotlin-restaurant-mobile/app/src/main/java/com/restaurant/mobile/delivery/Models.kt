@@ -437,6 +437,9 @@ data class Review(
     val rating: Int,
     val text: String,
     val at: String = Instant.now().toString(),
+    val dishId: String = "",
+    val dishName: String = "",
+    val verifiedPurchase: Boolean = true,
 )
 
 data class Credentials(

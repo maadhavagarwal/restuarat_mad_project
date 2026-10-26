@@ -17,20 +17,59 @@ enum class AppLanguage(val code: String, val nativeName: String, val englishName
 
 object RestroI18n {
     var currentLanguage by mutableStateOf("en")
+    private var appContext: android.content.Context? = null
 
-    fun setLanguage(code: String) {
-        currentLanguage = when (code.lowercase()) {
+    fun init(context: android.content.Context) {
+        appContext = context.applicationContext
+        val prefs = appContext?.getSharedPreferences("restro_prefs", android.content.Context.MODE_PRIVATE)
+        val savedLang = prefs?.getString("app_language", null)
+        if (!savedLang.isNullOrBlank()) {
+            currentLanguage = when (savedLang.lowercase()) {
+                "hi" -> "hi"
+                "mr" -> "mr"
+                else -> "en"
+            }
+        }
+    }
+
+    fun setLanguage(code: String, context: android.content.Context? = null) {
+        val target = when (code.lowercase()) {
             "hi" -> "hi"
             "mr" -> "mr"
             else -> "en"
         }
+        currentLanguage = target
+        val ctx = context?.applicationContext ?: appContext
+        try {
+            ctx?.getSharedPreferences("restro_prefs", android.content.Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putString("app_language", target)
+                ?.apply()
+        } catch (_: Exception) {}
     }
 
     fun isHindi(): Boolean = currentLanguage == "hi"
     fun isMarathi(): Boolean = currentLanguage == "mr"
+
+    fun roleLabel(role: String): String {
+        val key = when (role.trim().lowercase()) {
+            "customer", "ग्राहक" -> "role_customer"
+            "manager", "admin", "प्रबंधक", "व्यवस्थापक" -> "role_admin"
+            "master admin", "मास्टर एडमिन" -> "role_master_admin"
+            "chef", "chef kds", "शेफ" -> "role_chef"
+            "waiter", "waiter pos", "वेटर" -> "role_waiter"
+            "rider", "delivery rider", "राइडर" -> "role_rider"
+            "kiosk", "कियोस्क" -> "role_kiosk"
+            else -> return role
+        }
+        return t(key)
+    }
     fun isEnglish(): Boolean = currentLanguage == "en"
 
     private val translations = mapOf(
+        "delivery_label" to mapOf("en" to "delivery", "hi" to "डिलीवरी", "mr" to "डिलिव्हरी"),
+        "out_of_range" to mapOf("en" to "Out of Range", "hi" to "डिलीवरी सीमा से बाहर", "mr" to "वितरण क्षेत्राबाहेर"),
+        "password_label" to mapOf("en" to "Pass", "hi" to "पास", "mr" to "पास"),
         // Navigation & Root Tabs
         "tab_delivery" to mapOf("en" to "Delivery", "hi" to "डिलीवरी", "mr" to "डिलिव्हरी"),
         "tab_dine_in" to mapOf("en" to "Dine-In", "hi" to "डाइन-इन", "mr" to "डायन-इन"),
@@ -315,7 +354,213 @@ object RestroI18n {
             "hi" to "अपने आस-पास के बेहतरीन रेस्तरां से स्वादिष्ट भोजन जोड़ें।",
             "mr" to "जवळपासच्या उत्तम हॉटेल्समधून स्वादिष्ट पदार्थ जोडा."
         ),
-        "browse_restaurants" to mapOf("en" to "Browse Restaurants", "hi" to "रेस्तरां देखें", "mr" to "हॉटेल्स पहा")
+        "browse_restaurants" to mapOf("en" to "Browse Restaurants", "hi" to "रेस्तरां देखें", "mr" to "हॉटेल्स पहा"),
+        
+        // Checkout & Billing Keys
+        "bill_summary" to mapOf("en" to "Bill Summary", "hi" to "बिल सारांश", "mr" to "बिल सारांश"),
+        "delivery_address" to mapOf("en" to "Delivery Address", "hi" to "डिलीवरी का पता", "mr" to "डिलिव्हरीचा पत्ता"),
+        "default_address" to mapOf("en" to "Default Delivery Location", "hi" to "डिफ़ॉल्ट डिलीवरी स्थान", "mr" to "डीफॉल्ट डिलिव्हरी ठिकाण"),
+        "add_custom_address" to mapOf("en" to "Add custom address", "hi" to "नया पता जोड़ें", "mr" to "नवीन पत्ता जोडा"),
+        "add_another_address" to mapOf("en" to "Add another address", "hi" to "अन्य पता जोड़ें", "mr" to "दुसरा पत्ता जोडा"),
+        "select_payment_method" to mapOf("en" to "Select Payment Method", "hi" to "भुगतान विधि चुनें", "mr" to "पेमेंट पद्धत निवडा"),
+        "order_summary" to mapOf("en" to "Order Summary", "hi" to "ऑर्डर सारांश", "mr" to "ऑर्डर सारांश"),
+        "delivery_partner_fee" to mapOf("en" to "Delivery Partner Fee", "hi" to "डिलीवरी पार्टनर शुल्क", "mr" to "डिलिव्हरी पार्टनर फी"),
+        "coupon_savings" to mapOf("en" to "Coupon Savings", "hi" to "कूपन बचत", "mr" to "कूपन सवलत"),
+        "grand_total_paid" to mapOf("en" to "Grand Total Paid", "hi" to "कुल भुगतान किया गया", "mr" to "एकूण भरलेली रक्कम"),
+        "view_menu" to mapOf("en" to "View Menu", "hi" to "मेनू देखें", "mr" to "मेनू पहा"),
+        "full_map" to mapOf("en" to "Full Map", "hi" to "पूरा मैप", "mr" to "पूर्ण नकाशा"),
+        "pay_bill" to mapOf("en" to "Pay Bill", "hi" to "बिल भरें", "mr" to "बिल भरा"),
+        "reset_filters" to mapOf("en" to "Reset Filters", "hi" to "फ़िल्टर रीसेट करें", "mr" to "फिल्टर्स रीसेट करा"),
+        "staff_tip" to mapOf("en" to "Staff Tip", "hi" to "स्टाफ टिप", "mr" to "कर्मचाऱ्यांना टीप"),
+        "instant_access" to mapOf("en" to "Instant Access", "hi" to "त्वरित पहुंच", "mr" to "त्वरित प्रवेश"),
+        "resend_otp" to mapOf("en" to "Resend OTP", "hi" to "ओटीपी पुनः भेजें", "mr" to "ओटीपी पुन्हा पाठवा"),
+        "clear_search" to mapOf("en" to "Clear Search", "hi" to "खोज साफ़ करें", "mr" to "शोध साफ करा"),
+        "service_charge" to mapOf("en" to "Service Charge", "hi" to "सेवा शुल्क", "mr" to "सेवा शुल्क"),
+        "checkout_title" to mapOf("en" to "Checkout", "hi" to "चेकआउट", "mr" to "चेकआऊट"),
+        "checkout_sub" to mapOf("en" to "Confirm delivery address and payment", "hi" to "डिलीवरी का पता और भुगतान की पुष्टि करें", "mr" to "डिलिव्हरी पत्ता आणि पेमेंट तपासा"),
+        "empty_cart_title" to mapOf("en" to "Your cart is empty", "hi" to "आपकी कार्ट खाली है", "mr" to "तुमची कार्ट रिकामी आहे"),
+        "empty_cart_desc" to mapOf("en" to "Add delicious dishes to your bag before checking out.", "hi" to "चेकआउट करने से पहले अपनी थाली में स्वादिष्ट व्यंजन जोड़ें।", "mr" to "चेकआऊट करण्यापूर्वी स्वादिष्ट पदार्थ जोडा."),
+        "browse_menus" to mapOf("en" to "Browse Menus", "hi" to "मेनू देखें", "mr" to "मेनू पाहा"),
+        "dish_veg_tag" to mapOf("en" to "● VEGETARIAN", "hi" to "● केवल शाकाहारी", "mr" to "● फक्त शाकाहारी"),
+        "dish_non_veg_tag" to mapOf("en" to "● NON-VEGETARIAN", "hi" to "● मांसाहारी", "mr" to "● मांसाहारी"),
+        "dish_customisable" to mapOf("en" to "· Customisable", "hi" to "· अनुकूलन योग्य", "mr" to "· बदल करता येईल"),
+        "tap_to_add_directly" to mapOf("en" to "Tap to add directly", "hi" to "सीधे जोड़ने के लिए टैप करें", "mr" to "थेट जोडण्यासाठी टॅप करा"),
+        "dishes_count_label" to mapOf("en" to "Dishes", "hi" to "व्यंजन", "mr" to "पदार्थ"),
+        "restaurants_count_label" to mapOf("en" to "Restaurants", "hi" to "रेस्तरां", "mr" to "हॉटेल्स"),
+        "no_results_for" to mapOf("en" to "No dishes or restaurants found for", "hi" to "इसके लिए कोई व्यंजन या रेस्तरां नहीं मिला", "mr" to "यासाठी कोणतेही पदार्थ किंवा हॉटेल्स आढळले नाहीत"),
+        "google_sign_in_btn" to mapOf("en" to "Continue with Google", "hi" to "Google के साथ जारी रखें", "mr" to "Google सह पुढे सुरू ठेवा"),
+        "google_create_account_btn" to mapOf("en" to "Sign up with Google", "hi" to "Google के साथ खाता बनाएं", "mr" to "Google सह खाते तयार करा"),
+        "demo_accounts_title" to mapOf("en" to "Demo Test Accounts (1-Tap Login)", "hi" to "डेमो टेस्ट खाते (1-टैप लॉगिन)", "mr" to "डेमो टेस्ट खाती (१-टॅप लॉगिन)"),
+        "demo_instant_access" to mapOf("en" to "Instant Access", "hi" to "त्वरित पहुंच", "mr" to "त्वरित प्रवेश"),
+        "valid_email_hint" to mapOf("en" to "Please enter a valid email address", "hi" to "कृपया एक वैध ईमेल पता दर्ज करें", "mr" to "कृपया वैध ईमेल पत्ता प्रविष्ट करा"),
+        "valid_phone_hint" to mapOf("en" to "Please enter a valid 10-digit mobile number", "hi" to "कृपया 10 अंकों का वैध मोबाइल नंबर दर्ज करें", "mr" to "कृपया १० अंकी वैध मोबाईल नंबर प्रविष्ट करा"),
+        "password_min_hint" to mapOf("en" to "Password must be at least 6 characters", "hi" to "पासवर्ड कम से कम 6 अक्षरों का होना चाहिए", "mr" to "पासवर्ड किमान ६ अक्षरांचा असावा"),
+        "passwords_dont_match" to mapOf("en" to "Passwords do not match", "hi" to "पासवर्ड मेल नहीं खाते", "mr" to "पासवर्ड जुळत नाहीत"),
+        "confirm_password_label" to mapOf("en" to "Confirm Password", "hi" to "पासवर्ड की पुष्टि करें", "mr" to "पासवर्डची पुष्टी करा"),
+        "password_strength_label" to mapOf("en" to "Password Strength", "hi" to "पासवर्ड की मजबूती", "mr" to "पासवर्डची ताकद"),
+        "password_strength_weak" to mapOf("en" to "Weak", "hi" to "कमजोर", "mr" to "कमकुवत"),
+        "password_strength_medium" to mapOf("en" to "Medium", "hi" to "मध्यम", "mr" to "मध्यम"),
+        "password_strength_strong" to mapOf("en" to "Strong", "hi" to "मजबूत", "mr" to "मजबूत"),
+        "google_signed_in_toast" to mapOf("en" to "Successfully signed in with Google!", "hi" to "Google के साथ सफलतापूर्वक साइन इन किया गया!", "mr" to "Google सह यशस्वीरीत्या साईन इन केले!"),
+        "mins_unit" to mapOf("en" to "mins", "hi" to "मिनट", "mr" to "मिनिटे"),
+        "reorder_btn" to mapOf("en" to "Reorder +", "hi" to "फिर ऑर्डर करें +", "mr" to "पुन्हा ऑर्डर +"),
+        "search_no_results_sub" to mapOf("en" to "Try searching for Biryani, Pizza, Burger, Noodles, or Paneer", "hi" to "बिरयानी, पिज़्ज़ा, बर्गर, नूडल्स या पनीर खोज कर देखें", "mr" to "बिर्याणी, पिझ्झा, बर्गर, नूडल्स किंवा पनीर शोधून पहा"),
+        "clear_search_btn" to mapOf("en" to "Clear Search", "hi" to "खोज हटाएं", "mr" to "शोध हटवा"),
+        "profile_sec_appearance" to mapOf("en" to "Appearance & Display", "hi" to "दिखावट और प्रदर्शन", "mr" to "देखावा आणि प्रदर्शन"),
+        "profile_sec_orders" to mapOf("en" to "Orders & Reservations", "hi" to "ऑर्डर और टेबल बुकिंग", "mr" to "ऑर्डर्स आणि आरक्षण"),
+        "profile_sec_security" to mapOf("en" to "Security & Preferences", "hi" to "सुरक्षा और प्राथमिकताएं", "mr" to "सुरक्षा आणि प्राधान्ये"),
+        "profile_sec_help" to mapOf("en" to "Help & Information", "hi" to "सहायता और जानकारी", "mr" to "मदत आणि माहिती"),
+        "saved_addresses_title" to mapOf("en" to "Saved Delivery Addresses", "hi" to "सहेजे गए डिलीवरी पते", "mr" to "जतन केलेले डिलिव्हरी पत्ते"),
+        "saved_addresses_sub" to mapOf("en" to "Manage Home, Work and GPS drop coordinates", "hi" to "घर, कार्यालय और जीपीएस स्थान प्रबंधित करें", "mr" to "घर, ऑफिस आणि जीपीएस ठिकाणे व्यवस्थापित करा"),
+        "change_password_title" to mapOf("en" to "Change & Update Password", "hi" to "पासवर्ड बदलें और अपडेट करें", "mr" to "पासवर्ड बदला आणि अपडेट करा"),
+        "change_password_sub" to mapOf("en" to "Manage your login credentials & account protection", "hi" to "लॉगिन क्रेडेंशियल और खाता सुरक्षा प्रबंधित करें", "mr" to "लॉगिन क्रेडेन्शियल आणि खाते सुरक्षा व्यवस्थापित करा"),
+        "customer_support_title" to mapOf("en" to "24x7 Customer Support", "hi" to "24x7 ग्राहक सहायता", "mr" to "२४x७ ग्राहक मदत"),
+        "customer_support_sub" to mapOf("en" to "Speak to our care team or report order issues", "hi" to "हमारी सहायता टीम से बात करें या समस्या बताएं", "mr" to "आमच्या मदत टीमशी बोला किंवा अडचण नोंदवा"),
+        "about_enterprise_title" to mapOf("en" to "About Restro Enterprise", "hi" to "रेस्ट्रो एंटरप्राइज के बारे में", "mr" to "रेस्ट्रो एंटरप्राइझबद्दल"),
+        "about_enterprise_sub" to mapOf("en" to "v2.4.0 Production Build • Terms & Privacy", "hi" to "v2.4.0 प्रोडक्शन बिल्ड · नियम और गोपनीयता", "mr" to "v2.4.0 प्रोडक्शन बिल्ड · अटी आणि गोपनीयता"),
+        "staff_portal_title" to mapOf("en" to "Staff Management Portal", "hi" to "स्टाफ प्रबंधन पोर्टल", "mr" to "कर्मचारी व्यवस्थापन पोर्टल"),
+        "staff_portal_sub" to mapOf("en" to "Access Waiter POS, KDS Kitchen Display and Admin Analytics", "hi" to "वेटर पीओएस, केडीएस किचन और एडमिन एनालिटिक्स खोलें", "mr" to "वेटर पीओएस, केडीएस किचन आणि ॲडमिन ॲनालिटिक्स उघडा"),
+        "sign_out_btn" to mapOf("en" to "Sign Out of Restro", "hi" to "रेस्ट्रो से लॉग आउट करें", "mr" to "रेस्ट्रोमधून लॉग आऊट करा"),
+        "sign_in_register_btn" to mapOf("en" to "Sign In or Register", "hi" to "साइन इन करें या खाता बनाएं", "mr" to "साइन इन करा किंवा खाते तयार करा"),
+        "logout_dialog_title" to mapOf("en" to "Sign Out", "hi" to "लॉग आउट करें", "mr" to "लॉग आऊट करा"),
+        "logout_dialog_desc" to mapOf("en" to "Are you sure you want to sign out from your Restro account? Your active cart and orders will be preserved upon re-login.", "hi" to "क्या आप वाकई अपने रेस्ट्रो खाते से लॉग आउट करना चाहते हैं? दोबारा लॉगिन करने पर आपकी सक्रिय कार्ट और ऑर्डर सुरक्षित रहेंगे।", "mr" to "तुम्हाला नक्की रेस्ट्रो खात्यातून लॉग आऊट करायचे आहे का? पुन्हा लॉगिन केल्यावर तुमची कार्ट आणि ऑर्डर्स सुरक्षित राहतील."),
+        "stay_signed_in" to mapOf("en" to "Stay Signed In", "hi" to "लॉग इन रहें", "mr" to "लॉग इन राहा"),
+        "edit_profile_title" to mapOf("en" to "Edit Profile Details", "hi" to "प्रोफ़ाइल विवरण संपादित करें", "mr" to "प्रोफाइल तपशील संपादित करा"),
+        "full_name_label" to mapOf("en" to "Full Name", "hi" to "पूरा नाम", "mr" to "पूर्ण नाव"),
+        "mobile_number_label" to mapOf("en" to "Mobile Number", "hi" to "मोबाइल नंबर", "mr" to "मोबाईल नंबर"),
+        "save_changes_btn" to mapOf("en" to "Save Changes", "hi" to "परिवर्तन सहेजें", "mr" to "बदल जतन करा"),
+        "cancel_btn" to mapOf("en" to "Cancel", "hi" to "रद्द करें", "mr" to "रद्द करा"),
+        "current_password_label" to mapOf("en" to "Current Password", "hi" to "वर्तमान पासवर्ड", "mr" to "सध्याचा पासवर्ड"),
+        "new_password_label" to mapOf("en" to "New Password (min 6 chars)", "hi" to "नया पासवर्ड (कम से कम 6 अक्षर)", "mr" to "नवीन पासवर्ड (किमान ६ अक्षरे)"),
+        "update_password_btn" to mapOf("en" to "Update Password", "hi" to "पासवर्ड अपडेट करें", "mr" to "पासवर्ड अपडेट करा"),
+        "select_landmark_title" to mapOf("en" to "Select Delivery Landmark", "hi" to "डिलीवरी लैंडमार्क चुनें", "mr" to "डिलिव्हरी लँडमार्क निवडा"),
+        "select_landmark_sub" to mapOf("en" to "Nearest restaurants recalculate live by distance", "hi" to "दूरी के अनुसार नज़दीकी रेस्तरां तुरंत अपडेट होते हैं", "mr" to "अंतरानुसार जवळची हॉटेल्स त्वरित अपडेट होतात"),
+        "use_hardware_gps" to mapOf("en" to "Use My Current Hardware GPS Location", "hi" to "मेरे वर्तमान जीपीएस स्थान का उपयोग करें", "mr" to "माझ्या सध्याच्या जीपीएस स्थानाचा वापर करा"),
+        "detect_gps_sub" to mapOf("en" to "Detect live coordinates via Android LocationManager", "hi" to "एंड्रॉइड लोकेशन से लाइव निर्देशांक प्राप्त करें", "mr" to "अँड्रॉइड लोकेशनवरून थेट कोऑर्डिनेट्स मिळवा"),
+        "gps_heartbeat_label" to mapOf("en" to "10S LIVE GPS HEARTBEAT", "hi" to "10 से. लाइव जीपीएस हार्टबीट", "mr" to "१० सेकंद थेट जीपीएस ट्रॅकिंग"),
+        "delivery_complete_label" to mapOf("en" to "DELIVERY COMPLETE", "hi" to "डिलीवरी पूर्ण हुई", "mr" to "डिलिव्हरी पूर्ण झाली"),
+        "at_your_gate_label" to mapOf("en" to "At your gate", "hi" to "आपके दरवाजे पर", "mr" to "तुमच्या दारावर"),
+        "rider_gate_alert" to mapOf("en" to "🛵 Ramesh is at your gate! Please meet your delivery partner.", "hi" to "🛵 रमेश आपके दरवाजे पर पहुंच गए हैं! कृपया अपना ऑर्डर प्राप्त करें।", "mr" to "🛵 रमेश तुमच्या दारावर पोहोचले आहेत! कृपया तुमची डिलिव्हरी घ्या."),
+        "gmaps_app_btn" to mapOf("en" to "Google Maps App ↗", "hi" to "गूगल मैप्स ऐप ↗", "mr" to "गुगल मॅप्स ॲप ↗"),
+        "reviews_section_title" to mapOf("en" to "Ratings & Customer Reviews", "hi" to "रेटिंग और ग्राहक समीक्षाएं", "mr" to "रेटिंग आणि ग्राहक पुनरावलोकने"),
+        "write_review_btn" to mapOf("en" to "Write a Review", "hi" to "समीक्षा लिखें", "mr" to "पुनरावलोकन लिहा"),
+        "verified_purchase_tag" to mapOf("en" to "Verified Purchase", "hi" to "सत्यापित खरीद", "mr" to "प्रमाणित खरेदी"),
+        "orders_count_stat" to mapOf("en" to "Orders", "hi" to "ऑर्डर्स", "mr" to "ऑर्डर्स"),
+        "bookings_count_stat" to mapOf("en" to "Bookings", "hi" to "बुकिंग्स", "mr" to "बुकिंग्स"),
+        "addresses_count_stat" to mapOf("en" to "Addresses", "hi" to "पते", "mr" to "पत्ते"),
+        "theme_mode_title" to mapOf("en" to "Theme Mode", "hi" to "थीम मोड", "mr" to "थीम मोड"),
+        "dark_mode_sub" to mapOf("en" to "Dark mode active (gentle on eyes)", "hi" to "डार्क मोड सक्रिय (आंखों के लिए आरामदायक)", "mr" to "डार्क मोड सक्रिय (डोळ्यांसाठी सौम्य)"),
+        "light_mode_sub" to mapOf("en" to "Light mode active (high contrast & bright)", "hi" to "लाइट मोड सक्रिय (उज्ज्वल और स्पष्ट)", "mr" to "लाइट मोड सक्रिय (उज्ज्वल आणि स्पष्ट)"),
+        "app_language_title" to mapOf("en" to "App Language", "hi" to "ऐप की भाषा", "mr" to "ॲपची भाषा"),
+        "guided_tour_title" to mapOf("en" to "See App Tour Again", "hi" to "ऐप टूर फिर से देखें", "mr" to "ॲप टूर पुन्हा पाहा"),
+        "guided_tour_sub" to mapOf("en" to "14-step guided feature walkthrough", "hi" to "14-चरणीय विस्तृत फीचर गाइड", "mr" to "१४-टप्प्यांचे मार्गदर्शक"),
+        "past_orders_title" to mapOf("en" to "Past Orders & Invoices", "hi" to "पिछले ऑर्डर और बिल", "mr" to "मागील ऑर्डर्स आणि बिले"),
+        "past_orders_sub" to mapOf("en" to "View itemized receipts, live tracking and 1-click reorder", "hi" to "विस्तृत रसीदें, लाइव ट्रैकिंग और 1-क्लिक रीऑर्डर", "mr" to "तपशीलवार पावत्या, थेट ट्रॅकिंग आणि १-क्लिक रीऑर्डर"),
+        "dine_in_bookings_title" to mapOf("en" to "Dine-In Table Bookings", "hi" to "डाइन-इन टेबल बुकिंग", "mr" to "डाइन-इन टेबल आरक्षणे"),
+        "dine_in_bookings_sub" to mapOf("en" to "Inspect reservation dates, guests and QR check-in status", "hi" to "बुकिंग तिथि, अतिथि और क्यूआर चेक-इन स्थिति", "mr" to "आरक्षण तारीख, अतिथी आणि क्यूआर चेक-इन स्थिती"),
+        "fav_restaurants_title" to mapOf("en" to "Favorite Restaurants", "hi" to "पसंदीदा रेस्तरां", "mr" to "आवडती हॉटेल्स"),
+        "fav_restaurants_sub" to mapOf("en" to "Quick access to your saved dining spots", "hi" to "अपने सहेजे गए रेस्तरां तक त्वरित पहुंच", "mr" to "तुमच्या जतन केलेल्या हॉटेल्समध्ये त्वरित जा"),
+        "customize_addons" to mapOf("en" to "Customize with Add-ons", "hi" to "ऐड-ऑन के साथ कस्टमाइज़ करें", "mr" to "अ‍ॅड-ऑन्ससह कस्टमाइझ करा"),
+        "quantity_label" to mapOf("en" to "Quantity", "hi" to "मात्रा", "mr" to "प्रमाण"),
+        "add_to_cart_btn" to mapOf("en" to "Add to Cart", "hi" to "कार्ट में जोड़ें", "mr" to "कार्टमध्ये जोडा"),
+        "role_customer" to mapOf("en" to "Customer", "hi" to "ग्राहक", "mr" to "ग्राहक"),
+        "role_admin" to mapOf("en" to "Manager", "hi" to "मैनेजर", "mr" to "मॅनेजर"),
+        "role_master_admin" to mapOf("en" to "Master Admin", "hi" to "मास्टर एडमिन", "mr" to "मास्टर ॲडमिन"),
+        "role_chef" to mapOf("en" to "Chef", "hi" to "शेफ", "mr" to "शेफ"),
+        "role_waiter" to mapOf("en" to "Waiter", "hi" to "वेटर", "mr" to "वेटर"),
+        "role_rider" to mapOf("en" to "Rider", "hi" to "राइडर", "mr" to "रायडर"),
+        "role_kiosk" to mapOf("en" to "Kiosk", "hi" to "कियोस्क", "mr" to "किऑस्क"),
+        "customer_reviews_count" to mapOf("en" to "reviews", "hi" to "समीक्षाएं", "mr" to "पुनरावलोकने"),
+        "review_input_hint" to mapOf("en" to "Share your dining experience...", "hi" to "अपने भोजन का अनुभव साझा करें...", "mr" to "तुमचा जेवणाचा अनुभव सांगा..."),
+        "submit_btn" to mapOf("en" to "Submit", "hi" to "सबमिट करें", "mr" to "सबमिट करा"),
+        // Staff Role & Portal Translations
+        "pos_select_table" to mapOf("en" to "Select Table", "hi" to "टेबल चुनें", "mr" to "टेबल निवडा"),
+        "pos_no_table" to mapOf("en" to "No Table Selected", "hi" to "कोई टेबल नहीं चुना", "mr" to "कोणताही टेबल निवडला नाही"),
+        "pos_select_table_hint" to mapOf("en" to "Select an active table to begin taking orders", "hi" to "ऑर्डर लेने के लिए सक्रिय टेबल चुनें", "mr" to "ऑर्डर घेण्यासाठी सक्रिय टेबल निवडा"),
+        "pos_live_tab" to mapOf("en" to "Live Tab", "hi" to "लाइव बिल", "mr" to "लाईव्ह बिल"),
+        "pos_change_table" to mapOf("en" to "Change", "hi" to "बदलें", "mr" to "बदला"),
+        "pos_search_placeholder" to mapOf("en" to "Search menu items...", "hi" to "मेनू व्यंजन खोजें...", "mr" to "मेनू आयटम शोधा..."),
+        "pos_add_to_order" to mapOf("en" to "Add to Order", "hi" to "ऑर्डर में जोड़ें", "mr" to "ऑर्डरमध्ये जोडा"),
+        "pos_view_cart" to mapOf("en" to "View Cart", "hi" to "कार्ट देखें", "mr" to "कार्ट पहा"),
+        "pos_send_to_kitchen" to mapOf("en" to "Send to Kitchen (KOT)", "hi" to "रसोई को भेजें (KOT)", "mr" to "किचनला पाठवा (KOT)"),
+        "kds_title" to mapOf("en" to "Kitchen Display System", "hi" to "किचन डिस्प्ले सिस्टम", "mr" to "किचन डिस्प्ले सिस्टीम"),
+        "kds_pending" to mapOf("en" to "Pending Orders", "hi" to "लंबित ऑर्डर्स", "mr" to "प्रलंबित ऑर्डर्स"),
+        "kds_in_progress" to mapOf("en" to "Preparing", "hi" to "तैयार हो रहा है", "mr" to "तयार होत आहे"),
+        "kds_ready" to mapOf("en" to "Ready for Pickup", "hi" to "पिकअप के लिए तैयार", "mr" to "पिकअपसाठी तयार"),
+        "kds_mark_ready" to mapOf("en" to "Mark Ready", "hi" to "तैयार मार्क करें", "mr" to "तयार मार्क करा"),
+        "kds_served" to mapOf("en" to "Mark Served", "hi" to "परोसा गया", "mr" to "सर्व्ह केले"),
+        "tables_title" to mapOf("en" to "Floor Tables", "hi" to "फ्लोर टेबल्स", "mr" to "फ्लोअर टेबल्स"),
+        "tables_available" to mapOf("en" to "Available", "hi" to "उपलब्ध", "mr" to "उपलब्ध"),
+        "tables_occupied" to mapOf("en" to "Occupied", "hi" to "व्यस्त", "mr" to "व्यापलेले"),
+        "tables_billed" to mapOf("en" to "Bill Requested", "hi" to "बिल मांगा गया", "mr" to "बिल मागितले"),
+        "tables_seats" to mapOf("en" to "Seats", "hi" to "सीटें", "mr" to "जागा"),
+        "admin_menu_title" to mapOf("en" to "Menu & Price Management", "hi" to "मेनू और मूल्य प्रबंधन", "mr" to "मेनू आणि किंमत व्यवस्थापन"),
+        "admin_add_dish" to mapOf("en" to "Add New Dish", "hi" to "नया व्यंजन जोड़ें", "mr" to "नवीन पदार्थ जोडा"),
+        "admin_edit_dish" to mapOf("en" to "Edit Dish", "hi" to "व्यंजन संपादित करें", "mr" to "पदार्थ संपादित करा"),
+        "admin_dish_name" to mapOf("en" to "Dish Name", "hi" to "व्यंजन का नाम", "mr" to "पदार्थाचे नाव"),
+        "admin_dish_price" to mapOf("en" to "Price (₹)", "hi" to "कीमत (₹)", "mr" to "किंमत (₹)"),
+        "admin_dish_category" to mapOf("en" to "Category", "hi" to "श्रेणी", "mr" to "श्रेणी"),
+        "admin_upload_image" to mapOf("en" to "Upload Image", "hi" to "फोटो अपलोड करें", "mr" to "फोटो अपलोड करा"),
+        "admin_save_dish" to mapOf("en" to "Save Dish", "hi" to "व्यंजन सहेजें", "mr" to "पदार्थ सेव्ह करा"),
+        "inventory_title" to mapOf("en" to "Stock & Inventory Management", "hi" to "स्टॉक और इन्वेंटरी प्रबंधन", "mr" to "स्टॉक आणि इन्व्हेंटरी व्यवस्थापन"),
+        "inventory_item" to mapOf("en" to "Item", "hi" to "सामग्री", "mr" to "वस्तू"),
+        "inventory_stock_qty" to mapOf("en" to "In Stock", "hi" to "स्टॉक मात्रा", "mr" to "शिल्लक साठा"),
+        "inventory_reorder" to mapOf("en" to "Reorder Stock", "hi" to "पुनः ऑर्डर करें", "mr" to "पुन्हा ऑर्डर करा"),
+        "payroll_title" to mapOf("en" to "Staff Payroll & Wages", "hi" to "कर्मचारी वेतन और मजदूरी", "mr" to "कर्मचारी वेतन आणि पगार"),
+        "payroll_staff_name" to mapOf("en" to "Staff Member", "hi" to "कर्मचारी", "mr" to "कर्मचारी"),
+        "payroll_role" to mapOf("en" to "Role", "hi" to "भूमिका", "mr" to "भूमिका"),
+        "payroll_salary" to mapOf("en" to "Monthly Salary", "hi" to "मासिक वेतन", "mr" to "मासिक पगार"),
+        "payroll_pay_now" to mapOf("en" to "Disburse Salary", "hi" to "वेतन भुगतान करें", "mr" to "पगार अदा करा"),
+        "analytics_title" to mapOf("en" to "Business Performance Analytics", "hi" to "व्यापार विश्लेषण", "mr" to "व्यवसाय विश्लेषण"),
+        "analytics_revenue" to mapOf("en" to "Gross Sales", "hi" to "कुल बिक्री", "mr" to "एकूण विक्री"),
+        "analytics_orders_count" to mapOf("en" to "Orders Completed", "hi" to "पूर्ण ऑर्डर्स", "mr" to "पूर्ण झालेल्या ऑर्डर्स"),
+        "analytics_avg_order" to mapOf("en" to "Avg Order Value", "hi" to "औसत ऑर्डर मूल्य", "mr" to "सरासरी ऑर्डर मूल्य"),
+        "rider_stage1_title" to mapOf("en" to "En Route to Restaurant", "hi" to "रेस्तरां के रास्ते में", "mr" to "रेस्टॉरंटच्या मार्गावर"),
+        "rider_stage2_title" to mapOf("en" to "Delivering to Customer", "hi" to "ग्राहक को डिलीवरी", "mr" to "ग्राहकाला वितरण"),
+        "rider_mark_picked_up" to mapOf("en" to "Mark Order Picked Up", "hi" to "ऑर्डर उठा लिया", "mr" to "ऑर्डर घेतली"),
+        "rider_open_maps" to mapOf("en" to "Open Google Maps", "hi" to "गूगल मैप्स खोलें", "mr" to "गुगल मॅप्स उघडा"),
+        // Additional Staff & Universal Role Translations
+        "action_settle" to mapOf("en" to "Settle", "hi" to "निपटान करें", "mr" to "हिशोब पूर्ण करा"),
+        "kiosk_pin_required" to mapOf("en" to "Kiosk Staff PIN Required", "hi" to "कियोस्क स्टाफ पिन आवश्यक", "mr" to "किऑस्क कर्मचारी पिन आवश्यक"),
+        "kiosk_pin_desc" to mapOf("en" to "Enter the 4-digit Staff / Admin PIN to unlock Kiosk Lockdown and access settings or sign out.", "hi" to "कियोस्क लॉक हटाने के लिए 4 अंकों का स्टाफ / एडमिन पिन दर्ज करें।", "mr" to "किऑस्क लॉक अनलॉक करण्यासाठी 4 अंकी कर्मचारी / व्यवस्थापक पिन टाका."),
+        "kiosk_pin_placeholder" to mapOf("en" to "Staff PIN (e.g. 0000 or 1234)", "hi" to "स्टाफ पिन (उदा. 0000 या 1234)", "mr" to "कर्मचारी पिन (उदा. 0000 किंवा 1234)"),
+        "sign_out_kiosk" to mapOf("en" to "Sign Out Kiosk", "hi" to "कियोस्क साइन आउट", "mr" to "किऑस्क साइन आउट"),
+        "customer_view" to mapOf("en" to "Customer View", "hi" to "ग्राहक दृश्य", "mr" to "ग्राहक दृश्य"),
+        "action_cancel" to mapOf("en" to "Cancel", "hi" to "रद्द करें", "mr" to "रद्द करा"),
+        "action_accept" to mapOf("en" to "Accept", "hi" to "स्वीकार करें", "mr" to "स्वीकारा"),
+        "action_decline" to mapOf("en" to "Decline", "hi" to "अस्वीकार करें", "mr" to "नाकारा"),
+        "filter_all" to mapOf("en" to "All", "hi" to "सभी", "mr" to "सर्व"),
+        "enter_amount" to mapOf("en" to "Enter amount", "hi" to "राशि दर्ज करें", "mr" to "रक्कम टाका"),
+        "label_subtotal" to mapOf("en" to "Subtotal", "hi" to "उप-योग", "mr" to "उप-एकूण"),
+        "label_grand_total" to mapOf("en" to "Grand Total", "hi" to "कुल योग", "mr" to "एकूण बेरीज"),
+        "action_close" to mapOf("en" to "Close", "hi" to "बंद करें", "mr" to "बंद करा"),
+        "action_take_order" to mapOf("en" to "Take Order", "hi" to "ऑर्डर लें", "mr" to "ऑर्डर घ्या"),
+        "action_seat_walkin" to mapOf("en" to "Seat Walk-in", "hi" to "ग्राहक बैठाएं", "mr" to "ग्राहक बसवा"),
+        "action_seat_guests" to mapOf("en" to "Seat Guests", "hi" to "अतिथि बैठाएं", "mr" to "पाहुणे बसवा"),
+        "action_bill_table" to mapOf("en" to "Bill Table", "hi" to "टेबल बिल करें", "mr" to "टेबल बिल करा"),
+        "action_revert" to mapOf("en" to "Revert", "hi" to "वापस लें", "mr" to "मागे घ्या"),
+        "label_gross_revenue" to mapOf("en" to "Gross Revenue", "hi" to "सकल राजस्व", "mr" to "एकूण महसूल"),
+        "payment_cash" to mapOf("en" to "Cash", "hi" to "नकद", "mr" to "रोख"),
+        "payment_card" to mapOf("en" to "Card", "hi" to "कार्ड", "mr" to "कार्ड"),
+        "payment_upi" to mapOf("en" to "UPI", "hi" to "यूपीआई", "mr" to "यूपीआय"),
+        "select_table_order" to mapOf("en" to "Select Table for Order", "hi" to "ऑर्डर के लिए टेबल चुनें", "mr" to "ऑर्डरसाठी टेबल निवडा"),
+        "status_disbursed" to mapOf("en" to "Disbursed", "hi" to "भुगतान किया", "mr" to "पगार जमा"),
+        "status_pending_payouts" to mapOf("en" to "Pending Payouts", "hi" to "लंबित भुगतान", "mr" to "प्रलंबित पगार"),
+        "label_total_staff" to mapOf("en" to "Total Staff", "hi" to "कुल कर्मचारी", "mr" to "एकूण कर्मचारी"),
+        "add_staff_member" to mapOf("en" to "Add Staff Member", "hi" to "कर्मचारी जोड़ें", "mr" to "कर्मचारी जोडा"),
+        "add_staff_subtitle" to mapOf("en" to "Add Staff Member (Waiter, Kitchen, Manager)", "hi" to "नया कर्मचारी जोड़ें (वेटर, किचन, मैनेजर)", "mr" to "नवीन कर्मचारी जोडा (वेटर, किचन, व्यवस्थापक)"),
+        "rzp_receipt" to mapOf("en" to "RazorpayX Receipt", "hi" to "रेज़रपे एक्स रसीद", "mr" to "रेझरपे एक्स पावती"),
+        "label_amount" to mapOf("en" to "Amount", "hi" to "राशि", "mr" to "रक्कम"),
+        "label_status" to mapOf("en" to "Status", "hi" to "स्थिति", "mr" to "स्थिती"),
+        "label_method" to mapOf("en" to "Method", "hi" to "विधि", "mr" to "पद्धत"),
+        "label_destination" to mapOf("en" to "Destination", "hi" to "गंतव्य", "mr" to "गंतव्य"),
+        "label_reference_id" to mapOf("en" to "Reference ID", "hi" to "संदर्भ आईडी", "mr" to "संदर्भ आयडी"),
+        "label_bank_utr" to mapOf("en" to "Bank UTR", "hi" to "बैंक यूटीआर", "mr" to "बँक यूटीआर"),
+        "action_share" to mapOf("en" to "Share", "hi" to "साझा करें", "mr" to "शेअर करा"),
+        "action_copy" to mapOf("en" to "Copy", "hi" to "कॉपी करें", "mr" to "कॉपी करा"),
+        "rzp_processing" to mapOf("en" to "Processing RazorpayX Payout...", "hi" to "रेज़रपे एक्स भुगतान संसाधित हो रहा है...", "mr" to "रेझरपे एक्स पगार प्रक्रिया सुरू आहे..."),
+        "master_admin_privileges" to mapOf("en" to "All-access privileges: Full multi-venue Mumbai telemetry, staff payroll, and system performance.", "hi" to "पूर्ण अधिकार: मुंबई रेस्टोरेंट डेटा, कर्मचारी वेतन, और सिस्टम प्रदर्शन।", "mr" to "पूर्ण अधिकार: मुंबई रेस्टॉरंट डेटा, कर्मचारी पगार आणि सिस्टीम कामगिरी."),
+        "rider_complete_order" to mapOf("en" to "Complete & Collect", "hi" to "डिलीवरी पूरी करें", "mr" to "वितरण पूर्ण करा"),
     )
 
     fun t(key: String): String {
