@@ -242,7 +242,8 @@ class TableBookingUiTest {
             timeSlot = "7:00 PM",
             partySize = 4,
             seatingArea = "Private Booth",
-            specialRequests = "Anniversary celebration"
+            specialRequests = "Anniversary celebration",
+            tableNumber = "T1"
         )
         assertTrue(validDraft.isValid)
     }
@@ -297,19 +298,24 @@ class TableBookingUiTest {
         // Step 2: User selects time slot
         draft = draft.copy(timeSlot = "1:00 PM")
         assertEquals("1:00 PM", draft.timeSlot)
-        assertTrue(draft.isValid) // Now valid!
+        assertFalse(draft.isValid) // Needs tableNumber
 
         // Step 3: User adjusts guest count
         draft = draft.copy(partySize = 6)
         assertEquals(6, draft.partySize)
-        assertTrue(draft.isValid)
+        assertFalse(draft.isValid)
 
         // Step 4: User selects seating preference
         draft = draft.copy(seatingArea = "Outdoor Garden")
         assertEquals("Outdoor Garden", draft.seatingArea)
+        assertFalse(draft.isValid)
+
+        // Step 5: User selects table
+        draft = draft.copy(tableNumber = "T1")
+        assertEquals("T1", draft.tableNumber)
         assertTrue(draft.isValid)
 
-        // Step 5: User adds special requests
+        // Step 6: User adds special requests
         draft = draft.copy(specialRequests = "High chair needed")
         assertEquals("High chair needed", draft.specialRequests)
         assertTrue(draft.isValid)
@@ -339,7 +345,8 @@ class TableBookingUiTest {
             bookingDate = futureDate,
             timeSlot = "7:00 PM",
             partySize = 4,
-            seatingArea = "Private Booth"
+            seatingArea = "Private Booth",
+            tableNumber = "T1"
         )
         org.junit.Assert.assertNull(computeBookingValidationError(validDraft))
     }
@@ -355,7 +362,8 @@ class TableBookingUiTest {
             timeSlot = "7:00 PM",
             partySize = 4,
             seatingArea = "Main Dining Room",
-            specialRequests = "High chair please"
+            specialRequests = "High chair please",
+            tableNumber = "T1"
         )
 
         // Valid draft navigates to BookTableReview

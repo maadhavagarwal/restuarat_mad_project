@@ -790,13 +790,15 @@ class TableBookingTest {
 
     @Test
     fun testComputeBookingValidationErrorAllScenarios() {
+        val testFutureDate = java.time.LocalDate.now().plusDays(2).toString()
         val validDraft = TableBookingDraft(
             restaurantId = "rest-1",
             restaurantName = "Bistro",
-            bookingDate = "2026-10-25",
+            bookingDate = testFutureDate,
             timeSlot = "7:00 PM",
             partySize = 4,
-            seatingArea = "Main Dining Room"
+            seatingArea = "Main Dining Room",
+            tableNumber = "T1"
         )
         assertNull(computeBookingValidationError(validDraft))
 
