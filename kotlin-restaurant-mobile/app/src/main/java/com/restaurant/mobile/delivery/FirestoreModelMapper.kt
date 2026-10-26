@@ -149,8 +149,17 @@ object FirestoreModelMapper {
             val delFee = (data["deliveryFee"] as? Number)?.toLong() ?: 4000L
             val open = (data["open"] as? Boolean) ?: true
             val rating = (data["rating"] as? Number)?.toDouble() ?: 4.8
+            val reviewCount = (data["reviewCount"] as? Number)?.toInt() ?: 1240
+            val costForTwo = (data["costForTwo"] as? Number)?.toInt() ?: 850
+            val vibes = (data["vibes"] as? List<*>)?.mapNotNull { it as? String } ?: listOf("Fine Dining", "Romantic", "Family Friendly")
+            val amenities = (data["amenities"] as? List<*>)?.mapNotNull { it as? String } ?: listOf("AC Dining", "Valet Parking", "Full Bar")
             val tableBooking = (data["tableBookingAvailable"] as? Boolean) ?: true
-            val vibes = (data["vibes"] as? List<*>)?.mapNotNull { it as? String } ?: listOf("Fine Dining", "Romantic")
+            val maxPartySize = (data["maxPartySize"] as? Number)?.toInt() ?: 12
+            val prepMinutes = (data["prepMinutes"] as? Number)?.toInt()?.coerceIn(20, 25) ?: 22
+            val acceptsDiningPayment = (data["acceptsDiningPayment"] as? Boolean) ?: true
+            val logoUrl = (data["logoUrl"] as? String) ?: image
+            val fssaiNumber = (data["fssaiNumber"] as? String) ?: "11523006000482"
+            val gstNumber = (data["gstNumber"] as? String) ?: "27AABCU9603R1ZM"
 
             Restaurant(
                 id = id,
@@ -165,8 +174,48 @@ object FirestoreModelMapper {
                 deliveryFee = delFee,
                 open = open,
                 rating = rating,
+                reviewCount = reviewCount,
+                costForTwo = costForTwo,
                 vibes = vibes,
-                tableBookingAvailable = tableBooking
+                amenities = amenities,
+                tableBookingAvailable = tableBooking,
+                maxPartySize = maxPartySize,
+                prepMinutes = prepMinutes,
+                acceptsDiningPayment = acceptsDiningPayment,
+                logoUrl = logoUrl,
+                fssaiNumber = fssaiNumber,
+                gstNumber = gstNumber
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // -------------------------------------------------------------
+    // RESTAURANT SETTINGS
+    // -------------------------------------------------------------
+
+    data class RestaurantSettingsDoc(
+        val restaurantId: String,
+        val open: Boolean,
+        val prepMinutes: Int,
+        val acceptsDiningPayment: Boolean,
+        val updatedAt: String = ""
+    )
+
+    fun mapToRestaurantSettings(docId: String, data: Map<String, Any?>): RestaurantSettingsDoc? {
+        return try {
+            val restId = (data["restaurantId"] as? String)?.ifBlank { null } ?: docId
+            val open = (data["open"] as? Boolean) ?: true
+            val prepMinutes = (data["prepMinutes"] as? Number)?.toInt()?.coerceIn(20, 25) ?: 22
+            val acceptsDiningPayment = (data["acceptsDiningPayment"] as? Boolean) ?: true
+            val updatedAt = (data["updatedAt"] as? String) ?: ""
+            RestaurantSettingsDoc(
+                restaurantId = restId,
+                open = open,
+                prepMinutes = prepMinutes,
+                acceptsDiningPayment = acceptsDiningPayment,
+                updatedAt = updatedAt
             )
         } catch (_: Exception) {
             null
@@ -188,11 +237,28 @@ object FirestoreModelMapper {
             val image = (data["image"] as? String) ?: ""
             val veg = (data["vegetarian"] as? Boolean) ?: true
             val avail = (data["available"] as? Boolean) ?: true
-            val addonsJson = data["addons"] as? String
-            val addons: List<AddOn> = if (!addonsJson.isNullOrBlank()) {
-                val listType = object : TypeToken<List<AddOn>>() {}.type
-                runCatching { gson.fromJson<List<AddOn>>(addonsJson, listType) }.getOrNull() ?: emptyList()
-            } else emptyList()
+            val addons: List<AddOn> = when (val rawAddons = data["addons"]) {
+                is String -> {
+                    if (rawAddons.isNotBlank()) {
+                        val listType = object : TypeToken<List<AddOn>>() {}.type
+                        runCatching { gson.fromJson<List<AddOn>>(rawAddons, listType) }.getOrNull() ?: emptyList()
+                    } else emptyList()
+                }
+                is List<*> -> {
+                    rawAddons.mapNotNull { item ->
+                        when (item) {
+                            is Map<*, *> -> {
+                                val addonId = item["id"] as? String ?: return@mapNotNull null
+                                val addonName = item["name"] as? String ?: return@mapNotNull null
+                                val addonPrice = (item["price"] as? Number)?.toLong() ?: 0L
+                                AddOn(addonId, addonName, addonPrice)
+                            }
+                            else -> null
+                        }
+                    }
+                }
+                else -> emptyList()
+            }
 
             Dish(
                 id = id,

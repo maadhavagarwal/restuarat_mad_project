@@ -320,6 +320,10 @@ fun RestaurantMobileApp(
         refreshAll()
     }
 
+    LaunchedEffect(deliveryVm?.catalog) {
+        refreshAll()
+    }
+
     MaterialTheme(
         colorScheme = lightColorScheme(
             primary = Color(0xFFC2410C),
@@ -682,7 +686,8 @@ fun RestaurantMobileApp(
                         )
                         NavigationScreen.MENU -> AdminMenuManagementScreenView(
                             database = database,
-                            onShowToast = onShowToast
+                            onShowToast = onShowToast,
+                            catalog = deliveryVm?.catalog
                         )
                         NavigationScreen.INVENTORY -> InventoryAndAuditScreenView(
                             database = database,
@@ -3132,7 +3137,8 @@ fun StaffPayrollScreenView(
 @Composable
 fun AdminMenuManagementScreenView(
     database: com.restaurant.mobile.delivery.RestroSqlDatabase,
-    onShowToast: (String) -> Unit
+    onShowToast: (String) -> Unit,
+    catalog: com.restaurant.mobile.delivery.Catalog? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     var restaurants by remember { mutableStateOf<List<com.restaurant.mobile.delivery.Restaurant>>(emptyList()) }
@@ -3158,6 +3164,18 @@ fun AdminMenuManagementScreenView(
 
     LaunchedEffect(Unit) {
         refreshMenu()
+    }
+
+    LaunchedEffect(catalog) {
+        if (catalog != null && (catalog.restaurants.isNotEmpty() || catalog.dishes.isNotEmpty())) {
+            restaurants = catalog.restaurants
+            if (catalog.restaurants.isNotEmpty() && catalog.restaurants.none { it.id == selectedRestaurantId }) {
+                selectedRestaurantId = catalog.restaurants.first().id
+            }
+            dishes = catalog.dishes
+        } else {
+            refreshMenu()
+        }
     }
 
     val selectedRest = restaurants.find { it.id == selectedRestaurantId }

@@ -87,6 +87,38 @@ class FirestoreSubscriptionManager {
     fun isSubscribed(channelId: String): Boolean = activeSubscriptions.containsKey(channelId)
 
     /**
+     * Returns the tracked payload hash for a given channel and document ID (useful for testing loop suppression).
+     */
+    fun getTrackedPayloadHash(channelId: String, docId: String): Int? =
+        lastProcessedPayloadHashes["$channelId:$docId"]
+
+    val trackedHashCount: Int
+        get() = lastProcessedPayloadHashes.size
+
+    /**
+     * Evaluates whether a modification payload has changed compared to previously processed hash.
+     * If changed, records the new hash and returns true. If identical (write-echo), returns false.
+     */
+    fun shouldProcessModification(channelId: String, docId: String, dataMap: Map<String, Any?>): Boolean {
+        val trackingKey = "$channelId:$docId"
+        val payloadHash = dataMap.hashCode()
+        val previousHash = lastProcessedPayloadHashes[trackingKey]
+        if (previousHash == payloadHash) {
+            return false
+        }
+        lastProcessedPayloadHashes[trackingKey] = payloadHash
+        return true
+    }
+
+    fun recordPayloadHash(channelId: String, docId: String, dataMap: Map<String, Any?>) {
+        lastProcessedPayloadHashes["$channelId:$docId"] = dataMap.hashCode()
+    }
+
+    fun removePayloadHash(channelId: String, docId: String) {
+        lastProcessedPayloadHashes.remove("$channelId:$docId")
+    }
+
+    /**
      * Attaches a query listener with deduplication, lifecycle tracking, and error handling.
      * If [channelId] is already active, the previous listener is cleanly detached first.
      */
@@ -139,25 +171,22 @@ class FirestoreSubscriptionManager {
                 DocumentChange.Type.ADDED -> {
                     val parsed = runCatching { mapper(docId, dataMap) }.getOrNull()
                     if (parsed != null) {
-                        lastProcessedPayloadHashes[docTrackingKey] = dataMap.hashCode()
+                        recordPayloadHash(channelId, docId, dataMap)
                         onAdded(parsed)
                     }
                 }
                 DocumentChange.Type.MODIFIED -> {
-                    val payloadHash = dataMap.hashCode()
-                    val previousHash = lastProcessedPayloadHashes[docTrackingKey]
-                    if (previousHash == payloadHash) {
+                    if (!shouldProcessModification(channelId, docId, dataMap)) {
                         // Suppress duplicate echo modifications (e.g. metadata-only or write-echo)
                         continue
                     }
                     val parsed = runCatching { mapper(docId, dataMap) }.getOrNull()
                     if (parsed != null) {
-                        lastProcessedPayloadHashes[docTrackingKey] = payloadHash
                         onModified(parsed)
                     }
                 }
                 DocumentChange.Type.REMOVED -> {
-                    lastProcessedPayloadHashes.remove(docTrackingKey)
+                    removePayloadHash(channelId, docId)
                     onRemoved(docId)
                 }
             }

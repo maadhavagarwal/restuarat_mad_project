@@ -1202,14 +1202,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             }
             cloudEngine.observeCatalogRealTime { cloudCat ->
                 viewModelScope.launch(Dispatchers.Main) {
-                    catalog = cloudCat
+                    if (cloudCat.restaurants.isNotEmpty() || cloudCat.dishes.isNotEmpty()) {
+                        catalog = cloudCat
+                    }
                 }
             }
-            // Seed catalog to cloud only if remote catalog is completely empty, preventing startup overwrite
-            val existingRemote = runCatching { backend.getCatalog() }.getOrNull()
-            if (existingRemote == null || existingRemote.restaurants.isEmpty()) {
-                cloudEngine.seedCatalogToCloud(catalog)
-            }
+            // Seed catalog to cloud only if remote Firestore catalog is completely empty
+            cloudEngine.seedCatalogIfRemoteEmpty(catalog)
 
             if (api.token != null) refreshAccount()
         }

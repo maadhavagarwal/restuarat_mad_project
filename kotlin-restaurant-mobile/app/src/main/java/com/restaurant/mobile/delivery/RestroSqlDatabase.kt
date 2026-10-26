@@ -666,6 +666,42 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 "updatedAt" to Instant.now().toString()
             )
         )
+        syncToFirebaseFirestore(
+            "restaurants",
+            restaurantId,
+            mapOf(
+                "id" to restaurantId,
+                "open" to open,
+                "prepMinutes" to clampedPrep,
+                "acceptsDiningPayment" to acceptsDiningPayment,
+                "updatedAt" to Instant.now().toString()
+            )
+        )
+        return true
+    }
+
+    fun saveRestaurantSettingsFromCloud(
+        restaurantId: String,
+        open: Boolean,
+        prepMinutes: Int,
+        acceptsDiningPayment: Boolean
+    ): Boolean {
+        val db = writableDatabase
+        createRestaurantSettingsTable(db)
+        val clampedPrep = prepMinutes.coerceIn(20, 25)
+        val cv = ContentValues().apply {
+            put("restaurant_id", restaurantId)
+            put("open", if (open) 1 else 0)
+            put("prep_minutes", clampedPrep)
+            put("accepts_dining_payment", if (acceptsDiningPayment) 1 else 0)
+            put("updated_at", Instant.now().toString())
+        }
+        db.insertWithOnConflict("restaurant_settings", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+
+        val restCv = ContentValues().apply {
+            put("open", if (open) 1 else 0)
+        }
+        db.update(TABLE_RESTAURANTS, restCv, "id = ?", arrayOf(restaurantId))
         return true
     }
 
@@ -751,6 +787,73 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         val ok = db.delete(TABLE_DISHES, "id = ?", arrayOf(dishId)) > 0
         deleteFromFirebaseFirestore("dishes", dishId)
         return ok
+    }
+
+    /**
+     * Cloud Sync Ingestion Methods:
+     * Write directly to local SQLite without re-broadcasting to Firestore, preventing echo loops.
+     */
+    fun upsertRestaurantFromCloud(restaurant: Restaurant): Boolean {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("id", restaurant.id)
+            put("name", restaurant.name)
+            put("cuisine", restaurant.cuisine)
+            put("description", restaurant.description)
+            put("image", restaurant.image)
+            put("address", restaurant.address)
+            put("latitude", restaurant.latitude)
+            put("longitude", restaurant.longitude)
+            put("delivery_minutes", restaurant.deliveryMinutes)
+            put("delivery_fee", restaurant.deliveryFee)
+            put("open", if (restaurant.open) 1 else 0)
+        }
+        val ok = db.insertWithOnConflict(TABLE_RESTAURANTS, null, cv, SQLiteDatabase.CONFLICT_REPLACE) != -1L
+
+        val clampedPrep = restaurant.prepMinutes.coerceIn(20, 25)
+        createRestaurantSettingsTable(db)
+        val setCv = ContentValues().apply {
+            put("restaurant_id", restaurant.id)
+            put("open", if (restaurant.open) 1 else 0)
+            put("prep_minutes", clampedPrep)
+            put("accepts_dining_payment", if (restaurant.acceptsDiningPayment) 1 else 0)
+            put("updated_at", Instant.now().toString())
+        }
+        db.insertWithOnConflict("restaurant_settings", null, setCv, SQLiteDatabase.CONFLICT_REPLACE)
+
+        if (restaurant.logoUrl.isNotBlank()) {
+            firebasePrefs.edit().putString("rest_logo_${restaurant.id}", restaurant.logoUrl).apply()
+        }
+        return ok
+    }
+
+    fun deleteRestaurantFromCloud(restaurantId: String): Boolean {
+        val db = writableDatabase
+        createRestaurantSettingsTable(db)
+        db.delete("restaurant_settings", "restaurant_id = ?", arrayOf(restaurantId))
+        return db.delete(TABLE_RESTAURANTS, "id = ?", arrayOf(restaurantId)) > 0
+    }
+
+    fun upsertDishFromCloud(dish: Dish): Boolean {
+        val db = writableDatabase
+        val cv = ContentValues().apply {
+            put("id", dish.id)
+            put("restaurant_id", dish.restaurantId)
+            put("category", dish.category)
+            put("name", dish.name)
+            put("description", dish.description)
+            put("price", dish.price)
+            put("image", dish.image)
+            put("vegetarian", if (dish.vegetarian) 1 else 0)
+            put("available", if (dish.available) 1 else 0)
+            put("addons_json", gson.toJson(dish.addons))
+        }
+        return db.insertWithOnConflict(TABLE_DISHES, null, cv, SQLiteDatabase.CONFLICT_REPLACE) != -1L
+    }
+
+    fun deleteDishFromCloud(dishId: String): Boolean {
+        val db = writableDatabase
+        return db.delete(TABLE_DISHES, "id = ?", arrayOf(dishId)) > 0
     }
 
     fun getAllDishes(): List<Dish> {

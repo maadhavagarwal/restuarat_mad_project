@@ -40,6 +40,9 @@ class FirebaseCloudEngine(
     private var userListenerReg: ListenerRegistration? = null
     private var addressesListenerReg: ListenerRegistration? = null
     private var catalogListenerReg: ListenerRegistration? = null
+    private var restaurantsListenerReg: ListenerRegistration? = null
+    private var dishesListenerReg: ListenerRegistration? = null
+    private var settingsListenerReg: ListenerRegistration? = null
     private var riderLocationListenerReg: ListenerRegistration? = null
     private var ridersListenerReg: ListenerRegistration? = null
 
@@ -763,10 +766,28 @@ class FirebaseCloudEngine(
                     "deliveryFee" to rest.deliveryFee,
                     "open" to rest.open,
                     "rating" to rest.rating,
+                    "reviewCount" to rest.reviewCount,
+                    "costForTwo" to rest.costForTwo,
                     "tableBookingAvailable" to rest.tableBookingAvailable,
-                    "vibes" to rest.vibes
+                    "maxPartySize" to rest.maxPartySize,
+                    "prepMinutes" to rest.prepMinutes,
+                    "acceptsDiningPayment" to rest.acceptsDiningPayment,
+                    "logoUrl" to rest.logoUrl,
+                    "fssaiNumber" to rest.fssaiNumber,
+                    "gstNumber" to rest.gstNumber,
+                    "vibes" to rest.vibes,
+                    "amenities" to rest.amenities
                 )
                 db.collection("restaurants").document(rest.id).set(restMap)
+
+                val settingsMap = mapOf(
+                    "restaurantId" to rest.id,
+                    "open" to rest.open,
+                    "prepMinutes" to rest.prepMinutes,
+                    "acceptsDiningPayment" to rest.acceptsDiningPayment,
+                    "updatedAt" to Instant.now().toString()
+                )
+                db.collection("restaurant_settings").document(rest.id).set(settingsMap)
             }
             catalog.dishes.forEach { dish ->
                 val dishMap = mapOf(
@@ -779,7 +800,8 @@ class FirebaseCloudEngine(
                     "category" to dish.category,
                     "vegetarian" to dish.vegetarian,
                     "available" to dish.available,
-                    "addons" to gson.toJson(dish.addons)
+                    "addons" to gson.toJson(dish.addons),
+                    "updatedAt" to Instant.now().toString()
                 )
                 db.collection("dishes").document(dish.id).set(dishMap)
             }
@@ -789,42 +811,124 @@ class FirebaseCloudEngine(
         }
     }
 
+    /**
+     * Seeds initial catalog data to Cloud Firestore ONLY if the remote restaurants collection is empty.
+     * Prevents accidental overwriting of remote live data with local mock catalog data.
+     */
+    fun seedCatalogIfRemoteEmpty(
+        catalog: Catalog,
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onSuccess()
+            return
+        }
+        db.collection("restaurants").limit(1).get()
+            .addOnSuccessListener { snap ->
+                if (snap.isEmpty) {
+                    Log.i(tag, "Remote restaurants collection is empty. Seeding catalog to cloud...")
+                    seedCatalogToCloud(catalog, onSuccess, onError)
+                } else {
+                    Log.i(tag, "Remote restaurants collection is already populated (${snap.size()} docs). Skipping seed.")
+                    onSuccess()
+                }
+            }
+            .addOnFailureListener { e ->
+                Log.w(tag, "Failed to check if remote catalog is empty: ${e.message}")
+                onError(e)
+            }
+    }
+
     fun observeCatalogRealTime(
         onCatalogUpdated: (Catalog) -> Unit
     ) {
-        catalogListenerReg?.remove()
         val db = firestore
         val fallbackCatalog = Catalog(localSqlDb.getAllRestaurants(), localSqlDb.getAllDishes())
         if (db == null || !isFirebaseInitialized) {
             onCatalogUpdated(fallbackCatalog)
             return
         }
+
+        fun emitLatestCatalog() {
+            try {
+                val currentRests = localSqlDb.getAllRestaurants()
+                val currentDishes = localSqlDb.getAllDishes()
+                onCatalogUpdated(Catalog(currentRests, currentDishes))
+            } catch (e: Exception) {
+                Log.w(tag, "Error loading catalog after cloud update: ${e.message}")
+            }
+        }
+
         try {
-            catalogListenerReg = subscriptionManager.attachQueryListener(
+            // 1. Restaurants Subscription (global)
+            restaurantsListenerReg = subscriptionManager.attachQueryListener(
                 channelId = "catalog:restaurants",
                 scope = FirestoreSubscriptionManager.ChannelScope.GLOBAL,
                 query = db.collection("restaurants"),
-                onSnapshot = { restSnap, _ ->
-                    val restaurants = mutableListOf<Restaurant>()
-                    for (doc in restSnap.documents) {
-                        val parsed = FirestoreModelMapper.mapToRestaurant(doc.id, doc.data ?: emptyMap())
-                        if (parsed != null) {
-                            restaurants.add(parsed)
-                        }
-                    }
-                    if (restaurants.isNotEmpty()) {
-                        val currentDishes = localSqlDb.getAllDishes()
-                        onCatalogUpdated(Catalog(restaurants, currentDishes))
-                    } else {
-                        onCatalogUpdated(fallbackCatalog)
-                    }
+                onSnapshot = { snapshot, _ ->
+                    subscriptionManager.processDocumentChanges(
+                        channelId = "catalog:restaurants",
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToRestaurant(id, data) },
+                        onAdded = { rest -> localSqlDb.upsertRestaurantFromCloud(rest) },
+                        onModified = { rest -> localSqlDb.upsertRestaurantFromCloud(rest) },
+                        onRemoved = { restId -> localSqlDb.deleteRestaurantFromCloud(restId) }
+                    )
+                    emitLatestCatalog()
                 },
                 onError = { err ->
-                    Log.w(tag, "Catalog subscription error: ${err.message}")
-                    onCatalogUpdated(fallbackCatalog)
+                    Log.w(tag, "Restaurants subscription error: ${err.message}")
+                    emitLatestCatalog()
                 }
             )
-        } catch (_: Exception) {
+
+            // 2. Dishes Subscription (global)
+            dishesListenerReg = subscriptionManager.attachQueryListener(
+                channelId = "catalog:dishes",
+                scope = FirestoreSubscriptionManager.ChannelScope.GLOBAL,
+                query = db.collection("dishes"),
+                onSnapshot = { snapshot, _ ->
+                    subscriptionManager.processDocumentChanges(
+                        channelId = "catalog:dishes",
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToDish(id, data) },
+                        onAdded = { dish -> localSqlDb.upsertDishFromCloud(dish) },
+                        onModified = { dish -> localSqlDb.upsertDishFromCloud(dish) },
+                        onRemoved = { dishId -> localSqlDb.deleteDishFromCloud(dishId) }
+                    )
+                    emitLatestCatalog()
+                },
+                onError = { err ->
+                    Log.w(tag, "Dishes subscription error: ${err.message}")
+                    emitLatestCatalog()
+                }
+            )
+
+            // 3. Restaurant Settings Subscription (open status, prep time, acceptsDiningPayment)
+            settingsListenerReg = subscriptionManager.attachQueryListener(
+                channelId = "catalog:restaurant_settings",
+                scope = FirestoreSubscriptionManager.ChannelScope.GLOBAL,
+                query = db.collection("restaurant_settings"),
+                onSnapshot = { snapshot, _ ->
+                    subscriptionManager.processDocumentChanges(
+                        channelId = "catalog:restaurant_settings",
+                        snapshot = snapshot,
+                        mapper = { id, data -> FirestoreModelMapper.mapToRestaurantSettings(id, data) },
+                        onAdded = { s -> localSqlDb.saveRestaurantSettingsFromCloud(s.restaurantId, s.open, s.prepMinutes, s.acceptsDiningPayment) },
+                        onModified = { s -> localSqlDb.saveRestaurantSettingsFromCloud(s.restaurantId, s.open, s.prepMinutes, s.acceptsDiningPayment) },
+                        onRemoved = { /* preserve settings */ }
+                    )
+                    emitLatestCatalog()
+                },
+                onError = { err ->
+                    Log.w(tag, "Restaurant settings subscription error: ${err.message}")
+                    emitLatestCatalog()
+                }
+            )
+        } catch (e: Exception) {
+            Log.w(tag, "Catalog subscription setup error: ${e.message}")
             onCatalogUpdated(fallbackCatalog)
         }
     }
@@ -837,6 +941,9 @@ class FirebaseCloudEngine(
         userListenerReg = null
         addressesListenerReg = null
         catalogListenerReg = null
+        restaurantsListenerReg = null
+        dishesListenerReg = null
+        settingsListenerReg = null
         riderLocationListenerReg = null
     }
 
