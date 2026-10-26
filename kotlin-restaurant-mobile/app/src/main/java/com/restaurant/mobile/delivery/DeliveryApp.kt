@@ -441,6 +441,7 @@ fun DeliveryApp(vm: DeliveryViewModel = viewModel(), onOpenStaffPortal: (() -> U
                     if (vm.isVoiceListening) {
                         VoiceListeningDialog(
                             language = RestroI18n.currentLanguage,
+                            voiceManager = vm.voiceManager,
                             onDismiss = { vm.isVoiceListening = false },
                             onSimulateVoiceResult = { spokenText ->
                                 vm.handleVoiceResult(spokenText)

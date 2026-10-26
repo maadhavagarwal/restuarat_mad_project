@@ -210,6 +210,81 @@ class RiderDispatchEngine(
     }
 
     /**
+     * Calculates dynamic traffic ETA (20-25 min restaurant prep + live Haversine/route transit minutes)
+     * and checks if the rider has entered the 500m (0.5 km) customer proximity perimeter.
+     */
+    fun calculateDynamicTrafficEta(
+        riderLat: Double,
+        riderLng: Double,
+        destLat: Double,
+        destLng: Double,
+        prepMinutesRemaining: Int = 0
+    ): RiderTelemetryUpdate {
+        val remainingDistKm = calculateDistanceKm(riderLat, riderLng, destLat, destLng).coerceAtLeast(0.0)
+        val clampedPrep = if (prepMinutesRemaining > 0) prepMinutesRemaining.coerceIn(0, 25) else 0
+        val transitMins = if (remainingDistKm <= 0.05) 0 else (remainingDistKm * 3.5).roundToInt().coerceAtLeast(1)
+        val totalEtaMins = (clampedPrep + transitMins).coerceAtLeast(if (remainingDistKm <= 0.05) 0 else 1)
+        val within500m = remainingDistKm <= 0.5
+        return RiderTelemetryUpdate(
+            orderId = "",
+            riderId = "",
+            latitude = riderLat,
+            longitude = riderLng,
+            remainingDistanceKm = remainingDistKm,
+            etaMinutes = totalEtaMins,
+            isWithin500mPerimeter = within500m
+        )
+    }
+
+    /**
+     * Broadcasts live rider GPS coordinates to the local fleet and Cloud Firestore,
+     * returning recalculated remaining distance, ETA, and 500m proximity perimeter status.
+     */
+    fun broadcastRiderGpsTelemetry(
+        orderId: String,
+        riderId: String,
+        riderLat: Double,
+        riderLng: Double,
+        destLat: Double,
+        destLng: Double,
+        prepMinutesRemaining: Int = 0
+    ): RiderTelemetryUpdate {
+        val base = calculateDynamicTrafficEta(riderLat, riderLng, destLat, destLng, prepMinutesRemaining)
+        val telemetry = base.copy(orderId = orderId, riderId = riderId)
+
+        val idx = localFleet.indexOfFirst { it.id == riderId }
+        if (idx >= 0) {
+            localFleet[idx] = localFleet[idx].copy(
+                latitude = riderLat,
+                longitude = riderLng,
+                isAvailable = false,
+                activeOrderId = orderId,
+                lastUpdated = System.currentTimeMillis()
+            )
+        }
+
+        cloudEngine?.saveRiderLocationToCloud(
+            orderId = orderId,
+            latitude = riderLat,
+            longitude = riderLng,
+            etaMinutes = telemetry.etaMinutes
+        )
+        cloudEngine?.updateRiderStatusInCloud(
+            riderId = riderId,
+            isAvailable = false,
+            activeOrderId = orderId,
+            currentLat = riderLat,
+            currentLng = riderLng
+        )
+
+        lastDispatchLog = "[LIVE GPS] Rider $riderId @ ($riderLat, $riderLng) -> Order #$orderId: " +
+                "${telemetry.remainingDistanceKm} km remaining, ETA ${telemetry.etaMinutes}m" +
+                if (telemetry.isWithin500mPerimeter) " [WITHIN 500M PERIMETER]" else ""
+
+        return telemetry
+    }
+
+    /**
      * Returns current fleet snapshot with live availability.
      */
     fun getFleet(): List<Rider> = localFleet.toList()
@@ -224,3 +299,14 @@ class RiderDispatchEngine(
         }
     }
 }
+
+data class RiderTelemetryUpdate(
+    val orderId: String,
+    val riderId: String,
+    val latitude: Double,
+    val longitude: Double,
+    val remainingDistanceKm: Double,
+    val etaMinutes: Int,
+    val isWithin500mPerimeter: Boolean,
+    val timestampMs: Long = System.currentTimeMillis()
+)

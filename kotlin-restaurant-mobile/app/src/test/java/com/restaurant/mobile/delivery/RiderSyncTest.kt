@@ -243,4 +243,36 @@ class RiderSyncTest {
         assertEquals(100L, totalWithdrawn)
         assertEquals(160L, availableBalance)
     }
+
+    @Test
+    fun testLiveRiderGpsBroadcastAndDynamicTrafficEtaPerimeter() {
+        val dispatchEngine = RiderDispatchEngine(cloudEngine = null)
+        // Far position (~1.1 km away): outside 500m perimeter
+        val farTelemetry = dispatchEngine.broadcastRiderGpsTelemetry(
+            orderId = "ORD-LIVE-1",
+            riderId = "rider-101",
+            riderLat = 19.1700,
+            riderLng = 72.8500,
+            destLat = 19.1600,
+            destLng = 72.8500,
+            prepMinutesRemaining = 22
+        )
+        assertTrue(farTelemetry.remainingDistanceKm > 0.5)
+        assertFalse(farTelemetry.isWithin500mPerimeter)
+        assertTrue(farTelemetry.etaMinutes >= 22)
+
+        // Close position (~0.3 km away): inside 500m proximity perimeter
+        val nearTelemetry = dispatchEngine.broadcastRiderGpsTelemetry(
+            orderId = "ORD-LIVE-1",
+            riderId = "rider-101",
+            riderLat = 19.1620,
+            riderLng = 72.8500,
+            destLat = 19.1600,
+            destLng = 72.8500,
+            prepMinutesRemaining = 0
+        )
+        assertTrue(nearTelemetry.remainingDistanceKm <= 0.5)
+        assertTrue(nearTelemetry.isWithin500mPerimeter)
+        assertTrue(nearTelemetry.etaMinutes >= 1)
+    }
 }

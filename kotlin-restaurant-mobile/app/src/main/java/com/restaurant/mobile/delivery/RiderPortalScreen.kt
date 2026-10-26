@@ -57,6 +57,79 @@ fun RiderPortalScreenView(
     var isSubmittingPayout by remember { mutableStateOf(false) }
     var selectedPayoutReceipt by remember { mutableStateOf<RiderPayoutReceipt?>(null) }
 
+    // Active Live Delivery GPS Broadcast State
+    var activeRideOffer by remember { mutableStateOf<RiderRideOffer?>(null) }
+    var liveGpsLat by remember { mutableDoubleStateOf(19.1672) }
+    var liveGpsLng by remember { mutableDoubleStateOf(72.8518) }
+    var liveRemainingKm by remember { mutableDoubleStateOf(0.0) }
+    var liveDynamicEtaMins by remember { mutableIntStateOf(0) }
+    var isWithin500m by remember { mutableStateOf(false) }
+    val appContext = LocalContext.current
+
+    LaunchedEffect(activeRideOffer?.id) {
+        val currentOffer = activeRideOffer ?: return@LaunchedEffect
+        val destLat = 19.1600
+        val destLng = 72.8550
+        var startLat = 19.1672
+        var startLng = 72.8518
+        try {
+            val locMgr = appContext.getSystemService(android.content.Context.LOCATION_SERVICE) as? android.location.LocationManager
+            val hasPerm = androidx.core.content.ContextCompat.checkSelfPermission(
+                appContext,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                androidx.core.content.ContextCompat.checkSelfPermission(
+                    appContext,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (hasPerm && locMgr != null) {
+                val lastLoc = locMgr.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                    ?: locMgr.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER)
+                if (lastLoc != null && lastLoc.latitude in 8.0..37.0 && lastLoc.longitude in 68.0..97.0) {
+                    startLat = lastLoc.latitude
+                    startLng = lastLoc.longitude
+                }
+            }
+        } catch (_: Exception) {}
+
+        var step = 0
+        val totalSteps = 10
+        while (activeRideOffer?.id == currentOffer.id && step <= totalSteps) {
+            val fraction = step.toDouble() / totalSteps.toDouble()
+            val curLat = Math.round((startLat + (destLat - startLat) * fraction) * 10000.0) / 10000.0
+            val curLng = Math.round((startLng + (destLng - startLng) * fraction) * 10000.0) / 10000.0
+            val prepRemaining = if (step < 3) (22 - step * 7).coerceAtLeast(0) else 0
+            if (deliveryVm != null) {
+                val telemetry = deliveryVm.broadcastRiderLocationUpdate(
+                    orderId = currentOffer.orderId,
+                    riderId = riderId,
+                    riderName = riderName,
+                    latitude = curLat,
+                    longitude = curLng,
+                    destLat = destLat,
+                    destLng = destLng,
+                    prepMinutesRemaining = prepRemaining
+                )
+                liveGpsLat = telemetry.latitude
+                liveGpsLng = telemetry.longitude
+                liveRemainingKm = telemetry.remainingDistanceKm
+                liveDynamicEtaMins = telemetry.etaMinutes
+                isWithin500m = telemetry.isWithin500mPerimeter
+            } else {
+                val dKm = ((1.0 - fraction) * currentOffer.distanceKm).let { Math.round(it * 10.0) / 10.0 }
+                val eta = prepRemaining + Math.max(1, (dKm * 3.5).toInt())
+                liveGpsLat = curLat
+                liveGpsLng = curLng
+                liveRemainingKm = dKm
+                liveDynamicEtaMins = eta
+                isWithin500m = dKm <= 0.5
+                cloudEngine?.saveRiderLocationToCloud(currentOffer.orderId, curLat, curLng, eta)
+            }
+            step++
+            kotlinx.coroutines.delay(5_000L)
+        }
+    }
+
     fun refreshRiderData() {
         coroutineScope.launch(Dispatchers.IO) {
             val rides = database.getRiderRides(riderId)
@@ -580,6 +653,96 @@ fun RiderPortalScreenView(
             }
         }
 
+        // 3.5 Active Live Delivery GPS Broadcast Banner (when a ride is accepted/in-progress)
+        activeRideOffer?.let { active ->
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF064E3B)),
+                    border = BorderStroke(1.5.dp, Color(0xFF10B981))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.GpsFixed, null, tint = Color(0xFF34D399), modifier = Modifier.size(20.dp))
+                                Text(
+                                    text = "LIVE GPS BROADCAST • ORDER #${active.orderId}",
+                                    color = Color(0xFF34D399),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            if (isWithin500m) {
+                                Surface(
+                                    color = Color(0xFFFEF3C7),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = "WITHIN 500M PERIMETER",
+                                        color = Color(0xFFB45309),
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "${active.restaurantName} → ${active.dropAddress}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+
+                        Text(
+                            text = "Coordinates: $liveGpsLat, $liveGpsLng • Remaining: ${if (liveRemainingKm < 1.0) "${(liveRemainingKm * 1000).toInt()} m" else "$liveRemainingKm km"} • Dynamic ETA: $liveDynamicEtaMins mins",
+                            color = Color(0xFFD1FAE5),
+                            fontSize = 12.sp
+                        )
+
+                        Button(
+                            onClick = {
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    database.markRideOfferCompleted(riderId, active)
+                                    deliveryVm?.notifyOrderDelivered(active.orderId)
+                                    deliveryVm?.riderDispatchEngine?.releaseRider(riderId)
+                                    withContext(Dispatchers.Main) {
+                                        activeRideOffer = null
+                                        refreshRiderData()
+                                        onShowToast("Delivery #${active.orderId} completed! +₹${active.riderIncomeRupees} credited.")
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.TaskAlt, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Complete Delivery & Collect ₹${active.riderIncomeRupees}",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // 4. Choose Ride Offers Feed (Shows Ride km, Estimated Time, Income; Reject hides offer permanently)
         item {
             Row(
@@ -758,11 +921,26 @@ fun RiderPortalScreenView(
                             }
                             Button(
                                 onClick = {
+                                    activeRideOffer = offer
+                                    liveRemainingKm = offer.distanceKm
+                                    liveDynamicEtaMins = offer.estimatedMinutes
                                     coroutineScope.launch(Dispatchers.IO) {
                                         database.markRideOfferCompleted(riderId, offer)
+                                        val rideRecord = RiderRideRecord(
+                                            id = "ride-${offer.id}",
+                                            riderId = riderId,
+                                            orderId = offer.orderId,
+                                            restaurantName = offer.restaurantName,
+                                            dropAddress = offer.dropAddress,
+                                            distanceKm = offer.distanceKm,
+                                            durationMinutes = offer.estimatedMinutes,
+                                            incomeRupees = offer.riderIncomeRupees,
+                                            completedAtMs = System.currentTimeMillis()
+                                        )
+                                        cloudEngine?.saveRiderRideToCloud(rideRecord)
                                         withContext(Dispatchers.Main) {
                                             refreshRiderData()
-                                            onShowToast("Ride completed! +₹${offer.riderIncomeRupees} added to your wallet.")
+                                            onShowToast("Ride accepted! Live GPS broadcast active for Order #${offer.orderId}. +₹${offer.riderIncomeRupees} added to wallet.")
                                         }
                                     }
                                 },

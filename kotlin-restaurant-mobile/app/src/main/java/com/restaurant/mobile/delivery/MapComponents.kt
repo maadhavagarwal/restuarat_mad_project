@@ -500,6 +500,22 @@ fun OrderTrackingRouteMap(
     var proximityAlertFired by rememberSaveable(order?.id) { mutableStateOf(false) }
     var deliveredAlertFired by rememberSaveable(order?.id) { mutableStateOf(order?.status == "Delivered") }
     var mapMode by rememberSaveable(order?.id) { mutableStateOf("Street") }
+    var cloudRiderLat by rememberSaveable(order?.id) { mutableDoubleStateOf(order?.riderLatitude ?: 0.0) }
+    var cloudRiderLng by rememberSaveable(order?.id) { mutableDoubleStateOf(order?.riderLongitude ?: 0.0) }
+
+    // Subscribe to real-time Rider GPS updates from Cloud Firestore / RiderDispatchEngine
+    DisposableEffect(order?.id, vm) {
+        val oId = order?.id
+        val reg = if (!oId.isNullOrBlank() && vm != null) {
+            vm.cloudEngine.observeRiderLocationRealTime(oId) { lat, lng, _ ->
+                cloudRiderLat = lat
+                cloudRiderLng = lng
+            }
+        } else null
+        onDispose {
+            reg?.remove()
+        }
+    }
 
     // 10-Second Auto-Updating Coroutine Heartbeat
     LaunchedEffect(order?.id) {
@@ -533,7 +549,17 @@ fun OrderTrackingRouteMap(
         val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
         (Math.round(earthRadius * c * 10.0) / 10.0).coerceAtLeast(1.2)
     }
-    val remainingDistanceKm = ((1.0f - animatedProgress) * totalRouteDistanceKm).coerceAtLeast(0.0)
+
+    val liveRiderLat = if (cloudRiderLat != 0.0) cloudRiderLat else (order?.riderLatitude ?: 0.0)
+    val liveRiderLng = if (cloudRiderLng != 0.0) cloudRiderLng else (order?.riderLongitude ?: 0.0)
+    val remainingDistanceKm = if (liveRiderLat != 0.0 && liveRiderLng != 0.0 && vm != null) {
+        val uLat = order?.address?.latitude ?: vm.currentLatitude
+        val uLng = order?.address?.longitude ?: vm.currentLongitude
+        vm.riderDispatchEngine.calculateDistanceKm(liveRiderLat, liveRiderLng, uLat, uLng)
+            .coerceAtMost(((1.0f - animatedProgress) * totalRouteDistanceKm).coerceAtLeast(0.0))
+    } else {
+        ((1.0f - animatedProgress) * totalRouteDistanceKm).coerceAtLeast(0.0)
+    }
     val remainingPrepMins = if (animatedProgress < 0.4f) {
         ((1.0f - (animatedProgress / 0.4f)) * restPrepMins).toInt()
     } else 0

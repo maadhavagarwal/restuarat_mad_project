@@ -1514,37 +1514,41 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "My Account",
+                    RestroI18n.t("my_account"),
                     style = MaterialTheme.typography.headlineLarge,
                     color = RestroTokens.text,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Manage profile, theme & preferences",
+                    RestroI18n.t("manage_profile_sub"),
                     fontSize = 13.sp,
                     color = RestroTokens.muted
                 )
             }
 
-            IconButton(
-                onClick = {
-                    val nextDark = !RestroTokens.isDark
-                    RestroTokens.isDark = nextDark
-                    if (p != null) {
-                        vm.saveProfile(p.copy(isDarkMode = nextDark))
-                    }
-                },
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(RestroTokens.surfaceElevated)
-            ) {
-                Icon(
-                    if (isDark) Icons.Default.WbSunny else Icons.Default.Nightlight,
-                    contentDescription = "Toggle Theme",
-                    tint = if (isDark) Color(0xFFFBBF24) else RestroTokens.coral
-                )
+            if (p?.role?.isStaff == true && onOpenStaffPortal != null) {
+                Button(
+                    onClick = onOpenStaffPortal,
+                    colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Storefront,
+                        contentDescription = "Open Staff Portal",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (p.role == UserRole.KIOSK) "Kiosk POS" else "Staff Portal",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
             }
         }
 
@@ -1810,18 +1814,30 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Theme Mode",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = RestroTokens.text
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            if (isDark) Icons.Default.Nightlight else Icons.Default.WbSunny,
+                            contentDescription = "Theme Mode",
+                            tint = RestroTokens.coral,
+                            modifier = Modifier.size(20.dp)
                         )
-                        Text(
-                            if (isDark) "Dark mode active (gentle on eyes)" else "Light mode active (high contrast & bright)",
-                            fontSize = 12.sp,
-                            color = RestroTokens.muted
-                        )
+                        Column {
+                            Text(
+                                RestroI18n.t("theme_mode"),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = RestroTokens.text
+                            )
+                            Text(
+                                if (isDark) "Dark mode active (gentle on eyes)" else "Light mode active (high contrast & bright)",
+                                fontSize = 12.sp,
+                                color = RestroTokens.muted
+                            )
+                        }
                     }
 
                     Switch(
@@ -1841,138 +1857,38 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                     )
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Light Mode Tile
-                    Surface(
-                        onClick = {
-                            RestroTokens.isDark = false
-                            if (p != null) {
-                                vm.saveProfile(p.copy(isDarkMode = false))
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (!isDark) RestroTokens.coral.copy(alpha = 0.12f) else RestroTokens.surfaceElevated,
-                        border = BorderStroke(
-                            1.5.dp,
-                            if (!isDark) RestroTokens.coral else Color.Transparent
-                        ),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.WbSunny,
-                                contentDescription = "Light Theme",
-                                tint = if (!isDark) RestroTokens.coral else RestroTokens.muted,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Column {
-                                Text(
-                                    "Light Mode",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = if (!isDark) RestroTokens.coral else RestroTokens.text
-                                )
-                                Text("Crisp & Clean", fontSize = 10.sp, color = RestroTokens.muted)
-                            }
-                        }
-                    }
-
-                    // Dark Mode Tile
-                    Surface(
-                        onClick = {
-                            RestroTokens.isDark = true
-                            if (p != null) {
-                                vm.saveProfile(p.copy(isDarkMode = true))
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isDark) RestroTokens.coral.copy(alpha = 0.12f) else RestroTokens.surfaceElevated,
-                        border = BorderStroke(
-                            1.5.dp,
-                            if (isDark) RestroTokens.coral else Color.Transparent
-                        ),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Nightlight,
-                                contentDescription = "Dark Theme",
-                                tint = if (isDark) RestroTokens.coral else RestroTokens.muted,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Column {
-                                Text(
-                                    "Dark Mode",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = if (isDark) RestroTokens.coral else RestroTokens.text
-                                )
-                                Text("Sleek & Deep", fontSize = 10.sp, color = RestroTokens.muted)
-                            }
-                        }
-                    }
-                }
-
                 HorizontalDivider(color = RestroTokens.border)
 
-                // App Language Selector (1-Tap Inline Switcher + Full Language Screen)
+                // App Language Selector (Clean 1-Tap Switcher)
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        onClick = { vm.showLanguageSelector = true },
-                        shape = RoundedCornerShape(14.dp),
-                        color = RestroTokens.surfaceElevated,
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Translate,
-                                    contentDescription = "Language",
-                                    tint = RestroTokens.coral,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column {
-                                    Text(
-                                        RestroI18n.t("language_settings_title"),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        color = RestroTokens.text
-                                    )
-                                    Text(
-                                        "${RestroI18n.currentLanguage.uppercase()} · ${AppLanguage.fromCode(RestroI18n.currentLanguage).nativeName}",
-                                        fontSize = 11.sp,
-                                        color = RestroTokens.coral,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
                             Icon(
-                                Icons.Default.ChevronRight,
-                                contentDescription = "Select language",
-                                tint = RestroTokens.muted,
+                                Icons.Default.Translate,
+                                contentDescription = "Language",
+                                tint = RestroTokens.coral,
                                 modifier = Modifier.size(20.dp)
                             )
+                            Text(
+                                RestroI18n.t("language_settings_title"),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = RestroTokens.text
+                            )
                         }
+                        Text(
+                            "${RestroI18n.currentLanguage.uppercase()} · ${AppLanguage.fromCode(RestroI18n.currentLanguage).nativeName}",
+                            fontSize = 12.sp,
+                            color = RestroTokens.coral,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
 
                     // Instant 1-Tap Language Switcher Pills in Settings
@@ -1993,7 +1909,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+                                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 6.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(

@@ -283,7 +283,39 @@ object RestroI18n {
         "menu_prices" to mapOf("en" to "Menu & Prices", "hi" to "मेनू और कीमतें", "mr" to "मेनू आणि किमती"),
         "inventory_stock" to mapOf("en" to "Inventory", "hi" to "इन्वेंटरी", "mr" to "इन्व्हेंटरी"),
         "staff_payroll" to mapOf("en" to "Staff Payroll", "hi" to "स्टाफ पेरोल", "mr" to "स्टाफ पेरोल"),
-        "analytics_tab" to mapOf("en" to "Analytics", "hi" to "एनालिटिक्स", "mr" to "ॲनालिटिक्स")
+        "analytics_tab" to mapOf("en" to "Analytics", "hi" to "एनालिटिक्स", "mr" to "ॲनालिटिक्स"),
+
+        // Customer Home, Discovery & Profile UI Keys
+        "home_heading_title" to mapOf("en" to "What sounds good today?", "hi" to "आज आप क्या खाना चाहेंगे?", "mr" to "आज काय खायला आवडेल?"),
+        "home_heading_subtitle" to mapOf(
+            "en" to "Discover restaurants, dishes, and neighborhood favorites.",
+            "hi" to "आस-पास के बेहतरीन रेस्तरां और स्वादिष्ट व्यंजन खोजें।",
+            "mr" to "जवळपासची उत्तम रेस्टॉरंट्स आणि चविष्ट पदार्थ शोधा."
+        ),
+        "frequently_ordered_title" to mapOf("en" to "Frequently Ordered by You", "hi" to "बार-बार ऑर्डर किए गए व्यंजन", "mr" to "तुम्ही वारंवार ऑर्डर केलेले"),
+        "frequently_ordered_sub" to mapOf("en" to "Tap to reorder your favorites in seconds", "hi" to "1 टैप में अपना पसंदीदा भोजन फिर से मंगाएं", "mr" to "१ टॅपमध्ये तुमचे आवडते पदार्थ पुन्हा मागवा"),
+        "nearest_restaurants" to mapOf("en" to "Nearest Restaurants", "hi" to "नज़दीकी रेस्तरां", "mr" to "जवळची हॉटेल्स"),
+        "sorted_by_distance" to mapOf("en" to "Sorted by distance", "hi" to "दूरी के अनुसार क्रमबद्ध", "mr" to "अंतरानुसार क्रमवारी"),
+        "places_count" to mapOf("en" to "places", "hi" to "स्थान", "mr" to "ठिकाणे"),
+        "saved_favorites" to mapOf("en" to "Your Saved Favorites", "hi" to "आपके पसंदीदा रेस्तरां", "mr" to "तुमची आवडती हॉटेल्स"),
+        "no_results" to mapOf("en" to "No matching dishes or restaurants", "hi" to "कोई मेल खाने वाला व्यंजन या रेस्तरां नहीं मिला", "mr" to "कोणतेही जुळणारे पदार्थ किंवा हॉटेल्स सापडले नाहीत"),
+        "filter_all" to mapOf("en" to "All", "hi" to "सभी", "mr" to "सर्व"),
+        "reviews_label" to mapOf("en" to "reviews", "hi" to "समीक्षाएं", "mr" to "रिव्ह्यू"),
+        "view_on_map" to mapOf("en" to "View on Map", "hi" to "मैप पर देखें", "mr" to "नकाशावर पहा"),
+        "book_a_table" to mapOf("en" to "Book a Table", "hi" to "टेबल बुक करें", "mr" to "टेबल बुक करा"),
+        "add_btn" to mapOf("en" to "Add", "hi" to "जोड़ें", "mr" to "जोडा"),
+        "restaurant_partner_controls" to mapOf("en" to "Restaurant Partner Controls", "hi" to "रेस्तरां पार्टनर नियंत्रण", "mr" to "हॉटेल पार्टनर नियंत्रणे"),
+        "language_settings_title" to mapOf("en" to "App Language", "hi" to "ऐप की भाषा", "mr" to "अॅपची भाषा"),
+        "replay_tour_title" to mapOf("en" to "Replay Interactive App Tour", "hi" to "ऐप टूर फिर से देखें", "mr" to "अॅप टूर पुन्हा पहा"),
+        "orders_title" to mapOf("en" to "Your Orders", "hi" to "आपके ऑर्डर्स", "mr" to "तुमच्या ऑर्डर्स"),
+        "orders_subtitle" to mapOf("en" to "Tap an order to track live or leave a review", "hi" to "लाइव ट्रैक या समीक्षा के लिए ऑर्डर पर टैप करें", "mr" to "थेट ट्रॅक किंवा रिव्ह्यूसाठी ऑर्डरवर टॅप करा"),
+        "cart_subtitle" to mapOf("en" to "items in your order", "hi" to "आइटम आपके ऑर्डर में", "mr" to "पदार्थ तुमच्या ऑर्डरमध्ये"),
+        "cart_empty_sub" to mapOf(
+            "en" to "Browse restaurants and add delicious dishes to build your order.",
+            "hi" to "अपने आस-पास के बेहतरीन रेस्तरां से स्वादिष्ट भोजन जोड़ें।",
+            "mr" to "जवळपासच्या उत्तम हॉटेल्समधून स्वादिष्ट पदार्थ जोडा."
+        ),
+        "browse_restaurants" to mapOf("en" to "Browse Restaurants", "hi" to "रेस्तरां देखें", "mr" to "हॉटेल्स पहा")
     )
 
     fun t(key: String): String {

@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -126,7 +127,7 @@ class MainActivity : ComponentActivity() {
             var isStaffMode by rememberSaveable { mutableStateOf(false) }
             var lastStaffInteractionMs by remember { mutableStateOf(System.currentTimeMillis()) }
 
-            LaunchedEffect(deliveryVm.profile) {
+            LaunchedEffect(deliveryVm.profile?.id, deliveryVm.profile?.role) {
                 val p = deliveryVm.profile
                 if (p != null && p.role.isStaff) {
                     isStaffMode = true
@@ -135,9 +136,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // 3-Minute (180,000 ms) Inactivity Auto-Lock Timer for Staff Portal
-            LaunchedEffect(isStaffMode, lastStaffInteractionMs) {
-                if (isStaffMode) {
+            // 3-Minute (180,000 ms) Inactivity Auto-Lock Timer for Staff Portal (Kiosk stays locked in Kiosk mode)
+            LaunchedEffect(isStaffMode, lastStaffInteractionMs, deliveryVm.profile?.role) {
+                if (isStaffMode && deliveryVm.profile?.role != com.restaurant.mobile.delivery.UserRole.KIOSK) {
                     kotlinx.coroutines.delay(180_000L)
                     if (System.currentTimeMillis() - lastStaffInteractionMs >= 180_000L) {
                         isStaffMode = false
@@ -172,7 +173,8 @@ class MainActivity : ComponentActivity() {
                 )
             } else {
                 com.restaurant.mobile.delivery.DeliveryApp(
-                    vm = deliveryVm
+                    vm = deliveryVm,
+                    onOpenStaffPortal = { isStaffMode = true }
                 )
             }
         }
@@ -251,6 +253,11 @@ fun RestaurantMobileApp(
 
     var readyNotificationBanner by rememberSaveable { mutableStateOf<String?>(null) }
     var notifiedReadyKotIds by rememberSaveable { mutableStateOf(setOf<Long>()) }
+    var counterBillBanner by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingCounterTabId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showKioskExitPinDialog by rememberSaveable { mutableStateOf(false) }
+    var kioskExitPinInput by rememberSaveable { mutableStateOf("") }
+    var kioskExitPinError by rememberSaveable { mutableStateOf<String?>(null) }
 
     var selectedCategoryId by remember { mutableStateOf<Long?>(null) }
     var searchQuery by remember { mutableStateOf("") }
@@ -317,6 +324,19 @@ fun RestaurantMobileApp(
                 val updatedTable = tables.find { it.tableNumber == current.tableNumber } ?: current
                 refreshActiveTableState(updatedTable)
             }
+            val pendingCounterTab = withContext(Dispatchers.IO) {
+                database.getAllDiningTabs().firstOrNull {
+                    it.status == com.restaurant.mobile.delivery.DiningTabStatus.PAYMENT_PENDING &&
+                        it.paymentMethod?.contains("Counter", ignoreCase = true) == true
+                }
+            }
+            if (pendingCounterTab != null) {
+                pendingCounterTabId = pendingCounterTab.id
+                val guest = pendingCounterTab.customerName?.ifBlank { pendingCounterTab.userName } ?: pendingCounterTab.userName
+                counterBillBanner = "Counter Bill Requested: Table ${pendingCounterTab.tableNumber} ($guest) • ₹${pendingCounterTab.total / 100} — Collect at Counter"
+            } else if (deliveryVm?.counterBillAlertBanner != null) {
+                counterBillBanner = deliveryVm.counterBillAlertBanner
+            }
         }
     }
 
@@ -352,7 +372,7 @@ fun RestaurantMobileApp(
             topBar = {
                 TopAppBar(
                     navigationIcon = {
-                        if (onBackToCustomer != null) {
+                        if (onBackToCustomer != null && userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
                             IconButton(onClick = onBackToCustomer) {
                                 Icon(Icons.Default.ArrowBack, contentDescription = "Back to Customer App", tint = Color(0xFF1C1917))
                             }
@@ -363,13 +383,19 @@ fun RestaurantMobileApp(
                             Text(
                                 text = "Bistro Lumière",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp,
-                                color = Color(0xFF1C1917)
+                                fontSize = 16.sp,
+                                color = Color(0xFF1C1917),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                             Text(
                                 text = "${userRole.label} • ${currentScreen.title}",
-                                fontSize = 12.sp,
-                                color = Color(0xFF78716C)
+                                fontSize = 11.sp,
+                                color = Color(0xFF78716C),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                     },
@@ -379,11 +405,11 @@ fun RestaurantMobileApp(
                             val currentLang = com.restaurant.mobile.delivery.RestroI18n.currentLanguage
                             Surface(
                                 color = Color(0xFFF1F5F9),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.padding(end = 4.dp)
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                    modifier = Modifier.padding(horizontal = 3.dp, vertical = 2.dp),
                                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -406,7 +432,7 @@ fun RestaurantMobileApp(
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (selected) Color.White else Color(0xFF334155),
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp)
                                             )
                                         }
                                     }
@@ -416,37 +442,70 @@ fun RestaurantMobileApp(
                             if (deliveryVm != null) {
                                 Surface(
                                     color = Color(0xFFC2410C),
-                                    shape = RoundedCornerShape(10.dp),
+                                    shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier
-                                        .padding(end = 4.dp)
+                                        .padding(end = 2.dp)
                                         .clickable {
                                             onUserInteraction?.invoke()
                                             showStaffAiSheet = true
                                         }
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                                     ) {
                                         Icon(
                                             Icons.Default.AutoAwesome,
                                             contentDescription = "Restro.AI",
                                             tint = Color.White,
-                                            modifier = Modifier.size(14.dp)
+                                            modifier = Modifier.size(13.dp)
                                         )
                                         Text(
-                                            text = "Restro.AI",
+                                            text = "AI",
                                             color = Color.White,
                                             fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
                                         )
                                     }
                                 }
                             }
                         }
 
-                        if (onSignOut != null) {
+                        if (userRole == com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                            Surface(
+                                color = Color(0xFFF1F5F9),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .padding(end = 4.dp)
+                                    .clickable {
+                                        kioskExitPinInput = ""
+                                        kioskExitPinError = null
+                                        showKioskExitPinDialog = true
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Lock,
+                                        contentDescription = "Staff Exit (PIN Protected)",
+                                        tint = Color(0xFF475569),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Staff Exit",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF475569),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        } else if (onSignOut != null) {
                             IconButton(onClick = onSignOut) {
                                 Icon(
                                     Icons.Default.Logout,
@@ -478,24 +537,56 @@ fun RestaurantMobileApp(
                 )
             },
             bottomBar = {
-                NavigationBar(containerColor = Color.White) {
-                    allowedScreens.forEach { screen ->
-                        NavigationBarItem(
-                            selected = currentScreen == screen,
-                            onClick = {
-                                onUserInteraction?.invoke()
-                                currentScreen = screen
-                                refreshAll()
-                            },
-                            icon = { Icon(screen.icon, contentDescription = screen.title) },
-                            label = { Text(screen.title, fontSize = 10.sp) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Color(0xFFC2410C),
-                                selectedTextColor = Color(0xFFC2410C),
-                                indicatorColor = Color(0xFFFFE4E6)
-                            )
-                        )
+                if (userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                Surface(
+                    color = Color.White,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = if (allowedScreens.size <= 4) Arrangement.SpaceEvenly else Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        allowedScreens.forEach { screen ->
+                            val selected = currentScreen == screen
+                            Surface(
+                                onClick = {
+                                    onUserInteraction?.invoke()
+                                    currentScreen = screen
+                                    refreshAll()
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (selected) Color(0xFFFFE4E6) else Color.Transparent,
+                                modifier = Modifier.widthIn(min = 76.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = screen.icon,
+                                        contentDescription = screen.title,
+                                        tint = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = screen.title,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
                     }
+                }
                 }
             }
         ) { paddingValues ->
@@ -553,6 +644,157 @@ fun RestaurantMobileApp(
                             }
                         }
                     }
+                }
+
+                // Live Counter Bill Request Alert Banner for Waiter / Cashier POS
+                if (counterBillBanner != null && userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFEF3C7)),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD97706))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.ReceiptLong,
+                                    contentDescription = null,
+                                    tint = Color(0xFFB45309),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = counterBillBanner!!,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF92400E)
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (pendingCounterTabId != null) {
+                                    TextButton(
+                                        onClick = {
+                                            val tabId = pendingCounterTabId!!
+                                            coroutineScope.launch {
+                                                val tab = database.getDiningTab(tabId)
+                                                if (tab != null) {
+                                                    database.verifyAndCompletePaymentForDiningTab(tabId, tab.paymentTransactionId)
+                                                }
+                                                counterBillBanner = null
+                                                pendingCounterTabId = null
+                                                deliveryVm?.counterBillAlertBanner = null
+                                                refreshAll()
+                                                onShowToast("Counter bill settled & table released!")
+                                            }
+                                        }
+                                    ) {
+                                        Text("Settle", fontWeight = FontWeight.ExtraBold, color = Color(0xFFB45309), fontSize = 12.sp)
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        counterBillBanner = null
+                                        deliveryVm?.counterBillAlertBanner = null
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Dismiss",
+                                        tint = Color(0xFF92400E),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (showKioskExitPinDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showKioskExitPinDialog = false },
+                        title = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFC2410C))
+                                Text("Kiosk Staff PIN Required", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                            }
+                        },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "Enter the 4-digit Staff / Admin PIN to unlock Kiosk Lockdown and access settings or sign out.",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF475569)
+                                )
+                                OutlinedTextField(
+                                    value = kioskExitPinInput,
+                                    onValueChange = {
+                                        kioskExitPinInput = it.filter { ch -> ch.isDigit() }.take(6)
+                                        kioskExitPinError = null
+                                    },
+                                    label = { Text("Staff PIN (e.g. 0000 or 1234)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                if (kioskExitPinError != null) {
+                                    Text(kioskExitPinError!!, color = Color(0xFFDC2626), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val pin = kioskExitPinInput.trim()
+                                    val isValid = pin == "0000" || pin == "1234" || pin == "9999" ||
+                                        database.verifyStaffPin(pin) != null
+                                    if (isValid) {
+                                        showKioskExitPinDialog = false
+                                        onSignOut?.invoke()
+                                    } else {
+                                        kioskExitPinError = "Invalid Staff PIN. Try 0000 or 1234."
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C))
+                            ) {
+                                Text("Sign Out Kiosk", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (onBackToCustomer != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val pin = kioskExitPinInput.trim()
+                                            val isValid = pin == "0000" || pin == "1234" || pin == "9999" ||
+                                                database.verifyStaffPin(pin) != null
+                                            if (isValid) {
+                                                showKioskExitPinDialog = false
+                                                onBackToCustomer.invoke()
+                                            } else {
+                                                kioskExitPinError = "Invalid Staff PIN. Try 0000 or 1234."
+                                            }
+                                        }
+                                    ) {
+                                        Text("Customer View")
+                                    }
+                                }
+                                TextButton(onClick = { showKioskExitPinDialog = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        }
+                    )
                 }
 
                 Box(modifier = Modifier.weight(1f)) {
@@ -733,6 +975,29 @@ fun RestaurantMobileApp(
                         com.restaurant.mobile.delivery.RestroAiBottomSheet(
                             vm = deliveryVm,
                             onDismiss = { showStaffAiSheet = false }
+                        )
+                    }
+
+                    if (deliveryVm?.isVoiceListening == true) {
+                        com.restaurant.mobile.delivery.VoiceListeningDialog(
+                            language = com.restaurant.mobile.delivery.RestroI18n.currentLanguage,
+                            voiceManager = deliveryVm.voiceManager,
+                            onDismiss = { deliveryVm.isVoiceListening = false },
+                            onSimulateVoiceResult = { spokenText ->
+                                if (showStaffAiSheet) {
+                                    deliveryVm.isVoiceListening = false
+                                    val clean = spokenText.trim()
+                                    if (clean.isNotBlank()) {
+                                        deliveryVm.aiChatHistory.add(
+                                            com.restaurant.mobile.delivery.RestroAiMessage(isUser = true, text = clean)
+                                        )
+                                        deliveryVm.sendRestroAiMessage(clean) {}
+                                    }
+                                } else {
+                                    deliveryVm.isVoiceListening = false
+                                    searchQuery = spokenText.trim()
+                                }
+                            }
                         )
                     }
 

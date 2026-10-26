@@ -1356,8 +1356,15 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun refreshAccount() {
+        val currentProfile = profile ?: session.loadProfile()
         try {
-            profile = api.call("/profile")
+            val fetchedProfile: Profile? = runCatching { api.call<Profile>("/profile") }.getOrNull()
+            if (fetchedProfile != null && (currentProfile == null || fetchedProfile.id == currentProfile.id)) {
+                profile = fetchedProfile
+                session.saveProfile(fetchedProfile)
+            } else if (currentProfile != null) {
+                profile = currentProfile
+            }
             cart = api.call("/cart")
             addresses = api.call("/addresses")
             favorites = api.call("/favorites")
@@ -1368,7 +1375,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             observeActiveTableTab()
         } catch (_: Exception) {
             if (profile == null) {
-                profile = session.loadProfile()
+                profile = currentProfile
             }
             val currentUserId = profile?.id ?: "guest"
             userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
@@ -2558,6 +2565,112 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     var liveRiderStatus by mutableStateOf("Preparing your food")
     var liveRiderEtaMins by mutableIntStateOf(18)
     var liveRiderDistanceKm by mutableDoubleStateOf(3.6)
+    var liveRiderLatitude by mutableDoubleStateOf(0.0)
+    var liveRiderLongitude by mutableDoubleStateOf(0.0)
+    var counterBillAlertBanner by mutableStateOf<String?>(null)
+    private val notified500mOrderIds = mutableSetOf<String>()
+
+    fun broadcastRiderLocationUpdate(
+        orderId: String,
+        riderId: String,
+        riderName: String,
+        latitude: Double,
+        longitude: Double,
+        destLat: Double,
+        destLng: Double,
+        prepMinutesRemaining: Int = 0
+    ): RiderTelemetryUpdate {
+        val telemetry = riderDispatchEngine.broadcastRiderGpsTelemetry(
+            orderId = orderId,
+            riderId = riderId,
+            riderLat = latitude,
+            riderLng = longitude,
+            destLat = destLat,
+            destLng = destLng,
+            prepMinutesRemaining = prepMinutesRemaining
+        )
+        liveRiderLatitude = latitude
+        liveRiderLongitude = longitude
+        liveRiderDistanceKm = telemetry.remainingDistanceKm
+        liveRiderEtaMins = telemetry.etaMinutes
+        activeRiderFleet = riderDispatchEngine.getFleet()
+        latestDispatchLog = riderDispatchEngine.lastDispatchLog
+
+        if (telemetry.isWithin500mPerimeter && telemetry.remainingDistanceKm > 0.05 && notified500mOrderIds.add(orderId)) {
+            notifyProximityAlert(orderId, riderName)
+        } else {
+            liveRiderStatus = when {
+                telemetry.remainingDistanceKm <= 0.05 -> "Delivered"
+                telemetry.isWithin500mPerimeter -> "$riderName is at your gate"
+                else -> "Out for delivery"
+            }
+        }
+
+        orders = orders.map {
+            if (it.id == orderId) {
+                it.copy(
+                    riderId = riderId,
+                    riderName = riderName,
+                    riderLatitude = latitude,
+                    riderLongitude = longitude,
+                    status = if (telemetry.remainingDistanceKm <= 0.05) "Delivered" else "Out for delivery"
+                )
+            } else it
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                api.request(
+                    "/orders/$orderId/rider-location",
+                    "POST",
+                    mapOf(
+                        "riderId" to riderId,
+                        "latitude" to latitude,
+                        "longitude" to longitude,
+                        "distanceRemainingKm" to telemetry.remainingDistanceKm,
+                        "etaMinutes" to telemetry.etaMinutes,
+                        "prepMinutes" to prepMinutesRemaining
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+        return telemetry
+    }
+
+    fun requestCounterBillForActiveTab(onRequested: ((String) -> Unit)? = null) {
+        val tab = activeTableTab ?: return
+        val amountStr = money(tab.total)
+        val guestName = tab.customerName?.ifBlank { tab.userName } ?: tab.userName
+        val alertMsg = "Counter Bill Requested: Table ${tab.tableNumber} ($guestName) • $amountStr — Collect at Counter"
+        counterBillAlertBanner = alertMsg
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = sqlDb.initiatePaymentForDiningTab(
+                tabId = tab.id,
+                paymentMethod = "Counter Bill",
+                tip = tab.tipRupees,
+                isServiceChargeOptedOut = tab.isServiceChargeOptedOut
+            )
+            if (updated != null) {
+                cloudEngine.saveDiningTabToCloud(updated)
+            }
+            sqlDb.recordAuditLog(
+                "COUNTER_BILL_REQUESTED",
+                guestName,
+                "CUSTOMER",
+                tab.tableNumber,
+                alertMsg
+            )
+            withContext(Dispatchers.Main) {
+                if (updated != null) {
+                    activeTableTab = updated
+                }
+                try {
+                    notificationHelper.showTableBillReady(tab.tableNumber, tab.total)
+                } catch (_: Exception) {}
+                onRequested?.invoke(alertMsg)
+            }
+        }
+    }
 
     fun syncLiveRiderProgress(orderId: String, distanceKm: Double, etaMinutes: Int, progress: Float) {
         liveRiderDistanceKm = distanceKm
@@ -2958,6 +3071,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
             val updated = it.copy(preferredLanguage = langCode)
             profile = updated
             session.saveProfile(updated)
+            sqlDb.saveUser(updated)
             cloudEngine.saveUserToCloud(updated)
         }
         if (isInitialOnboarding && !hasCompletedTour()) {
@@ -3126,6 +3240,12 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         val clean = speechText.trim()
         if (clean.isBlank()) return
 
+        if (showRestroAiSheet) {
+            aiChatHistory.add(RestroAiMessage(isUser = true, text = clean))
+            sendRestroAiMessage(clean) {}
+            return
+        }
+
         val lower = clean.lowercase()
         when {
             lower.contains("cart") || lower.contains("à¤•à¤¾à¤°à¥à¤Ÿ") -> {
@@ -3171,6 +3291,8 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveProfile(p: Profile) = run {
+        session.saveProfile(p)
+        sqlDb.saveUser(p)
         cloudEngine.saveUserToCloud(p)
         try {
             profile = api.call("/profile", "PUT", p)

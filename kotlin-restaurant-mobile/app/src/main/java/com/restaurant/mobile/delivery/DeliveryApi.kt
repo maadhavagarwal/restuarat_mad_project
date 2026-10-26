@@ -201,29 +201,86 @@ class DeliveryApi {
                 eng.sqlDb.recordAuditLog("ORDER_CANCELLED", "Customer", "CUSTOMER", orderId, "Delivery order cancelled")
                 mapOf("success" to true, "status" to "Cancelled")
             }
+            cleanPath.endsWith("/rider-location") && (cleanPath.contains("/orders/") || cleanPath.contains("/api/delivery/orders/")) -> {
+                val orderId = cleanPath.substringBefore("/rider-location").substringAfterLast("/")
+                if (method == "POST" || method == "PUT") {
+                    val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                    val riderId = (req["riderId"] as? String) ?: "rider-101"
+                    val lat = (req["latitude"] as? Number)?.toDouble() ?: 19.1672
+                    val lng = (req["longitude"] as? Number)?.toDouble() ?: 72.8518
+                    val orders = eng.sqlDb.getAllOrders()
+                    val order = orders.find { it.id == orderId }
+                    val rest = order?.restaurantId?.let { eng.sqlDb.getRestaurantById(it) }
+                    val destLat = order?.address?.latitude ?: 19.1600
+                    val destLng = order?.address?.longitude ?: 72.8550
+                    val distKm = (req["distanceRemainingKm"] as? Number)?.toDouble()
+                        ?: (eng.haversineDistance(lat, lng, destLat, destLng) * 10.0).let { Math.round(it) / 10.0 }
+                    val prepMins = (req["prepMinutes"] as? Number)?.toInt() ?: 0
+                    val etaMins = (req["etaMinutes"] as? Number)?.toInt()
+                        ?: (prepMins + Math.max(1, (distKm * 3.5).toInt()))
+                    val within500m = distKm <= 0.5
+                    if (order != null) {
+                        val updatedOrder = order.copy(
+                            riderId = riderId,
+                            riderLatitude = lat,
+                            riderLongitude = lng,
+                            status = if (distKm <= 0.05) "Delivered" else "Out for delivery"
+                        )
+                        eng.sqlDb.saveOrder(updatedOrder)
+                    }
+                    mapOf(
+                        "success" to true,
+                        "orderId" to orderId,
+                        "riderId" to riderId,
+                        "latitude" to lat,
+                        "longitude" to lng,
+                        "distanceRemainingKm" to distKm,
+                        "etaMinutes" to etaMins,
+                        "isWithin500mPerimeter" to within500m,
+                        "updatedAt" to System.currentTimeMillis()
+                    )
+                } else {
+                    val order = eng.sqlDb.getAllOrders().find { it.id == orderId }
+                    val lat = order?.riderLatitude?.takeIf { it != 0.0 } ?: 19.1672
+                    val lng = order?.riderLongitude?.takeIf { it != 0.0 } ?: 72.8518
+                    val destLat = order?.address?.latitude ?: 19.1600
+                    val destLng = order?.address?.longitude ?: 72.8550
+                    val distKm = (eng.haversineDistance(lat, lng, destLat, destLng) * 10.0).let { Math.round(it) / 10.0 }
+                    val etaMins = Math.max(1, (distKm * 3.5).toInt())
+                    mapOf(
+                        "orderId" to orderId,
+                        "riderId" to (order?.riderId ?: "rider-101"),
+                        "latitude" to lat,
+                        "longitude" to lng,
+                        "distanceRemainingKm" to distKm,
+                        "etaMinutes" to etaMins,
+                        "isWithin500mPerimeter" to (distKm <= 0.5)
+                    )
+                }
+            }
             cleanPath.startsWith("/orders/") && cleanPath.endsWith("/tracking") -> {
                 val orderId = cleanPath.removePrefix("/orders/").removeSuffix("/tracking")
                 val orders = eng.sqlDb.getAllOrders()
                 val order = orders.find { it.id == orderId } ?: orders.firstOrNull()
                 val rest = order?.restaurantId?.let { eng.sqlDb.getRestaurantById(it) }
-                val restLat = rest?.latitude ?: 19.1663
-                val restLng = rest?.longitude ?: 72.8480
+                val riderLat = order?.riderLatitude?.takeIf { it != 0.0 } ?: rest?.latitude ?: 19.1663
+                val riderLng = order?.riderLongitude?.takeIf { it != 0.0 } ?: rest?.longitude ?: 72.8480
                 val destLat = order?.address?.latitude ?: 19.1600
                 val destLng = order?.address?.longitude ?: 72.8550
-                val dist = eng.haversineDistance(restLat, restLng, destLat, destLng)
-                val isNearby = dist < 0.5
+                val dist = eng.haversineDistance(riderLat, riderLng, destLat, destLng)
+                val isNearby = dist <= 0.5
                 TrackingResponse(
                     orderId = orderId,
                     restaurantName = order?.restaurantName ?: rest?.name ?: "Spice Route Mumbai",
-                    status = if (isNearby) "Ramesh is at your gate" else (order?.status ?: "Out for delivery"),
+                    status = if (isNearby) "${order?.riderName?.ifBlank { "Ramesh" } ?: "Ramesh"} is at your gate" else (order?.status ?: "Out for delivery"),
                     etaMinutes = Math.max(1, (dist * 3.5).toInt()),
                     distanceRemainingKm = (dist * 10.0).let { Math.round(it) / 10.0 },
                     isNearby = isNearby,
                     rider = RiderTracking(
-                        name = "Ramesh Kumar",
-                        phone = "+91 98112 34567",
-                        vehicleNumber = "MH-02-EM-8821",
-                        currentLocation = LocationPoint(restLat, restLng)
+                        name = order?.riderName?.ifBlank { "Ramesh Kumar" } ?: "Ramesh Kumar",
+                        phone = order?.riderPhone?.ifBlank { "+91 98112 34567" } ?: "+91 98112 34567",
+                        vehicleNumber = order?.riderVehicle?.ifBlank { "MH-02-EM-8821" } ?: "MH-02-EM-8821",
+                        currentLocation = LocationPoint(riderLat, riderLng)
                     )
                 )
             }
@@ -249,18 +306,25 @@ class DeliveryApi {
                 mapOf("success" to true)
             }
             cleanPath == "/profile" && method == "GET" -> {
-                eng.sqlDb.getAllUsers().firstOrNull() ?: Profile(
-                    id = "usr-1",
-                    name = "Aarav Sharma",
-                    email = "aarav@example.com",
-                    phone = "+91 98765 43210",
-                    role = UserRole.CUSTOMER
-                )
+                eng.authenticate(this.token)
+                    ?: eng.sqlDb.getUserById("usr-1")
+                    ?: eng.sqlDb.getAllUsers().firstOrNull()
+                    ?: Profile(
+                        id = "usr-1",
+                        name = "Aarav Sharma",
+                        email = "aarav@example.com",
+                        phone = "+91 98765 43210",
+                        role = UserRole.CUSTOMER
+                    )
             }
             cleanPath == "/profile" && method == "PUT" -> {
                 val p = if (body is Profile) body else gson.fromJson(gson.toJson(body), Profile::class.java)
                 eng.sqlDb.saveUser(p)
                 p
+            }
+            (cleanPath == "/ai/chat" || cleanPath == "/api/ai/chat" || cleanPath == "/api/delivery/ai/chat") && method == "POST" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                eng.handleAiChat(req)
             }
             cleanPath == "/cart" && method == "PUT" -> {
                 val c = if (body is Cart) body else gson.fromJson(gson.toJson(body), Cart::class.java)

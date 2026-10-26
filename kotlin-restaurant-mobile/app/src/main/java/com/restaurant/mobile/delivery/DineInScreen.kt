@@ -190,17 +190,22 @@ fun DineInScreen(
                                 Text("Pay Bill", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         } else {
-                            Surface(
-                                color = RestroTokens.coral.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.4f))
+                            val isAlreadyRequested = vm.activeTableTab?.status == DiningTabStatus.PAYMENT_PENDING
+                            Button(
+                                onClick = {
+                                    vm.requestCounterBillForActiveTab()
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isAlreadyRequested) RestroTokens.green else RestroTokens.coral
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Text(
-                                    RestroI18n.t("counter_pay_only"),
-                                    color = RestroTokens.coral,
+                                    text = if (isAlreadyRequested) "Bill Requested ✓" else "Request Counter Bill",
+                                    color = if (isAlreadyRequested) Color.Black else Color.White,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    fontSize = 11.sp
                                 )
                             }
                         }

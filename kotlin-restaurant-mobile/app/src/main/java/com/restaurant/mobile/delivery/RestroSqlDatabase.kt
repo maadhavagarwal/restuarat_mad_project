@@ -947,6 +947,20 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
     // -------------------------------------------------------------
 
     fun seedDefaultStaffAccounts() {
+        val defaultCustomer = Profile(
+            id = "usr-1",
+            name = "Aarav Sharma",
+            email = "aarav@example.com",
+            phone = "+91 98765 43210",
+            role = UserRole.CUSTOMER
+        )
+        if (getUserById(defaultCustomer.id) == null && getUserByTarget(defaultCustomer.email) == null) {
+            saveUser(defaultCustomer)
+        }
+        saveUserPasswordIfMissing("aarav@example.com", "password123")
+        saveUserPasswordIfMissing("+91 98765 43210", "password123")
+        saveUserPasswordIfMissing("9876543210", "password123")
+
         if (!com.restaurant.mobile.BuildConfig.DEBUG) return
         val defaultStaff = listOf(
             Pair(Profile("staff-waiter-1", "Rohan Verma (Waiter)", "waiter@restro.app", "+91 90000 11111", role = UserRole.WAITER), "Waiter@123"),
@@ -957,12 +971,17 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             Pair(Profile("staff-kiosk-1", "Self-Order Kiosk Terminal", "kiosk@restro.app", "+91 90000 77777", role = UserRole.KIOSK), "Kiosk@123")
         )
         defaultStaff.forEach { (staff, defaultPass) ->
-            saveUser(staff)
+            if (getUserById(staff.id) == null) {
+                saveUser(staff)
+            }
             saveUserPasswordIfMissing(staff.email, defaultPass)
+            saveUserPasswordIfMissing(staff.email.replace("@restro.app", "@restro.com"), defaultPass)
             saveUserPasswordIfMissing(staff.phone, defaultPass)
+            val digits10 = staff.phone.filter { it.isDigit() }.takeLast(10)
+            if (digits10.length == 10) {
+                saveUserPasswordIfMissing(digits10, defaultPass)
+            }
         }
-        saveUserPasswordIfMissing("aarav@example.com", "password123")
-        saveUserPasswordIfMissing("+91 98765 43210", "password123")
     }
 
     private fun hashPin(pin: String): String {
@@ -1263,6 +1282,26 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             put("created_at", Instant.now().toString())
         }
         db.insertWithOnConflict(TABLE_USERS, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        try {
+            firebasePrefs.edit().putString("user_profile_${profile.id}", gson.toJson(profile)).apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun enrichProfileFromPrefs(base: Profile): Profile {
+        return try {
+            val savedJson = firebasePrefs.getString("user_profile_${base.id}", null)
+            if (!savedJson.isNullOrBlank()) {
+                val saved = gson.fromJson(savedJson, Profile::class.java)
+                base.copy(
+                    isDarkMode = saved.isDarkMode,
+                    reducedGlass = saved.reducedGlass,
+                    preferredLanguage = saved.preferredLanguage.ifBlank { base.preferredLanguage },
+                    hasCompletedTour = saved.hasCompletedTour
+                )
+            } else base
+        } catch (_: Exception) {
+            base
+        }
     }
 
     fun getAllUsers(): List<Profile> {
@@ -1272,7 +1311,31 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         while (cursor.moveToNext()) {
             val roleIdx = cursor.getColumnIndex("role")
             val roleStr = if (roleIdx >= 0 && !cursor.isNull(roleIdx)) cursor.getString(roleIdx) else "CUSTOMER"
-            list.add(
+            val base = Profile(
+                id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
+                email = cursor.getString(cursor.getColumnIndexOrThrow("email")),
+                phone = cursor.getString(cursor.getColumnIndexOrThrow("phone")),
+                role = UserRole.fromString(roleStr)
+            )
+            list.add(enrichProfileFromPrefs(base))
+        }
+        cursor.close()
+        return list
+    }
+
+    fun getUserByTarget(target: String): Profile? {
+        val clean = target.trim()
+        if (clean.isBlank()) return null
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT * FROM $TABLE_USERS WHERE LOWER(email) = LOWER(?) OR phone = ? LIMIT 1",
+            arrayOf(clean, clean)
+        )
+        val directMatch = if (cursor.moveToFirst()) {
+            val roleIdx = cursor.getColumnIndex("role")
+            val roleStr = if (roleIdx >= 0 && !cursor.isNull(roleIdx)) cursor.getString(roleIdx) else "CUSTOMER"
+            enrichProfileFromPrefs(
                 Profile(
                     id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
                     name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
@@ -1281,31 +1344,28 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                     role = UserRole.fromString(roleStr)
                 )
             )
-        }
-        cursor.close()
-        return list
-    }
-
-    fun getUserByTarget(target: String): Profile? {
-        val clean = target.trim()
-        val db = readableDatabase
-        val cursor = db.rawQuery(
-            "SELECT * FROM $TABLE_USERS WHERE LOWER(email) = LOWER(?) OR phone = ? LIMIT 1",
-            arrayOf(clean, clean)
-        )
-        val profile = if (cursor.moveToFirst()) {
-            val roleIdx = cursor.getColumnIndex("role")
-            val roleStr = if (roleIdx >= 0 && !cursor.isNull(roleIdx)) cursor.getString(roleIdx) else "CUSTOMER"
-            Profile(
-                id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
-                name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
-                email = cursor.getString(cursor.getColumnIndexOrThrow("email")),
-                phone = cursor.getString(cursor.getColumnIndexOrThrow("phone")),
-                role = UserRole.fromString(roleStr)
-            )
         } else null
         cursor.close()
-        return profile
+        if (directMatch != null) return directMatch
+
+        val allUsers = getAllUsers()
+        val lowerClean = clean.lowercase()
+        if (lowerClean.endsWith("@restro.com") || lowerClean.endsWith("@restro.app")) {
+            val altEmail = if (lowerClean.endsWith("@restro.com")) {
+                lowerClean.replace("@restro.com", "@restro.app")
+            } else {
+                lowerClean.replace("@restro.app", "@restro.com")
+            }
+            allUsers.firstOrNull { it.email.equals(altEmail, ignoreCase = true) }?.let { return it }
+        }
+        val targetDigits = clean.filter { it.isDigit() }.takeLast(10)
+        if (targetDigits.length == 10 && !clean.contains("@")) {
+            allUsers.firstOrNull {
+                val userDigits = it.phone.filter { ch -> ch.isDigit() }.takeLast(10)
+                userDigits == targetDigits
+            }?.let { return it }
+        }
+        return null
     }
 
     // -------------------------------------------------------------

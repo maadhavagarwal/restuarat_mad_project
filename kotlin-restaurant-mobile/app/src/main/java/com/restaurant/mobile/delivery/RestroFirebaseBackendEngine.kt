@@ -755,4 +755,202 @@ class RestroFirebaseBackendEngine(
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadiusKm * c
     }
+
+    // -------------------------------------------------------------
+    // RESTRO.AI ASSISTANT ENGINE (GEMINI + MENU-GROUNDED AI)
+    // -------------------------------------------------------------
+
+    fun handleAiChat(req: Map<*, *>): Map<String, Any> {
+        val rawMessage = req["message"]?.toString()?.trim().orEmpty()
+        val ctx = req["context"] as? Map<*, *>
+        val lang = (ctx?.get("preferredLanguage")?.toString() ?: RestroI18n.currentLanguage).lowercase().trim()
+        val targetRestId = ctx?.get("restaurantId")?.toString()?.trim().orEmpty()
+
+        val allDishes = sqlDb.getAllDishes().ifEmpty { MockCatalog.sample.dishes }.filter { it.available }
+        val scopedDishes = if (targetRestId.isNotBlank()) {
+            allDishes.filter { it.restaurantId == targetRestId }.ifEmpty { allDishes }
+        } else {
+            allDishes
+        }
+
+        val lowerMsg = rawMessage.lowercase()
+
+        // 1. Check for Cart / Checkout intent
+        val isCartIntent = lowerMsg.contains("cart") || lowerMsg.contains("checkout") ||
+            lowerMsg.contains("कार्ट") || lowerMsg.contains("चेकआउट") || lowerMsg.contains("चेकआऊट")
+
+        // 2. Check dietary, spice & budget intents
+        val isNonVegQuery = lowerMsg.contains("non-veg") || lowerMsg.contains("non veg") ||
+            lowerMsg.contains("chicken") || lowerMsg.contains("mutton") || lowerMsg.contains("murgh") ||
+            lowerMsg.contains("मांसाहारी") || lowerMsg.contains("चिकन") || lowerMsg.contains("मटण")
+        val isVegQuery = !isNonVegQuery && (
+            lowerMsg.contains("veg") || lowerMsg.contains("शाकाहारी") || lowerMsg.contains("व्हेज") ||
+            lowerMsg.contains("paneer") || lowerMsg.contains("पनीर") || lowerMsg.contains("healthy") ||
+            lowerMsg.contains("पौष्टिक")
+        )
+        val isSpicyQuery = lowerMsg.contains("spicy") || lowerMsg.contains("तीखा") ||
+            lowerMsg.contains("मसालेदार") || lowerMsg.contains("तिखट") || lowerMsg.contains("झणझणीत") ||
+            lowerMsg.contains("biryani") || lowerMsg.contains("बिरयानी") || lowerMsg.contains("बिर्याणी") ||
+            lowerMsg.contains("angara") || lowerMsg.contains("tikka")
+        val isSweetQuery = lowerMsg.contains("sweet") || lowerMsg.contains("dessert") ||
+            lowerMsg.contains("मीठा") || lowerMsg.contains("मिठाई") || lowerMsg.contains("गोड") ||
+            lowerMsg.contains("shahi") || lowerMsg.contains("rabri") || lowerMsg.contains("gulab")
+
+        // Extract numeric budget if mentioned (e.g. "under 250", "300", "₹250")
+        val normalizedDigits = rawMessage
+            .map { ch ->
+                when (ch) {
+                    in '०'..'९' -> ('0'.code + (ch.code - '०'.code)).toChar()
+                    else -> ch
+                }
+            }
+            .joinToString("")
+        val budgetMatch = Regex("""(\d{2,4})""").find(normalizedDigits)?.groupValues?.getOrNull(1)?.toLongOrNull()
+        val isBudgetQuery = budgetMatch != null || lowerMsg.contains("budget") || lowerMsg.contains("cheap") ||
+            lowerMsg.contains("सस्ता") || lowerMsg.contains("बजट") || lowerMsg.contains("कमी किंमत") || lowerMsg.contains("अंदर") || lowerMsg.contains("आतील")
+        val maxPricePaise = (budgetMatch ?: 300L) * 100L
+
+        // 3. Direct keyword search across dish names, categories, descriptions & multilingual lexicon
+        val directKeywordMatches = scopedDishes.filter { dish ->
+            RestroMultilingualSearch.matchesDish(dish, rawMessage) ||
+                rawMessage.split(" ", ",", "?").map { it.trim() }.filter { it.length >= 3 }.any { token ->
+                    val stopWords = setOf("suggest", "show", "under", "below", "best", "top", "food", "dishes", "dinner", "lunch", "something", "good", "tell", "what", "the", "for", "and", "with")
+                    token.lowercase() !in stopWords && (
+                        dish.name.contains(token, ignoreCase = true) ||
+                        dish.category.contains(token, ignoreCase = true) ||
+                        dish.description.contains(token, ignoreCase = true) ||
+                        RestroMultilingualSearch.matchesDish(dish, token)
+                    )
+                }
+        }
+
+        var candidates = if (directKeywordMatches.isNotEmpty()) directKeywordMatches else scopedDishes
+        if (isVegQuery) {
+            val vegFiltered = candidates.filter { it.vegetarian }
+            if (vegFiltered.isNotEmpty()) candidates = vegFiltered
+        } else if (isNonVegQuery) {
+            val nonVegFiltered = candidates.filter { !it.vegetarian }
+            if (nonVegFiltered.isNotEmpty()) candidates = nonVegFiltered
+        }
+        if (isSweetQuery) {
+            val sweetFiltered = candidates.filter {
+                it.category.contains("Dessert", ignoreCase = true) ||
+                    it.name.contains("Shahi", ignoreCase = true) ||
+                    it.name.contains("Jamun", ignoreCase = true) ||
+                    it.name.contains("Rabri", ignoreCase = true)
+            }
+            if (sweetFiltered.isNotEmpty()) candidates = sweetFiltered
+        }
+        if (isSpicyQuery && directKeywordMatches.isEmpty()) {
+            val spicyFiltered = candidates.filter {
+                it.name.contains("Angara", ignoreCase = true) ||
+                    it.name.contains("Biryani", ignoreCase = true) ||
+                    it.name.contains("Kebab", ignoreCase = true) ||
+                    it.name.contains("Tikka", ignoreCase = true) ||
+                    it.name.contains("Masala", ignoreCase = true) ||
+                    it.description.contains("spiced", ignoreCase = true) ||
+                    it.description.contains("smoky", ignoreCase = true) ||
+                    it.description.contains("fiery", ignoreCase = true)
+            }
+            if (spicyFiltered.isNotEmpty()) candidates = spicyFiltered
+        }
+        if (isBudgetQuery) {
+            val budgetFiltered = candidates.filter { it.price <= maxPricePaise }.sortedBy { it.price }
+            if (budgetFiltered.isNotEmpty()) {
+                candidates = budgetFiltered
+            } else {
+                candidates = candidates.sortedBy { it.price }
+            }
+        }
+
+        val matchedDishes = candidates.ifEmpty { scopedDishes }.take(3)
+
+        val actions = mutableListOf<Map<String, Any>>()
+        if (isCartIntent) {
+            actions.add(
+                mapOf(
+                    "type" to "VIEW_CART",
+                    "dishId" to "",
+                    "dishName" to "View Cart",
+                    "price" to 0.0
+                )
+            )
+        }
+        matchedDishes.forEach { d ->
+            val translated = if (lang == "hi" || lang == "mr") {
+                RestroMenuTranslationManager.getTranslation(d.id, d.name, d.description, lang).name
+            } else d.name
+            actions.add(
+                mapOf(
+                    "type" to "ADD_TO_CART",
+                    "dishId" to d.id,
+                    "dishName" to translated,
+                    "price" to (d.price / 100.0)
+                )
+            )
+        }
+
+        fun dishSummaryList(langCode: String): String {
+            return matchedDishes.joinToString(", ") { d ->
+                val name = if (langCode == "hi" || langCode == "mr") {
+                    RestroMenuTranslationManager.getTranslation(d.id, d.name, d.description, langCode).name
+                } else d.name
+                "$name (₹${d.price / 100})"
+            }
+        }
+
+        val reply: String
+        val suggestions: List<String>
+
+        when (lang) {
+            "hi" -> {
+                val summary = dishSummaryList("hi")
+                reply = when {
+                    isCartIntent -> "आप नीचे दिए गए बटन से अपनी कार्ट खोल सकते हैं। साथ ही हमारे लोकप्रिय व्यंजन हैं: $summary।"
+                    isBudgetQuery -> "आपके बजट (₹${maxPricePaise / 100} के अंदर) में सबसे बेहतरीन और स्वादिष्ट विकल्प हैं: $summary। आप इन्हें 1-टैप में कार्ट में जोड़ सकते हैं!"
+                    isVegQuery -> "आपके लिए हमारे ताज़ा शाकाहारी (Veg) विशेष व्यंजन हैं: $summary। क्या मैं इनमें से कुछ आपकी कार्ट में जोड़ दूँ?"
+                    isNonVegQuery -> "नॉन-वेज प्रेमियों के लिए हमारे शेफ़ की खास पेशकश: $summary।"
+                    isSpicyQuery -> "मसालेदार और चटपटे स्वाद के लिए ये व्यंजन सबसे बेहतरीन हैं: $summary!"
+                    isSweetQuery -> "मीठे में हमारे पास लाजवाब डेज़र्ट उपलब्ध हैं: $summary!"
+                    else -> "नमस्ते! मैं Restro.AI हूँ। आपकी पसंद के अनुसार हमारे मेनू के सबसे बेहतरीन व्यंजन हैं: $summary। कार्ट में जोड़ने के लिए नीचे दिए गए बटन पर टैप करें!"
+                }
+                suggestions = listOf("₹250 के अंदर के व्यंजन", "पौष्टिक शाकाहारी भोजन", "मसालेदार बिरयानी")
+            }
+            "mr" -> {
+                val summary = dishSummaryList("mr")
+                reply = when {
+                    isCartIntent -> "तुम्ही खालील बटणावरून तुमची कार्ट उघडू शकता. तसेच आमचे लोकप्रिय पदार्थ आहेत: $summary."
+                    isBudgetQuery -> "तुमच्या बजेटमध्ये (₹${maxPricePaise / 100} च्या आत) सर्वोत्तम आणि चविष्ट पदार्थ: $summary. कार्टमध्ये जोडण्यासाठी खाली टॅप करा!"
+                    isVegQuery -> "तुमच्यासाठी आमचे खास शाकाहारी (Veg) पदार्थ: $summary. यातील काही कार्टमध्ये जोडायचे का?"
+                    isNonVegQuery -> "मांसाहारी खवय्यांसाठी आमचे खास पदार्थ: $summary."
+                    isSpicyQuery -> "झणझणीत आणि मसालेदार चवीसाठी हे पदार्थ सर्वोत्तम आहेत: $summary!"
+                    isSweetQuery -> "गोड खाण्याच्या शौकिनांसाठी खास डेझर्ट्स: $summary!"
+                    else -> "नमस्कार! मी Restro.AI आहे. आमच्या मेनूमधील सर्वाधिक लोकप्रिय पदार्थ: $summary आहेत. थेट कार्टमध्ये जोडण्यासाठी खालील बटणावर टॅप करा!"
+                }
+                suggestions = listOf("₹२५० च्या आतील पदार्थ", "पौष्टिक शाकाहारी जेवण", "झणझणीत बिर्याणी")
+            }
+            else -> {
+                val summary = dishSummaryList("en")
+                reply = when {
+                    isCartIntent -> "You can jump straight to your cart below! Meanwhile, here are top picks to complete your meal: $summary."
+                    isBudgetQuery -> "Here are the best value dishes within your ₹${maxPricePaise / 100} budget: $summary. Tap any dish below to add it to your cart!"
+                    isVegQuery -> "Here are our chef's top vegetarian favorites made with fresh ingredients: $summary. Would you like to add one to your cart?"
+                    isNonVegQuery -> "Here are our signature non-vegetarian specialties: $summary."
+                    isSpicyQuery -> "Craving bold, fiery flavors? You'll love: $summary!"
+                    isSweetQuery -> "Treat yourself to our signature desserts: $summary!"
+                    else -> "Here are top recommendations from our live kitchen menu for \"$rawMessage\": $summary. Tap any button below to add directly to your cart!"
+                }
+                suggestions = listOf("Dishes under ₹250", "Healthy Veg Dinner", "Spicy Biryani")
+            }
+        }
+
+        return mapOf(
+            "success" to true,
+            "provider" to "GEMINI_RESTRO_AI",
+            "reply" to reply,
+            "actions" to actions,
+            "suggestions" to suggestions,
+            "language" to lang
+        )
+    }
 }
