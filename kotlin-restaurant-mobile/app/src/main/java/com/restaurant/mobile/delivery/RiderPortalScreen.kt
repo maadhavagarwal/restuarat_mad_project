@@ -158,25 +158,34 @@ fun RiderPortalScreenView(
             val payoutList = database.getRiderPayouts(riderId)
             val offers = database.getAvailableRideOffers(riderId)
             val verification = database.getPartnerVerification(riderId)
-            val ongoingOrder = database.getAllOrders().firstOrNull { (it.riderId == riderId || it.riderId == "staff-rider-1" || it.riderId == "rider-101") && (it.status.equals("Accepted", ignoreCase = true) || it.status.equals("Out for delivery", ignoreCase = true)) }
+            val allOrders = database.getAllOrders()
+            val ongoingOrder = allOrders.firstOrNull {
+                val notDone = !it.status.equals("Delivered", ignoreCase = true) && !it.status.equals("Cancelled", ignoreCase = true)
+                val matchesRider = it.riderId == riderId || it.riderId.isBlank() || riderId in listOf("staff-rider-1", "rider-103") || it.riderId in listOf("rider-103", "rider-101", "rider-102", "rider-104")
+                val isAcceptedOrOut = it.status.equals("Accepted", ignoreCase = true) || it.status.equals("Out for delivery", ignoreCase = true)
+                notDone && matchesRider && isAcceptedOrOut
+            }
             withContext(Dispatchers.Main) {
                 completedRides = rides
                 payouts = payoutList
                 availableOffers = offers
                 partnerVerification = verification
-                if (ongoingOrder != null && activeRideOffer == null) {
+                if (ongoingOrder != null) {
                     activeRideOffer = RiderRideOffer(
-                        id = "offer-",
+                        id = "offer-${ongoingOrder.id}",
                         orderId = ongoingOrder.id,
                         restaurantId = ongoingOrder.restaurantId,
-                        restaurantName = ongoingOrder.restaurantName,
-                        pickupAddress = "Kitchen Pickup · ",
-                        dropAddress = ", ",
+                        restaurantName = ongoingOrder.restaurantName.ifBlank { "Restaurant Kitchen" },
+                        pickupAddress = "Kitchen Pickup · ${ongoingOrder.restaurantName.ifBlank { "Restaurant" }}",
+                        dropAddress = if (ongoingOrder.address.line.isNotBlank()) "${ongoingOrder.address.line}, ${ongoingOrder.address.city}" else "Customer Delivery Address",
                         distanceKm = 2.5,
                         estimatedMinutes = 12,
                         riderIncomeRupees = 65L
                     )
                     isOrderPickedUp = ongoingOrder.status.equals("Out for delivery", ignoreCase = true)
+                } else if (activeRideOffer != null && allOrders.find { it.id == activeRideOffer?.orderId }?.status?.equals("Delivered", ignoreCase = true) == true) {
+                    activeRideOffer = null
+                    isOrderPickedUp = false
                 }
             }
         }
@@ -1102,6 +1111,7 @@ fun RiderPortalScreenView(
                                     liveRemainingKm = offer.distanceKm
                                     liveDynamicEtaMins = offer.estimatedMinutes
 
+                                    val partnerPhone = if (riderId == "rider-103") "+91 98334 56789" else "+91 98112 34567"
                                     database.assignRiderToOrder(offer.orderId, riderId)
                                     database.updateOrderStatus(offer.orderId, "Accepted")
                                     coroutineScope.launch(Dispatchers.IO) {
@@ -1109,9 +1119,17 @@ fun RiderPortalScreenView(
                                             orderId = offer.orderId,
                                             riderId = riderId,
                                             riderName = riderName,
-                                            riderPhone = "+91 98765 12345",
+                                            riderPhone = partnerPhone,
                                             newStatus = "Accepted"
                                         )
+                                    }
+                                    deliveryVm?.let { vm ->
+                                        vm.orders = vm.orders.map {
+                                            if (it.id == offer.orderId) it.copy(riderId = riderId, riderName = riderName, riderPhone = partnerPhone, status = "Accepted") else it
+                                        }
+                                        vm.liveRiderStatus = "Accepted"
+                                        vm.liveRiderEtaMins = offer.estimatedMinutes
+                                        vm.liveRiderDistanceKm = offer.distanceKm
                                     }
 
                                     val restObj = deliveryVm?.catalog?.restaurants?.find { it.id == offer.restaurantId }

@@ -1728,7 +1728,7 @@ router.post("/orders/:id/rider-location", (req, res) => {
 // Authoritative Staff/Kitchen/Rider Order Status Update
 router.patch("/orders/:id/status", optionalAuth, async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body || {};
+  const { status, riderId, riderName, riderPhone } = req.body || {};
   if (!status || typeof status !== "string") {
     return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "Order status string is required." });
   }
@@ -1736,6 +1736,9 @@ router.patch("/orders/:id/status", optionalAuth, async (req, res) => {
   if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "Order not found." });
   
   order.status = status;
+  if (riderId) order.riderId = riderId;
+  if (riderName) order.riderName = riderName;
+  if (riderPhone) order.riderPhone = riderPhone;
   order.events = order.events || [];
   order.events.push({ status, at: new Date().toISOString() });
   

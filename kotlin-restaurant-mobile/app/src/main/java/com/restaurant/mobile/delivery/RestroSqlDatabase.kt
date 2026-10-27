@@ -1598,6 +1598,8 @@ fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
                     eventsType
                 )
 
+                val rId = cursor.getColumnIndex("rider_id").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else "" }
+                val matchedRider = RiderDispatchEngine.DEFAULT_FLEET.find { it.id == rId }
                 list.add(
                     DeliveryOrder(
                         id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
@@ -1610,7 +1612,13 @@ fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
                         status = cursor.getString(cursor.getColumnIndexOrThrow("status")),
                         events = events,
                         userId = cursor.getColumnIndex("user_id").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else "" },
-                        riderId = cursor.getColumnIndex("rider_id").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else "" },
+                        riderId = rId,
+                        riderName = matchedRider?.name ?: "",
+                        riderPhone = matchedRider?.phone ?: "",
+                        riderVehicle = matchedRider?.let { "${it.vehicleNumber} (${it.vehicleModel})" } ?: "",
+                        riderRating = matchedRider?.rating ?: 4.8,
+                        riderLatitude = matchedRider?.latitude ?: 0.0,
+                        riderLongitude = matchedRider?.longitude ?: 0.0,
                         idempotencyKey = cursor.getColumnIndex("idempotency_key").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else null }
                     )
                 )
@@ -4312,11 +4320,12 @@ fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
 
         val liveOrderOffers = getAllOrders()
             .filter {
-                it.status != DeliveryOrderStatus.DELIVERED &&
-                it.status != DeliveryOrderStatus.CANCELLED &&
+                !it.status.equals("Delivered", ignoreCase = true) &&
+                !it.status.equals("Cancelled", ignoreCase = true) &&
+                !it.status.equals("Out for delivery", ignoreCase = true) &&
                 !it.id.startsWith("ORD-SEED") &&
-                (it.riderId.isBlank() || it.riderId == riderId || it.riderId == "staff-rider-1" || it.riderId == "rider-101" ||
-                 it.status in listOf("Placed", "Confirmed", "Preparing", "Ready"))
+                (it.riderId.isBlank() || it.riderId == riderId || riderId in listOf("staff-rider-1", "rider-103") || it.riderId in listOf("rider-103", "staff-rider-1") ||
+                 it.status in listOf("Placed", "Confirmed", "Preparing", "Ready", "Accepted"))
             }
             .mapIndexed { idx, order ->
                 val distKm = ((idx + 2) * 1.3).let { Math.round(it * 10.0) / 10.0 }

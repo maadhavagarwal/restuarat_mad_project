@@ -410,24 +410,36 @@ object PaymentStatus {
 
 /** Customer delivery order lifecycle. Transitions not listed here are rejected. */
 object DeliveryOrderStatus {
+    const val PLACED = "Placed"
     const val CONFIRMED = "Confirmed"
     const val PREPARING = "Preparing"
+    const val READY = "Ready"
+    const val ACCEPTED = "Accepted"
     const val OUT_FOR_DELIVERY = "Out for delivery"
     const val DELIVERED = "Delivered"
     const val CANCELLED = "Cancelled"
 
     private val allowed = mapOf(
-        CONFIRMED to setOf(PREPARING, CANCELLED),
-        PREPARING to setOf(OUT_FOR_DELIVERY),
+        PLACED to setOf(CONFIRMED, PREPARING, CANCELLED),
+        CONFIRMED to setOf(PREPARING, READY, ACCEPTED, CANCELLED),
+        PREPARING to setOf(READY, ACCEPTED, OUT_FOR_DELIVERY, CANCELLED),
+        READY to setOf(ACCEPTED, OUT_FOR_DELIVERY),
+        ACCEPTED to setOf(OUT_FOR_DELIVERY, DELIVERED),
         OUT_FOR_DELIVERY to setOf(DELIVERED),
         DELIVERED to emptySet(),
         CANCELLED to emptySet(),
     )
 
-    fun canTransition(from: String, to: String): Boolean = from == to || (allowed[from]?.contains(to) == true)
+    fun canTransition(from: String, to: String): Boolean {
+        if (from.equals(to, ignoreCase = true)) return true
+        val matchedFrom = allowed.keys.find { it.equals(from, ignoreCase = true) } ?: from
+        val matchedTo = allowed.keys.find { it.equals(to, ignoreCase = true) } ?: to
+        return allowed[matchedFrom]?.any { it.equals(matchedTo, ignoreCase = true) } == true
+    }
 
     /** A customer may cancel only before the kitchen starts preparing. */
-    fun customerCanCancel(status: String): Boolean = status == CONFIRMED
+    fun customerCanCancel(status: String): Boolean =
+        status.equals(CONFIRMED, ignoreCase = true) || status.equals(PLACED, ignoreCase = true)
 }
 
 data class Review(
