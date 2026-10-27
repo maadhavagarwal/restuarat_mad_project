@@ -945,10 +945,14 @@ fun RestaurantMobileApp(
                                     database.updateKotTicketStatus(id, status)
                                     ApiClient.updateKOTStatus(id, status)
                                     val targetKot = kots.find { it.id == id }
+                                    if (targetKot != null) {
+                                        deliveryVm?.cloudEngine?.saveKotToCloud(targetKot.copy(status = status), "rest-1")
+                                    }
                                     if (status.equals("Ready", ignoreCase = true) && targetKot != null) {
                                         if (targetKot.tableNumber.startsWith("DELIVERY-")) {
                                             val orderId = targetKot.tableNumber.removePrefix("DELIVERY-")
                                             database.updateOrderStatus(orderId, "Ready")
+                                            deliveryVm?.cloudEngine?.updateOrderStatusInCloud(orderId, "Ready")
                                             database.recordAuditLog("ORDER_READY", "Kitchen Chef", "CHEF_KDS", orderId, "Order prepared and marked ready for rider pickup")
                                             deliveryVm?.loadOrders()
                                         }
@@ -1065,8 +1069,8 @@ fun RestaurantMobileApp(
                             isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN)
                         )
                         NavigationScreen.RIDER -> com.restaurant.mobile.delivery.RiderPortalScreenView(
-                            riderId = deliveryVm?.profile?.id ?: "staff-rider-1",
-                            riderName = deliveryVm?.profile?.name ?: "Ramesh Kumar",
+                            riderId = if (userRole.isStaff && userRole != com.restaurant.mobile.delivery.UserRole.RIDER) "staff-rider-1" else (deliveryVm?.profile?.id ?: "staff-rider-1"),
+                            riderName = if (userRole.isStaff && userRole != com.restaurant.mobile.delivery.UserRole.RIDER) "Ramesh Rider (Staff Hub)" else (deliveryVm?.profile?.name ?: "Ramesh Kumar"),
                             database = database,
                             cloudEngine = deliveryVm?.cloudEngine,
                             deliveryVm = deliveryVm,
@@ -1325,9 +1329,41 @@ fun POSScreenView(
                                         onClick = {
                                             database?.updateOrderStatus(ord.id, "Preparing")
                                             database?.recordAuditLog("ORDER_ACCEPTED", "Admin/POS", "ADMIN", ord.id, "Order accepted & dispatched to KDS")
+                                            
+                                            // Dispatch / sync KOT ticket for Kitchen KDS
+                                            val existingKot = database?.getAllKotTickets()?.find { it.tableNumber.contains(ord.id) }
+                                            val finalKot = if (existingKot == null) {
+                                                val kotItems = ord.quote.lines.map { line ->
+                                                    com.restaurant.mobile.model.KOTItem(
+                                                        menuItemName = line.name,
+                                                        quantity = line.quantity
+                                                    )
+                                                }
+                                                val orderNumericId = (ord.id.filter { it.isDigit() }.take(8).toLongOrNull() ?: 1001L)
+                                                database?.createKotTicket(
+                                                    tableNumber = "DELIVERY-${ord.id}",
+                                                    tableId = "DELIVERY-${ord.id}",
+                                                    items = kotItems,
+                                                    round = 1,
+                                                    roundName = "Delivery KDS Order",
+                                                    customerName = ord.address.label.ifBlank { "Delivery Customer" },
+                                                    orderId = orderNumericId
+                                                )
+                                            } else {
+                                                database?.updateKotTicketStatus(existingKot.id, "Preparing")
+                                                existingKot.copy(status = "Preparing")
+                                            }
+                                            if (finalKot != null) {
+                                                database?.updateKotTicketStatus(finalKot.id, "Preparing")
+                                                deliveryVm?.cloudEngine?.saveKotToCloud(finalKot.copy(status = "Preparing"), ord.restaurantId)
+                                            }
+                                            
+                                            // Real-time Cloud Sync
+                                            deliveryVm?.cloudEngine?.updateOrderStatusInCloud(ord.id, "Preparing")
+                                            
                                             deliveryVm?.loadOrders()
                                             onOrderAccepted?.invoke()
-                                            onShowToast?.invoke("Order #${ord.id} accepted & sent to kitchen")
+                                            onShowToast?.invoke("Order #${ord.id} accepted & dispatched to Kitchen KDS!")
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
                                         shape = RoundedCornerShape(8.dp),
@@ -2078,16 +2114,19 @@ fun KDSScreenView(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        val isDeliveryTable = tableNumber.startsWith("DELIVERY-")
+                        val cleanDisplayTitle = if (isDeliveryTable) "Online Delivery Order #${tableNumber.removePrefix("DELIVERY-")}" else "Table $tableNumber"
+                        val tableIcon = if (isDeliveryTable) Icons.Default.DeliveryDining else Icons.Default.TableBar
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                Icons.Default.TableBar,
+                                tableIcon,
                                 contentDescription = null,
                                 tint = Color(0xFFC2410C),
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Table $tableNumber",
+                                text = cleanDisplayTitle,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 17.sp,
                                 color = Color(0xFF0F172A)
@@ -2116,11 +2155,16 @@ fun KDSScreenView(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                val roundTitle = buildString {
-                                    append("Table ${kot.tableNumber.ifBlank { tableNumber }}")
-                                    append(" — Round ${kot.round}")
-                                    if (kot.roundName.isNotBlank()) {
-                                        append(" (${kot.roundName})")
+                                val isDelivTicket = kot.tableNumber.startsWith("DELIVERY-")
+                                val roundTitle = if (isDelivTicket) {
+                                    "Delivery Order #${kot.tableNumber.removePrefix("DELIVERY-")} — ${kot.roundName.ifBlank { "Kitchen Prep" }}"
+                                } else {
+                                    buildString {
+                                        append("Table ${kot.tableNumber.ifBlank { tableNumber }}")
+                                        append(" — Round ${kot.round}")
+                                        if (kot.roundName.isNotBlank()) {
+                                            append(" (${kot.roundName})")
+                                        }
                                     }
                                 }
                                 Text(
