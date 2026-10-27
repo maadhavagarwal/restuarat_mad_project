@@ -1129,13 +1129,63 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                             }
 
                             val stages = listOf(
-                                Triple("Confirmed", "Order Placed & Confirmed", "Restaurant accepted and preparing ingredients"),
-                                Triple("Preparing", "Kitchen Preparing", "Chef Marco is cooking your fresh dishes"),
-                                Triple("Out for delivery", "Out for Delivery", "Ramesh Kumar is on the way with hot food"),
-                                Triple("Delivered", "Order Delivered", "Delivered at doorstep. Bon Appétit!")
+                                Triple("Placed", "Order Placed", "Order received by restaurant"),
+                                Triple("Preparing", "Kitchen Preparing", "Restaurant accepted & Chef is cooking your fresh dishes"),
+                                Triple("Ready", "Food Prepared", "Packed & ready for delivery partner pickup"),
+                                Triple("Out for delivery", "Out for Delivery", "${activeOrder.riderName.ifBlank { "Delivery Partner" }} is on the way"),
+                                Triple("Delivered", "Delivered", "Delivered at doorstep. Enjoy your meal!")
                             )
-                            val stageNames = stages.map { it.first }
-                            val activeIdx = stageNames.indexOf(activeOrder.status).coerceAtLeast(0)
+                            val normalizedStatus = activeOrder.status.trim().lowercase()
+                            val activeIdx = when (normalizedStatus) {
+                                "placed", "received", "pending" -> 0
+                                "confirmed", "accepted_by_admin" -> 0
+                                "preparing" -> 1
+                                "ready" -> 2
+                                "accepted", "picked up", "out for delivery" -> 3
+                                "delivered" -> 4
+                                "cancelled", "canceled" -> -1
+                                else -> 0
+                            }
+
+                            // Dynamic Live Progress Bar
+                            val progressTarget = if (activeIdx < 0) 0f else (activeIdx.toFloat() / (stages.size - 1).toFloat())
+                            val animatedProgress by androidx.compose.animation.core.animateFloatAsState(
+                                targetValue = progressTarget,
+                                animationSpec = androidx.compose.animation.core.tween(durationMillis = 600)
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                LinearProgressIndicator(
+                                    progress = { animatedProgress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .clip(RoundedCornerShape(4.dp)),
+                                    color = if (activeOrder.status.equals("Delivered", ignoreCase = true)) RestroTokens.green else RestroTokens.coral,
+                                    trackColor = RestroTokens.muted.copy(alpha = 0.2f)
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Step ${(activeIdx + 1).coerceAtLeast(1)} of ${stages.size}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = RestroTokens.muted
+                                    )
+                                    Text(
+                                        text = "${(animatedProgress * 100).toInt()}% Completed",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (activeOrder.status.equals("Delivered", ignoreCase = true)) RestroTokens.green else RestroTokens.coral
+                                    )
+                                }
+                            }
 
                             stages.forEachIndexed { idx, (_, title, subtitle) ->
                                 val isDone = idx <= activeIdx

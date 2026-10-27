@@ -168,6 +168,41 @@ class FirebaseCloudEngine(
             }
     }
 
+    fun assignRiderToOrderInCloud(
+        orderId: String,
+        riderId: String,
+        riderName: String,
+        riderPhone: String,
+        newStatus: String = "Accepted",
+        onSuccess: () -> Unit = {},
+        onError: (Exception) -> Unit = {}
+    ) {
+        localSqlDb.assignRiderToOrder(orderId, riderId)
+        localSqlDb.updateOrderStatus(orderId, newStatus)
+        val db = firestore
+        if (db == null || !isFirebaseInitialized) {
+            onError(IllegalStateException("Cloud Firestore is offline"))
+            return
+        }
+        val updateMap = mapOf(
+            "status" to newStatus,
+            "riderId" to riderId,
+            "riderName" to riderName,
+            "riderPhone" to riderPhone,
+            "updatedAt" to System.currentTimeMillis()
+        )
+        db.collection("orders").document(orderId)
+            .set(updateMap, com.google.firebase.firestore.SetOptions.merge())
+            .addOnSuccessListener {
+                Log.d(tag, "Rider $riderName ($riderId) assigned to order $orderId in Firestore.")
+                onSuccess()
+            }
+            .addOnFailureListener { err ->
+                Log.w(tag, "Failed assigning rider in Firestore: ${err.message}")
+                onError(err)
+            }
+    }
+
     fun observeSingleOrderRealTime(
         orderId: String,
         onOrderUpdated: (DeliveryOrder) -> Unit
@@ -200,7 +235,7 @@ class FirebaseCloudEngine(
         restaurantId: String = "",
         isStaffOrRider: Boolean = false,
         onOrdersUpdated: (List<DeliveryOrder>) -> Unit
-    ) {
+    ): ListenerRegistration? {
         val channelId = when {
             isStaffOrRider && restaurantId.isNotBlank() -> "orders:restaurant:$restaurantId"
             isStaffOrRider -> "orders:staff"
@@ -215,10 +250,10 @@ class FirebaseCloudEngine(
                 localSqlDb.getAllOrders()
             }
             onOrdersUpdated(fallback)
-            return
+            return null
         }
 
-        try {
+        return try {
             val query: Query = when {
                 isStaffOrRider && restaurantId.isNotBlank() ->
                     db.collection("orders").whereEqualTo("restaurantId", restaurantId)
@@ -272,6 +307,7 @@ class FirebaseCloudEngine(
                     onOrdersUpdated(fallback)
                 }
             )
+            ordersListenerReg
         } catch (_: Exception) {
             val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
                 localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
@@ -279,6 +315,7 @@ class FirebaseCloudEngine(
                 localSqlDb.getAllOrders()
             }
             onOrdersUpdated(fallback)
+            null
         }
     }
 

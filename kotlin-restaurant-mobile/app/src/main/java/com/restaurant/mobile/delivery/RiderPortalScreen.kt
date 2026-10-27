@@ -172,6 +172,9 @@ fun RiderPortalScreenView(
     }
 
     DisposableEffect(riderId, cloudEngine) {
+        val regOrders = cloudEngine?.observeOrdersRealTime(isStaffOrRider = true) {
+            refreshRiderData()
+        }
         val regRides = cloudEngine?.observeRiderRidesRealTime(riderId = riderId, isAdmin = false) { updatedRides ->
             completedRides = updatedRides
         }
@@ -182,6 +185,7 @@ fun RiderPortalScreenView(
             refreshRiderData()
         }
         onDispose {
+            regOrders?.remove()
             regRides?.remove()
             regPayouts?.remove()
             regRejected?.remove()
@@ -1080,8 +1084,15 @@ fun RiderPortalScreenView(
                                     liveRemainingKm = offer.distanceKm
                                     liveDynamicEtaMins = offer.estimatedMinutes
 
+                                    database.assignRiderToOrder(offer.orderId, riderId)
                                     coroutineScope.launch(Dispatchers.IO) {
-                                        cloudEngine?.updateOrderStatusInCloud(offer.orderId, "Accepted")
+                                        cloudEngine?.assignRiderToOrderInCloud(
+                                            orderId = offer.orderId,
+                                            riderId = riderId,
+                                            riderName = riderName,
+                                            riderPhone = "+91 98765 12345",
+                                            newStatus = "Accepted"
+                                        )
                                     }
 
                                     val restObj = deliveryVm?.catalog?.restaurants?.find { it.id == offer.restaurantId }
