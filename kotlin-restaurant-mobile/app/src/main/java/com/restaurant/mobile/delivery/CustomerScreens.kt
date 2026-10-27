@@ -775,7 +775,7 @@ fun CheckoutScreen(vm: DeliveryViewModel) {
 
         val effectiveQuote = vm.quote ?: vm.computeQuote()
         val quoteTotal = effectiveQuote.total
-        BillRow("Grand Total", quoteTotal)
+        BillRow(RestroI18n.t("bill_total"), quoteTotal)
 
         val isOnlinePayment = selectedPaymentMethod in listOf("UPI", "Card", "Netbanking")
         Action(
@@ -830,7 +830,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                     ) {
                         Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(52.dp), tint = RestroTokens.green)
                     }
-                    Heading("Order Confirmed!", "Your order is confirmed & sent to the kitchen.")
+                    Heading(RestroI18n.t("order_confirmed_title"), RestroI18n.t("order_confirmed_sub"))
 
                     Row(
                         modifier = Modifier
@@ -840,7 +840,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text("Order ID: #${confirmedOrder?.id ?: vm.orderId}", fontWeight = FontWeight.Bold, color = RestroTokens.coral, fontSize = 15.sp)
+                        Text("${RestroI18n.t("order_id_label")}: #${confirmedOrder?.id ?: vm.orderId}", fontWeight = FontWeight.Bold, color = RestroTokens.coral, fontSize = 15.sp)
                     }
 
                     // ETA & Restaurant Header
@@ -883,7 +883,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                                 Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
                                 Column {
                                     Text(
-                                        "Deliver to: ${confirmedOrder?.address?.label ?: "Delivery Address"}",
+                                        "${RestroI18n.t("deliver_to_label")}: ${confirmedOrder?.address?.label ?: RestroI18n.t("delivery_address")}",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.sp
                                     )
@@ -955,12 +955,12 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                     }
 
                     Spacer(Modifier.height(4.dp))
-                    Action("Track Live Order on Map") {
+                    Action(RestroI18n.t("track_live_order_btn")) {
                         vm.route = "Tracking"
                         vm.track(vm.orderId)
                     }
                     TextButton(onClick = { vm.route = "Home" }) {
-                        Text("Continue Discovering Dishes")
+                        Text(RestroI18n.t("continue_discovering"))
                     }
                 }
             }
@@ -997,7 +997,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                 }
             } else {
                 Page {
-                    Heading("Live Order Tracking", "Order #${activeOrder.id} · ${activeOrder.restaurantName}")
+                    Heading(RestroI18n.t("live_order_tracking"), "Order #${activeOrder.id} · ${activeOrder.restaurantName.localizedRestaurantName()}")
 
                     // Live Refreshed ETA Header Card
                     Card(
@@ -1030,12 +1030,12 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                                 }
                                 Column {
                                     Text(
-                                        text = if (activeOrder.status == "Delivered") "Order Status" else "Estimated Delivery Time (ETA)",
+                                        text = if (activeOrder.status == "Delivered") RestroI18n.t("order_status") else RestroI18n.t("estimated_delivery_time"),
                                         fontSize = 11.sp,
                                         color = RestroTokens.muted
                                     )
                                     Text(
-                                        text = if (activeOrder.status == "Delivered") "Delivered at Doorstep" else "${vm.liveRiderEtaMins} mins (${String.format(java.util.Locale.US, "%.1f km away", vm.liveRiderDistanceKm)})",
+                                        text = if (activeOrder.status == "Delivered") RestroI18n.t("delivered_at_doorstep") else "${vm.liveRiderEtaMins} mins (${String.format(java.util.Locale.US, "%.1f km away", vm.liveRiderDistanceKm)})",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 15.sp,
                                         color = if (activeOrder.status == "Delivered") RestroTokens.green else RestroTokens.text
@@ -1056,7 +1056,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                             ) {
                                 Icon(Icons.Default.Refresh, null, modifier = Modifier.size(14.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("Refresh", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                Text(RestroI18n.t("refresh"), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -1112,7 +1112,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Delivery Progress", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text(RestroI18n.t("delivery_progress"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                 Surface(
                                     color = if (activeOrder.status == "Delivered") RestroTokens.green.copy(alpha = 0.15f)
                                            else RestroTokens.coral.copy(alpha = 0.15f),

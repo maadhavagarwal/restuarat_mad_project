@@ -198,6 +198,15 @@ object RestroMenuTranslationManager {
         return memoryCache.containsKey("$targetLang:$dishId") || memoryCache.containsKey("$targetLang:$dishName")
     }
 
+    fun translateCategory(categoryName: String, lang: String = RestroI18n.currentLanguage): String {
+        val targetLang = lang.lowercase(Locale.ROOT).trim()
+        if (targetLang == "en") return categoryName
+        val map = if (targetLang == "hi") categoryLexiconHindi
+                  else if (targetLang == "mr") categoryLexiconMarathi
+                  else emptyMap()
+        return map[categoryName] ?: map.entries.firstOrNull { it.key.contains(categoryName, ignoreCase = true) || categoryName.contains(it.key, ignoreCase = true) }?.value ?: categoryName
+    }
+
     fun clearCache() {
         memoryCache.clear()
     }
@@ -347,4 +356,10 @@ fun String.localizedAddress(lang: String = RestroI18n.currentLanguage): String {
             .replace("Lokhandwala", "लोखंडवाला")
             .replace("Road", "रस्ता")
     } else this
+}
+
+fun com.restaurant.mobile.model.MenuItem.localizedName(lang: String = RestroI18n.currentLanguage): String {
+    val targetLang = lang.lowercase(Locale.ROOT).trim()
+    if (targetLang == "en") return this.name
+    return RestroMenuTranslationManager.getTranslation(id.toString(), name, "", targetLang).name
 }

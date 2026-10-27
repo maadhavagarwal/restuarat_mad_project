@@ -1487,14 +1487,14 @@ fun POSScreenView(
                 FilterChip(
                     selected = selectedCategoryId == null,
                     onClick = { onSelectCategory(null) },
-                    label = { Text("All") }
+                    label = { Text(com.restaurant.mobile.delivery.RestroI18n.t("filter_all")) }
                 )
             }
             items(categories) { cat ->
                 FilterChip(
                     selected = selectedCategoryId == cat.id,
                     onClick = { onSelectCategory(cat.id) },
-                    label = { Text(cat.name) }
+                    label = { Text(com.restaurant.mobile.delivery.RestroMenuTranslationManager.translateCategory(cat.name)) }
                 )
             }
         }
@@ -1525,7 +1525,7 @@ fun POSScreenView(
                     ) {
                         Column {
                             Text(
-                                text = item.name,
+                                text = item.localizedName(),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
                                 color = Color(0xFF1E293B)
