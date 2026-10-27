@@ -1861,6 +1861,13 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
             isStaffOrRider = isStaff
         ) { cloudOrders ->
             viewModelScope.launch(Dispatchers.Main) {
+                cloudOrders.forEach { co ->
+                    val oldOrder = orders.find { it.id == co.id }
+                    if (co.status.equals("Delivered", ignoreCase = true) &&
+                        oldOrder != null && !oldOrder.status.equals("Delivered", ignoreCase = true)) {
+                        notifyOrderDelivered(co.id)
+                    }
+                }
                 orders = cloudOrders
             }
         }
@@ -3240,8 +3247,34 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         // Attach real-time cloud observation for live single order status changes
         cloudEngine.observeSingleOrderRealTime(oId) { updatedOrder ->
             viewModelScope.launch(Dispatchers.Main) {
+                val oldOrder = orders.find { it.id == updatedOrder.id }
+                val prevStatus = oldOrder?.status ?: ""
                 orders = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
                 liveRiderStatus = updatedOrder.status
+                liveRiderEtaMins = when (updatedOrder.status.trim().lowercase()) {
+                    "placed", "received", "pending" -> 28
+                    "confirmed" -> 25
+                    "preparing" -> 20
+                    "ready" -> 14
+                    "accepted" -> 10
+                    "out for delivery", "picked up" -> 6
+                    "delivered" -> 0
+                    else -> 15
+                }
+                liveRiderDistanceKm = when (updatedOrder.status.trim().lowercase()) {
+                    "placed", "received", "pending" -> 5.2
+                    "confirmed" -> 4.8
+                    "preparing" -> 3.8
+                    "ready" -> 2.8
+                    "accepted" -> 2.0
+                    "out for delivery", "picked up" -> 0.8
+                    "delivered" -> 0.0
+                    else -> 2.0
+                }
+                if (updatedOrder.status.equals("Delivered", ignoreCase = true) &&
+                    !prevStatus.equals("Delivered", ignoreCase = true)) {
+                    notifyOrderDelivered(updatedOrder.id)
+                }
             }
         }
 

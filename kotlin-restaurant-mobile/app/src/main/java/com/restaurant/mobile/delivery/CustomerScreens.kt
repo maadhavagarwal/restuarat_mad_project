@@ -973,6 +973,13 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                 vm.profile == null || it.userId.isBlank() || it.userId == vm.profile?.id
             }
 
+            LaunchedEffect(activeOrder?.id) {
+                if (activeOrder != null) {
+                    vm.orderId = activeOrder.id
+                    vm.track(activeOrder.id)
+                }
+            }
+
             var showBillDetails by rememberSaveable { mutableStateOf(false) }
             var showSupportDialog by rememberSaveable { mutableStateOf(false) }
             var reviewSubmitted by rememberSaveable(activeOrder?.id) { mutableStateOf(false) }

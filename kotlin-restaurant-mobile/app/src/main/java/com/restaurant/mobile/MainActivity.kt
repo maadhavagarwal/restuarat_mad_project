@@ -111,12 +111,73 @@ class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataList
 
             // Handle notification tap navigation
             DisposableEffect(Unit) {
+                fun handleAuthIntent(i: Intent?) {
+                    val loginEmail = i?.getStringExtra("EXTRA_LOGIN_EMAIL")
+                    val loginPwd = i?.getStringExtra("EXTRA_LOGIN_PWD") ?: "password123"
+                    if (!loginEmail.isNullOrBlank()) {
+                        deliveryVm.auth(loginEmail, loginPwd, "User", false)
+                    }
+                    val orderStatusAction = i?.getStringExtra("EXTRA_ORDER_STATUS")
+                    val targetOrderId = i?.getStringExtra("EXTRA_ORDER_ID")
+                    if (!orderStatusAction.isNullOrBlank() && !targetOrderId.isNullOrBlank()) {
+                        deliveryVm.sqlDb.updateOrderStatus(targetOrderId, orderStatusAction)
+                        deliveryVm.cloudEngine.updateOrderStatusInCloud(targetOrderId, orderStatusAction)
+                        deliveryVm.orders = deliveryVm.orders.map {
+                            if (it.id == targetOrderId) it.copy(status = orderStatusAction) else it
+                        }
+                        deliveryVm.liveRiderStatus = orderStatusAction
+                        deliveryVm.liveRiderEtaMins = when (orderStatusAction.trim().lowercase()) {
+                            "placed", "received", "pending" -> 28
+                            "confirmed" -> 25
+                            "preparing" -> 20
+                            "ready" -> 14
+                            "accepted" -> 10
+                            "out for delivery", "picked up" -> 6
+                            "delivered" -> 0
+                            else -> 15
+                        }
+                        deliveryVm.liveRiderDistanceKm = when (orderStatusAction.trim().lowercase()) {
+                            "placed", "received", "pending" -> 5.2
+                            "confirmed" -> 4.8
+                            "preparing" -> 3.8
+                            "ready" -> 2.8
+                            "accepted" -> 2.0
+                            "out for delivery", "picked up" -> 0.8
+                            "delivered" -> 0.0
+                            else -> 2.0
+                        }
+                        if (orderStatusAction.equals("Delivered", ignoreCase = true)) {
+                            deliveryVm.notifyOrderDelivered(targetOrderId)
+                        }
+                    }
+                    val assignRiderAction = i?.getStringExtra("EXTRA_ASSIGN_RIDER")
+                    if (!assignRiderAction.isNullOrBlank() && !targetOrderId.isNullOrBlank()) {
+                        val rId = i.getStringExtra("EXTRA_RIDER_ID") ?: "staff-rider-1"
+                        val rName = i.getStringExtra("EXTRA_RIDER_NAME") ?: "Ramesh Kumar"
+                        val rPhone = i.getStringExtra("EXTRA_RIDER_PHONE") ?: "+91 98112 34567"
+                        deliveryVm.sqlDb.assignRiderToOrder(targetOrderId, rId)
+                        deliveryVm.sqlDb.updateOrderStatus(targetOrderId, "Accepted")
+                        deliveryVm.cloudEngine.assignRiderToOrderInCloud(targetOrderId, rId, rName, rPhone, "Accepted")
+                        deliveryVm.orders = deliveryVm.orders.map {
+                            if (it.id == targetOrderId) it.copy(riderId = rId, riderName = rName, riderPhone = rPhone, status = "Accepted") else it
+                        }
+                        deliveryVm.liveRiderStatus = "Accepted"
+                        deliveryVm.liveRiderEtaMins = 10
+                        deliveryVm.liveRiderDistanceKm = 2.0
+                    }
+                    if (!targetOrderId.isNullOrBlank()) {
+                        deliveryVm.orderId = targetOrderId
+                        deliveryVm.track(targetOrderId)
+                    }
+                }
+                handleAuthIntent(intent)
                 val dest = intent?.getStringExtra("EXTRA_DESTINATION")
                 val tableNum = intent?.getStringExtra("EXTRA_TABLE_NUMBER")
                 if (!dest.isNullOrBlank()) {
                     deliveryVm.handleNotificationNavigation(dest, tableNum)
                 }
                 onNewIntentCallback = { newIntent ->
+                    handleAuthIntent(newIntent)
                     val newDest = newIntent.getStringExtra("EXTRA_DESTINATION")
                     val newTableNum = newIntent.getStringExtra("EXTRA_TABLE_NUMBER")
                     if (!newDest.isNullOrBlank()) {

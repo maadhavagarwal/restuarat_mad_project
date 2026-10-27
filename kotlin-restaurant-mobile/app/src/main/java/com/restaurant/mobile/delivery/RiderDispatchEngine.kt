@@ -24,7 +24,7 @@ class RiderDispatchEngine(
         /** Pre-seeded active fleet in Mumbai / Service Radius */
         val DEFAULT_FLEET = listOf(
             Rider(
-                id = "rider-101",
+                id = "staff-rider-1",
                 name = "Ramesh Kumar",
                 phone = "+91 98112 34567",
                 vehicleNumber = "MH-02-EM-8821",

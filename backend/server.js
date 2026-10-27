@@ -501,8 +501,8 @@ const db = {
 
   addresses: new Map([
     ["usr-1", [
-      { id: "addr-1", label: "Home", line: "Flat 402, Green Glen Layout, Bellandur", city: "Bengaluru", postcode: "560103", phone: "+91 98765 43210", latitude: 12.9290, longitude: 77.6740 },
-      { id: "addr-2", label: "Office", line: "Prestige Tech Park, Outer Ring Road", city: "Bengaluru", postcode: "560103", phone: "+91 98765 43210", latitude: 12.9360, longitude: 77.6910 }
+      { id: "addr-1", label: "Home", line: "Link Road, Andheri West", city: "Mumbai", postcode: "400053", phone: "+91 98765 43210", latitude: 19.1150, longitude: 72.8650 },
+      { id: "addr-2", label: "Office", line: "NESCO IT Park, Goregaon East", city: "Mumbai", postcode: "400063", phone: "+91 98765 43210", latitude: 19.1663, longitude: 72.8480 }
     ]]
   ]),
 

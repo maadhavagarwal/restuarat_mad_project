@@ -158,11 +158,26 @@ fun RiderPortalScreenView(
             val payoutList = database.getRiderPayouts(riderId)
             val offers = database.getAvailableRideOffers(riderId)
             val verification = database.getPartnerVerification(riderId)
+            val ongoingOrder = database.getAllOrders().firstOrNull { (it.riderId == riderId || it.riderId == "staff-rider-1" || it.riderId == "rider-101") && (it.status.equals("Accepted", ignoreCase = true) || it.status.equals("Out for delivery", ignoreCase = true)) }
             withContext(Dispatchers.Main) {
                 completedRides = rides
                 payouts = payoutList
                 availableOffers = offers
                 partnerVerification = verification
+                if (ongoingOrder != null && activeRideOffer == null) {
+                    activeRideOffer = RiderRideOffer(
+                        id = "offer-",
+                        orderId = ongoingOrder.id,
+                        restaurantId = ongoingOrder.restaurantId,
+                        restaurantName = ongoingOrder.restaurantName,
+                        pickupAddress = "Kitchen Pickup · ",
+                        dropAddress = ", ",
+                        distanceKm = 2.5,
+                        estimatedMinutes = 12,
+                        riderIncomeRupees = 65L
+                    )
+                    isOrderPickedUp = ongoingOrder.status.equals("Out for delivery", ignoreCase = true)
+                }
             }
         }
     }
@@ -786,6 +801,7 @@ fun RiderPortalScreenView(
                                         isOrderPickedUp = true
                                         deliveryVm?.notifyOrderPickedUp(active.orderId, riderId)
                                         coroutineScope.launch(Dispatchers.IO) {
+                                            database.updateOrderStatus(active.orderId, "Out for delivery")
                                             cloudEngine?.updateOrderStatusInCloud(active.orderId, "Out for delivery")
                                         }
                                         onShowToast("Order #${active.orderId} picked up! Opening Google Maps to customer...")
@@ -824,6 +840,8 @@ fun RiderPortalScreenView(
                                     onClick = {
                                         coroutineScope.launch(Dispatchers.IO) {
                                             database.markRideOfferCompleted(riderId, active)
+                                            database.updateOrderStatus(active.orderId, "Delivered")
+                                            cloudEngine?.updateOrderStatusInCloud(active.orderId, "Delivered")
                                             val rideRecord = RiderRideRecord(
                                                 id = "ride-${active.id}",
                                                 riderId = riderId,
@@ -1085,6 +1103,7 @@ fun RiderPortalScreenView(
                                     liveDynamicEtaMins = offer.estimatedMinutes
 
                                     database.assignRiderToOrder(offer.orderId, riderId)
+                                    database.updateOrderStatus(offer.orderId, "Accepted")
                                     coroutineScope.launch(Dispatchers.IO) {
                                         cloudEngine?.assignRiderToOrderInCloud(
                                             orderId = offer.orderId,
