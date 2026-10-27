@@ -267,6 +267,7 @@ class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataList
 }
 
 enum class NavigationScreen(val title: String, val icon: ImageVector) {
+    ORDERS("Online Orders", Icons.Default.ReceiptLong),
     POS("POS Cashier", Icons.Default.ShoppingCart),
     KDS("Kitchen KDS", Icons.Default.SoupKitchen),
     TABLES("Tables", Icons.Default.TableBar),
@@ -278,6 +279,7 @@ enum class NavigationScreen(val title: String, val icon: ImageVector) {
 
     fun getLocalizedTitle(): String {
         return when (this) {
+            ORDERS -> com.restaurant.mobile.delivery.RestroI18n.t("admin_orders")
             POS -> com.restaurant.mobile.delivery.RestroI18n.t("pos_cashier")
             KDS -> com.restaurant.mobile.delivery.RestroI18n.t("kitchen_kds")
             TABLES -> com.restaurant.mobile.delivery.RestroI18n.t("tables_floor")
@@ -316,26 +318,27 @@ fun RestaurantMobileApp(
 
     val allowedScreens = remember(userRole) {
         when (userRole) {
-            com.restaurant.mobile.delivery.UserRole.WAITER -> listOf(NavigationScreen.POS, NavigationScreen.TABLES)
-            com.restaurant.mobile.delivery.UserRole.CHEF_KDS -> listOf(NavigationScreen.KDS, NavigationScreen.TABLES)
-            com.restaurant.mobile.delivery.UserRole.RIDER -> listOf(NavigationScreen.RIDER)
+            com.restaurant.mobile.delivery.UserRole.WAITER -> listOf(NavigationScreen.ORDERS, NavigationScreen.POS, NavigationScreen.TABLES)
+            com.restaurant.mobile.delivery.UserRole.CHEF_KDS -> listOf(NavigationScreen.KDS, NavigationScreen.ORDERS, NavigationScreen.TABLES)
+            com.restaurant.mobile.delivery.UserRole.RIDER -> listOf(NavigationScreen.RIDER, NavigationScreen.ORDERS)
             com.restaurant.mobile.delivery.UserRole.KIOSK -> listOf(NavigationScreen.POS)
             com.restaurant.mobile.delivery.UserRole.ADMIN -> listOf(
+                NavigationScreen.ORDERS,
                 NavigationScreen.POS,
                 NavigationScreen.KDS,
                 NavigationScreen.TABLES,
                 NavigationScreen.MENU,
                 NavigationScreen.INVENTORY,
+                NavigationScreen.RIDER,
                 NavigationScreen.SALARY,
-                NavigationScreen.ANALYTICS,
-                NavigationScreen.RIDER
+                NavigationScreen.ANALYTICS
             )
             com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN -> NavigationScreen.entries
             com.restaurant.mobile.delivery.UserRole.CUSTOMER -> emptyList()
         }
     }
     var currentScreen by remember(userRole) {
-        mutableStateOf(allowedScreens.firstOrNull() ?: NavigationScreen.POS)
+        mutableStateOf(allowedScreens.firstOrNull() ?: NavigationScreen.ORDERS)
     }
 
     var categories by remember { mutableStateOf<List<Category>>(emptyList()) }
@@ -656,6 +659,9 @@ fun RestaurantMobileApp(
                         horizontalArrangement = if (allowedScreens.size <= 4) Arrangement.SpaceEvenly else Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val pendingOrdersCount = (deliveryVm?.orders ?: database.getAllOrders()).count {
+                            it.status.equals("Placed", ignoreCase = true) || it.status.equals("Confirmed", ignoreCase = true)
+                        }
                         allowedScreens.forEach { screen ->
                             val selected = currentScreen == screen
                             Surface(
@@ -668,25 +674,47 @@ fun RestaurantMobileApp(
                                 color = if (selected) Color(0xFFFFE4E6) else Color.Transparent,
                                 modifier = Modifier.widthIn(min = 76.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        imageVector = screen.icon,
-                                        contentDescription = screen.getLocalizedTitle(),
-                                        tint = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Text(
-                                        text = screen.getLocalizedTitle(),
-                                        fontSize = 11.sp,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
-                                        maxLines = 1,
-                                        softWrap = false
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = screen.icon,
+                                            contentDescription = screen.getLocalizedTitle(),
+                                            tint = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            text = screen.getLocalizedTitle(),
+                                            fontSize = 11.sp,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (selected) Color(0xFFC2410C) else Color(0xFF64748B),
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                    }
+                                    if (screen == NavigationScreen.ORDERS && pendingOrdersCount > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .offset(x = 4.dp, y = (-2).dp)
+                                                .size(16.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFDC2626)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (pendingOrdersCount > 9) "9+" else "$pendingOrdersCount",
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -958,6 +986,12 @@ fun RestaurantMobileApp(
 
                 Box(modifier = Modifier.weight(1f)) {
                     when (currentScreen) {
+                        NavigationScreen.ORDERS -> com.restaurant.mobile.delivery.AdminOrdersScreenView(
+                            database = database,
+                            cloudEngine = deliveryVm?.cloudEngine,
+                            deliveryVm = deliveryVm,
+                            onShowToast = onShowToast
+                        )
                         NavigationScreen.POS -> POSScreenView(
                             categories = categories,
                             menuItems = menuItems,

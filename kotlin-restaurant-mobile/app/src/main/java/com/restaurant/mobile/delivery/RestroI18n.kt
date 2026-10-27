@@ -316,6 +316,7 @@ object RestroI18n {
         "rider_no_offers" to mapOf("en" to "All nearby ride offers processed. Rejected offers are hidden permanently.", "hi" to "सभी आस-पास के ऑफ़र पूरे हो गए। अस्वीकृत ऑफ़र दोबारा नहीं दिखाए जाएंगे।", "mr" to "जवळील सर्व ऑफर्स पूर्ण झाल्या. नाकारलेल्या ऑफर्स पुन्हा दिसणार नाहीत."),
 
         // Staff Portal Navigation
+        "admin_orders" to mapOf("en" to "Orders", "hi" to "ऑर्डर्स", "mr" to "ऑर्डर्स"),
         "pos_cashier" to mapOf("en" to "POS Cashier", "hi" to "पीओएस कैशियर", "mr" to "पीओएस कॅशियर"),
         "kitchen_kds" to mapOf("en" to "Kitchen KDS", "hi" to "किचन केडीएस", "mr" to "किचन केडीएस"),
         "tables_floor" to mapOf("en" to "Tables", "hi" to "टेबल्स", "mr" to "टेबल्स"),
