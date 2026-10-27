@@ -216,12 +216,14 @@ class FirestoreSubscriptionManager {
                     }
                 }
                 DocumentChange.Type.MODIFIED -> {
-                    if (!shouldProcessModification(channelId, docId, dataMap)) {
-                        // Suppress duplicate echo modifications (e.g. metadata-only or write-echo)
+                    val isPending = dc.document.metadata.hasPendingWrites()
+                    if (isPending && !shouldProcessModification(channelId, docId, dataMap)) {
+                        // Suppress duplicate echo modifications only for local uncommitted writes
                         continue
                     }
                     val parsed = runCatching { mapper(docId, dataMap) }.getOrNull()
                     if (parsed != null) {
+                        recordPayloadHash(channelId, docId, dataMap)
                         onModified(parsed)
                     }
                 }

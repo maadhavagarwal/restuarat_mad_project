@@ -395,6 +395,10 @@ fun RestaurantMobileApp(
         deliveryVm?.cloudEngine?.observeTableBookingsRealTime(restaurantId = "rest-1", isStaff = true) {
             refreshAll()
         }
+        deliveryVm?.cloudEngine?.observeOrdersRealTime(restaurantId = "rest-1", isStaffOrRider = true) { cloudOrders ->
+            deliveryVm?.orders = cloudOrders
+            refreshAll()
+        }
     }
 
     MaterialTheme(
@@ -948,14 +952,21 @@ fun RestaurantMobileApp(
                                     if (targetKot != null) {
                                         deliveryVm?.cloudEngine?.saveKotToCloud(targetKot.copy(status = status), "rest-1")
                                     }
-                                    if (status.equals("Ready", ignoreCase = true) && targetKot != null) {
-                                        if (targetKot.tableNumber.startsWith("DELIVERY-")) {
-                                            val orderId = targetKot.tableNumber.removePrefix("DELIVERY-")
+                                    if (targetKot != null && targetKot.tableNumber.startsWith("DELIVERY-")) {
+                                        val orderId = targetKot.tableNumber.removePrefix("DELIVERY-")
+                                        if (status.equals("Preparing", ignoreCase = true)) {
+                                            database.updateOrderStatus(orderId, "Preparing")
+                                            deliveryVm?.cloudEngine?.updateOrderStatusInCloud(orderId, "Preparing")
+                                            database.recordAuditLog("ORDER_PREPARING", "Kitchen Chef", "CHEF_KDS", orderId, "Kitchen started preparing order")
+                                            deliveryVm?.loadOrders()
+                                        } else if (status.equals("Ready", ignoreCase = true)) {
                                             database.updateOrderStatus(orderId, "Ready")
                                             deliveryVm?.cloudEngine?.updateOrderStatusInCloud(orderId, "Ready")
                                             database.recordAuditLog("ORDER_READY", "Kitchen Chef", "CHEF_KDS", orderId, "Order prepared and marked ready for rider pickup")
                                             deliveryVm?.loadOrders()
                                         }
+                                    }
+                                    if (status.equals("Ready", ignoreCase = true) && targetKot != null) {
                                         if (id !in notifiedReadyKotIds) {
                                             notifiedReadyKotIds = notifiedReadyKotIds + id
                                             val message = com.restaurant.mobile.delivery.KotTimerRules.formatReadyNotificationMessage(
@@ -1278,9 +1289,9 @@ fun POSScreenView(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // Incoming Online Orders Pending Acceptance
+        // Incoming Online Orders Pending Acceptance (authoritative real-time sync)
         val pendingOrders = remember(database, deliveryVm?.orders) {
-            database?.getAllOrders()?.filter { it.status == "Placed" } ?: emptyList()
+            (deliveryVm?.orders ?: database?.getAllOrders().orEmpty()).filter { it.status.equals("Placed", ignoreCase = true) }
         }
         if (pendingOrders.isNotEmpty()) {
             Card(
@@ -1375,6 +1386,7 @@ fun POSScreenView(
                                         onClick = {
                                             database?.updateOrderStatus(ord.id, "Cancelled")
                                             database?.recordAuditLog("ORDER_DECLINED", "Admin/POS", "ADMIN", ord.id, "Order declined by admin")
+                                            deliveryVm?.cloudEngine?.updateOrderStatusInCloud(ord.id, "Cancelled")
                                             deliveryVm?.loadOrders()
                                             onOrderAccepted?.invoke()
                                             onShowToast?.invoke("Order #${ord.id} declined")

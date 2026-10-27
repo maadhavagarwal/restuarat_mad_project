@@ -152,15 +152,47 @@ class FirebaseCloudEngine(
             onError(IllegalStateException("Cloud Firestore is not initialized or offline"))
             return
         }
+        val updateMap = mapOf(
+            "status" to newStatus,
+            "updatedAt" to System.currentTimeMillis()
+        )
         db.collection("orders").document(orderId)
-            .update(
-                mapOf(
-                    "status" to newStatus,
-                    "updatedAt" to System.currentTimeMillis()
-                )
-            )
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { onError(it) }
+            .set(updateMap, com.google.firebase.firestore.SetOptions.merge())
+            .addOnSuccessListener {
+                Log.d(tag, "Order $orderId status updated to '$newStatus' in Cloud Firestore.")
+                onSuccess()
+            }
+            .addOnFailureListener { err ->
+                Log.w(tag, "Failed updating order $orderId status in Cloud Firestore: ${err.message}")
+                onError(err)
+            }
+    }
+
+    fun observeSingleOrderRealTime(
+        orderId: String,
+        onOrderUpdated: (DeliveryOrder) -> Unit
+    ): ListenerRegistration? {
+        val db = firestore ?: return null
+        if (!isFirebaseInitialized || orderId.isBlank()) return null
+        val channelId = "order:single:$orderId"
+        val docRef = db.collection("orders").document(orderId)
+        return subscriptionManager.attachDocumentListener(
+            channelId = channelId,
+            scope = FirestoreSubscriptionManager.ChannelScope.USER_SCOPED,
+            docRef = docRef,
+            onSnapshot = { doc, _ ->
+                if (doc.exists()) {
+                    val order = FirestoreModelMapper.mapToDeliveryOrder(doc.id, doc.data ?: emptyMap())
+                    if (order != null) {
+                        localSqlDb.upsertOrderFromCloud(order)
+                        onOrderUpdated(order)
+                    }
+                }
+            },
+            onError = { err ->
+                Log.w(tag, "Single order real-time error on $orderId: ${err.message}")
+            }
+        )
     }
 
     fun observeOrdersRealTime(
@@ -212,12 +244,23 @@ class FirebaseCloudEngine(
                         onRemoved = { /* order retention in history */ }
                     )
 
-                    val relevantOrders = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
-                        localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
-                    } else {
-                        localSqlDb.getAllOrders()
+                    val cloudOrders = snapshot.documents.mapNotNull { doc ->
+                        FirestoreModelMapper.mapToDeliveryOrder(doc.id, doc.data ?: emptyMap())
                     }
-                    onOrdersUpdated(relevantOrders)
+                    val finalOrders = if (cloudOrders.isNotEmpty()) {
+                        if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
+                            cloudOrders.filter { it.userId == userId }
+                        } else {
+                            cloudOrders
+                        }
+                    } else {
+                        if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
+                            localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
+                        } else {
+                            localSqlDb.getAllOrders()
+                        }
+                    }
+                    onOrdersUpdated(finalOrders)
                 },
                 onError = { err ->
                     Log.w(tag, "Orders subscription error: ${err.message}")

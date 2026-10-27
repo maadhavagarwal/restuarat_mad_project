@@ -480,7 +480,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     var orders by mutableStateOf<List<DeliveryOrder>>(emptyList())
-        private set
+        internal set
 
     var favorites by mutableStateOf<List<String>>(emptyList())
         private set
@@ -1283,32 +1283,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
             detectAndApplyLiveGps()
 
             // Real-time Cloud Firestore synchronization listeners
-            val isStaff = profile?.role?.isStaff == true
-            cloudEngine.observeOrdersRealTime(
-                userId = currentUserId,
-                restaurantId = "rest-1",
-                isStaffOrRider = isStaff
-            ) { cloudOrders ->
-                viewModelScope.launch(Dispatchers.Main) {
-                    if (cloudOrders.isNotEmpty()) {
-                        orders = cloudOrders
-                    }
-                }
-            }
-            cloudEngine.observeTableBookingsRealTime(currentUserId) { cloudBookings ->
-                viewModelScope.launch(Dispatchers.Main) {
-                    if (cloudBookings.isNotEmpty()) {
-                        userTableBookings = cloudBookings
-                    }
-                }
-            }
-            cloudEngine.observeAddressesRealTime(currentUserId) { cloudAddrs ->
-                viewModelScope.launch(Dispatchers.Main) {
-                    if (cloudAddrs.isNotEmpty()) {
-                        addresses = cloudAddrs
-                    }
-                }
-            }
+            observeUserCollectionsForCurrentSession()
             cloudEngine.observeCatalogRealTime { cloudCat ->
                 viewModelScope.launch(Dispatchers.Main) {
                     if (cloudCat.restaurants.isNotEmpty() || cloudCat.dishes.isNotEmpty()) {
@@ -1382,6 +1357,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
             userTableBookings = sqlDb.getTableBookingsForUser(currentUserId)
             profile?.id?.let { activeTableTab = sqlDb.getOpenTabForUser(it) }
             observeActiveTableTab()
+            observeUserCollectionsForCurrentSession()
         } catch (_: Exception) {
             if (profile == null) {
                 profile = currentProfile
@@ -1594,6 +1570,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
             }
             profile = resolvedProfile
             session.saveProfile(resolvedProfile)
+            observeUserCollectionsForCurrentSession()
             sqlDb.saveUser(resolvedProfile)
             if (register) {
                 sqlDb.saveUserPassword(resolvedProfile.email.ifBlank { cleanEmail }, password)
@@ -1875,11 +1852,49 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         }
     }
 
+    fun observeOrdersForCurrentSession() {
+        val currentUserId = profile?.id ?: "guest"
+        val isStaff = profile?.role?.isStaff == true
+        cloudEngine.observeOrdersRealTime(
+            userId = currentUserId,
+            restaurantId = "rest-1",
+            isStaffOrRider = isStaff
+        ) { cloudOrders ->
+            viewModelScope.launch(Dispatchers.Main) {
+                orders = cloudOrders
+            }
+        }
+    }
+
+    fun observeUserCollectionsForCurrentSession() {
+        val currentUserId = profile?.id ?: "guest"
+        observeOrdersForCurrentSession()
+        cloudEngine.observeTableBookingsRealTime(currentUserId) { cloudBookings ->
+            viewModelScope.launch(Dispatchers.Main) {
+                if (cloudBookings.isNotEmpty()) {
+                    userTableBookings = cloudBookings
+                }
+            }
+        }
+        cloudEngine.observeAddressesRealTime(currentUserId) { cloudAddrs ->
+            viewModelScope.launch(Dispatchers.Main) {
+                if (cloudAddrs.isNotEmpty()) {
+                    addresses = cloudAddrs
+                }
+            }
+        }
+    }
+
     fun refreshOrders() {
         viewModelScope.launch(Dispatchers.IO) {
-            val allOrders = sqlDb.getAllOrders()
+            val currentUserId = profile?.id ?: "guest"
+            val relevantOrders = if (profile?.role?.isStaff == true) {
+                sqlDb.getAllOrders()
+            } else {
+                sqlDb.getOrdersForUser(currentUserId)
+            }
             withContext(Dispatchers.Main) {
-                orders = allOrders
+                orders = relevantOrders
             }
         }
     }
@@ -2294,6 +2309,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         orders = emptyList()
         favorites = emptyList()
         cloudEngine.cancelUserScopedListeners()
+        observeUserCollectionsForCurrentSession()
         isGuestMode = false
         pendingPostAuthRoute = null
         authReasonBanner = null
@@ -2956,6 +2972,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
     fun markOrderDelivered(orderId: String) {
         orders = orders.map { if (it.id == orderId) it.copy(status = "Delivered") else it }
         viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(orderId, "Delivered")
             sqlDb.updateOrderStatus(orderId, "Delivered")
             runCatching {
                 val custEmail = profile?.email?.ifBlank { "techagarwal33@gmail.com" } ?: "techagarwal33@gmail.com"
@@ -3166,6 +3183,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
     fun cancelOrder(id: String) {
         orders = orders.map { if (it.id == id) it.copy(status = "Cancelled") else it }
         viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(id, "Cancelled")
             sqlDb.updateOrderStatus(id, "Cancelled")
             sqlDb.recordAuditLog("ORDER_CANCELLED", profile?.email ?: "Customer", profile?.role?.name ?: "CUSTOMER", id, "Delivery order cancelled by customer")
         }
@@ -3218,6 +3236,14 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
     fun track(targetOrderId: String? = null) = run {
         val oId = targetOrderId?.ifBlank { null } ?: orderId.ifBlank { orders.firstOrNull()?.id ?: "" }
         if (oId.isBlank()) return@run
+
+        // Attach real-time cloud observation for live single order status changes
+        cloudEngine.observeSingleOrderRealTime(oId) { updatedOrder ->
+            viewModelScope.launch(Dispatchers.Main) {
+                orders = orders.map { if (it.id == updatedOrder.id) updatedOrder else it }
+                liveRiderStatus = updatedOrder.status
+            }
+        }
 
         // Attach real-time cloud observation for live rider GPS location if available
         cloudEngine.observeRiderLocationRealTime(oId) { lat, lng, eta ->
