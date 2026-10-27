@@ -178,7 +178,7 @@ class FirebaseCloudEngine(
         val db = firestore
         if (db == null || !isFirebaseInitialized) {
             val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
-                localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+                localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
             } else {
                 localSqlDb.getAllOrders()
             }
@@ -213,7 +213,7 @@ class FirebaseCloudEngine(
                     )
 
                     val relevantOrders = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
-                        localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+                        localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
                     } else {
                         localSqlDb.getAllOrders()
                     }
@@ -222,7 +222,7 @@ class FirebaseCloudEngine(
                 onError = { err ->
                     Log.w(tag, "Orders subscription error: ${err.message}")
                     val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
-                        localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+                        localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
                     } else {
                         localSqlDb.getAllOrders()
                     }
@@ -231,7 +231,7 @@ class FirebaseCloudEngine(
             )
         } catch (_: Exception) {
             val fallback = if (userId.isNotBlank() && userId != "guest" && !isStaffOrRider) {
-                localSqlDb.getOrdersForUser(userId).ifEmpty { localSqlDb.getAllOrders() }
+                localSqlDb.getOrdersForUser(userId).filterNot { it.id.startsWith("ORD-SEED") }
             } else {
                 localSqlDb.getAllOrders()
             }

@@ -17,6 +17,8 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
 
 class SessionStore(context: Context) {
     private val prefs = context.getSharedPreferences("restro-session", Context.MODE_PRIVATE)
@@ -141,25 +143,36 @@ class DeliveryApi {
         method: String = "GET",
         body: Any? = null,
     ): T {
-        // Pure Kotlin Firebase & SQL Backend execution
-        val eng = engine
-        if (eng != null) {
-            val localResult = dispatchToKotlinEngine(eng, path, method, body)
-            if (localResult != null) {
-                if (T::class == Unit::class) {
-                    @Suppress("UNCHECKED_CAST")
-                    return Unit as T
-                }
-                return gson.fromJson(gson.toJson(localResult), object : TypeToken<T>() {}.type)
+        // Priority 1: Real Network request if backend is reachable
+        try {
+            val json = request(path, method, body)
+            if (T::class == Unit::class) {
+                @Suppress("UNCHECKED_CAST")
+                return Unit as T
             }
+            return gson.fromJson(json, object : TypeToken<T>() {}.type)
+        } catch (apiErr: ApiFailure) {
+            // Live server returned explicit validation or business error (400, 401, 403, 404, 429)
+            throw apiErr
+        } catch (_: Exception) {
+            // Priority 2: Autonomous Firebase / SQLite Kotlin Engine fallback
+            val eng = engine
+            if (eng != null) {
+                val localResult = dispatchToKotlinEngine(eng, path, method, body)
+                if (localResult != null) {
+                    if (T::class == Unit::class) {
+                        @Suppress("UNCHECKED_CAST")
+                        return Unit as T
+                    }
+                    return gson.fromJson(gson.toJson(localResult), object : TypeToken<T>() {}.type)
+                }
+            }
+            if (T::class == Unit::class) {
+                @Suppress("UNCHECKED_CAST")
+                return Unit as T
+            }
+            throw ApiFailure(503, "Service temporarily unavailable. Please retry.")
         }
-
-        if (T::class == Unit::class) {
-            @Suppress("UNCHECKED_CAST")
-            return Unit as T
-        }
-
-        return gson.fromJson(request(path, method, body), object : TypeToken<T>() {}.type)
     }
 
     fun dispatchToKotlinEngine(eng: RestroFirebaseBackendEngine, path: String, method: String, body: Any?): Any? {
@@ -168,7 +181,13 @@ class DeliveryApi {
             cleanPath == "/catalog" -> eng.getCatalog()
             cleanPath == "/auth/otp/send" -> {
                 val req = if (body is OtpSendRequest) body else gson.fromJson(gson.toJson(body), OtpSendRequest::class.java)
-                eng.sendOtp(req)
+                val resp = eng.sendOtp(req)
+                if (req.target.contains("@")) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        resp.previewOtp?.let { code -> RestroEmailSender.sendOtpEmail(req.target, code) }
+                    }
+                }
+                resp
             }
             cleanPath == "/auth/otp/verify" -> {
                 val req = if (body is OtpVerifyRequest) body else gson.fromJson(gson.toJson(body), OtpVerifyRequest::class.java)
@@ -696,10 +715,11 @@ class DeliveryApi {
                     return@withContext "{}"
                 }
             }
-            val baseUrl = if (isEmulator() && (BuildConfig.API_URL.contains("127.0.0.1") || BuildConfig.API_URL.contains("localhost"))) {
-                BuildConfig.API_URL.replace("127.0.0.1", "10.0.2.2").replace("localhost", "10.0.2.2")
+            val raw = BuildConfig.API_URL
+            val baseUrl = if (isEmulator()) {
+                raw.replace("127.0.0.1", "10.0.2.2").replace("localhost", "10.0.2.2")
             } else {
-                BuildConfig.API_URL
+                raw.replace("10.0.2.2", "127.0.0.1")
             }
             val connection = URL(baseUrl + path).openConnection() as HttpURLConnection
             connection.requestMethod = method

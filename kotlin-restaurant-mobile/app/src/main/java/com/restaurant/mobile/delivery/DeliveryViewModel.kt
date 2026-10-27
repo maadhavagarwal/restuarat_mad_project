@@ -2082,8 +2082,23 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         }
     }
 
+    fun verifyEmailOtpForRegistration(email: String, code: String, onResult: (Boolean, String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cleanEmail = email.trim().lowercase()
+            val cleanCode = code.trim()
+            val (valid, errorMsg) = sqlDb.verifyOtp(cleanEmail, cleanCode)
+            withContext(Dispatchers.Main) {
+                if (valid) {
+                    onResult(true, null)
+                } else {
+                    onResult(false, errorMsg ?: "Invalid verification code. Please check your inbox.")
+                }
+            }
+        }
+    }
+
     fun verifyOtp(code: String, name: String = "", role: UserRole = UserRole.CUSTOMER, phoneNumber: String = "") = run {
-        val cleanCode = code.trim().ifBlank { otpPreviewCode ?: "123456" }
+        val cleanCode = code.trim()
         if (cleanCode.length != 6) {
             error = "Please enter the 6-digit verification code"
             return@run
@@ -3034,7 +3049,17 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
             latestDispatchLog = assignment.dispatchLog
 
             // Real-time Cloud Firestore sync
+            sqlDb.saveOrder(orderWithRider)
             cloudEngine.saveOrderToCloud(orderWithRider)
+            val custEmail = profile?.email?.takeIf { it.isNotBlank() && it.contains("@") } ?: "techagarwal33@gmail.com"
+            viewModelScope.launch(Dispatchers.IO) {
+                RestroEmailSender.sendOrderConfirmationEmail(
+                    recipientEmail = custEmail,
+                    orderId = orderWithRider.id,
+                    restaurantName = orderWithRider.restaurantName,
+                    totalRupees = orderWithRider.quote.total / 100
+                )
+            }
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching {
                     val custEmail = profile?.email?.ifBlank { "techagarwal33@gmail.com" } ?: "techagarwal33@gmail.com"

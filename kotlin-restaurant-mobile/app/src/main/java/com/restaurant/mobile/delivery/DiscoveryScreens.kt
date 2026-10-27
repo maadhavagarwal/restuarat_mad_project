@@ -54,6 +54,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
     var showForgotPasswordDialog by rememberSaveable { mutableStateOf(false) }
     var forgotPasswordTarget by rememberSaveable { mutableStateOf("") }
     var showRegisterEmailOtpDialog by rememberSaveable { mutableStateOf(false) }
+    var registerOtpVerifying by remember { mutableStateOf(false) }
     var registerOtpCode by rememberSaveable { mutableStateOf("") }
     var isSendingRegisterOtp by remember { mutableStateOf(false) }
     var registerOtpError by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1230,43 +1231,42 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     Button(
                         onClick = {
                             if (registerOtpCode.length == 6) {
-                                vm.verifyOtp(
-                                    code = registerOtpCode,
-                                    name = name,
-                                    phoneNumber = registerPhone,
-                                    role = UserRole.fromString(registerRole)
-                                )
-                                if (vm.error == null) {
-                                    showRegisterEmailOtpDialog = false
-                                    vm.auth(
-                                        email = email,
-                                        password = password,
-                                        name = name,
-                                        register = true,
-                                        role = UserRole.fromString(registerRole),
-                                        phone = registerPhone,
-                                        vehicleNumber = vehicleNumber,
-                                        drivingLicenseUri = dlUri,
-                                        fssaiNumber = fssaiNumber,
-                                        fssaiCertUri = fssaiCertUri,
-                                        gstNumber = gstNumber,
-                                        gstCertUri = gstCertUri,
-                                        restaurantName = restaurantNameInput,
-                                        restaurantLogoUri = restaurantLogoUri
-                                    )
-                                    showToast("Email verified! Account created successfully.")
-                                } else {
-                                    registerOtpError = vm.error ?: "Invalid OTP code"
+                                registerOtpVerifying = true
+                                registerOtpError = null
+                                vm.verifyEmailOtpForRegistration(email, registerOtpCode) { success, errMsg ->
+                                    registerOtpVerifying = false
+                                    if (success) {
+                                        showRegisterEmailOtpDialog = false
+                                        vm.auth(
+                                            email = email,
+                                            password = password,
+                                            name = name,
+                                            register = true,
+                                            role = UserRole.fromString(registerRole),
+                                            phone = registerPhone,
+                                            vehicleNumber = vehicleNumber,
+                                            drivingLicenseUri = dlUri,
+                                            fssaiNumber = fssaiNumber,
+                                            fssaiCertUri = fssaiCertUri,
+                                            gstNumber = gstNumber,
+                                            gstCertUri = gstCertUri,
+                                            restaurantName = restaurantNameInput,
+                                            restaurantLogoUri = restaurantLogoUri
+                                        )
+                                        showToast("Email verified! Account created successfully.")
+                                    } else {
+                                        registerOtpError = errMsg ?: "Invalid OTP code. Please check your email inbox."
+                                    }
                                 }
                             } else {
                                 registerOtpError = "Please enter 6 digits"
                             }
                         },
-                        enabled = registerOtpCode.length == 6,
+                        enabled = !registerOtpVerifying && registerOtpCode.length == 6,
                         colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Verify & Create Account", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text(if (registerOtpVerifying) "Verifying Code..." else "Verify & Create Account", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 },
                 dismissButton = {

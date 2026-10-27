@@ -88,7 +88,10 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 email TEXT NOT NULL,
                 phone TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'CUSTOMER',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                rider_id TEXT NOT NULL DEFAULT '',
+                idempotency_key TEXT
             );
             """.trimIndent()
         )
@@ -144,7 +147,10 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 payment_status TEXT NOT NULL,
                 status TEXT NOT NULL,
                 events_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                rider_id TEXT NOT NULL DEFAULT '',
+                idempotency_key TEXT
             );
             """.trimIndent()
         )
@@ -270,6 +276,8 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency ON $TABLE_ORDERS (idempotency_key) WHERE idempotency_key IS NOT NULL;")
         }
         runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_orders_user ON $TABLE_ORDERS (user_id);") }
+        runCatching { db.execSQL("ALTER TABLE $TABLE_ORDERS ADD COLUMN rider_id TEXT NOT NULL DEFAULT '';") }
+        runCatching { db.execSQL("DELETE FROM $TABLE_ORDERS WHERE user_id = '' OR user_id = 'guest' OR id LIKE 'ORD-SEED%';") }
         db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -1525,10 +1533,17 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         put("events_json", gson.toJson(order.events))
         put("created_at", Instant.now().toString())
         put("user_id", order.userId)
+        put("rider_id", order.riderId)
         if (order.idempotencyKey.isNullOrBlank()) putNull("idempotency_key") else put("idempotency_key", order.idempotencyKey)
     }
 
-    fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
+        fun assignRiderToOrder(orderId: String, riderId: String): Boolean {
+        val db = writableDatabase
+        val cv = android.content.ContentValues().apply { put("rider_id", riderId) }
+        return db.update(TABLE_ORDERS, cv, "id = ?", arrayOf(orderId.trim())) > 0
+    }
+
+fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
         val db = writableDatabase
         val current = db.rawQuery("SELECT status FROM $TABLE_ORDERS WHERE id = ?", arrayOf(orderId.trim())).use { c ->
             if (c.moveToFirst()) c.getString(0) else null
@@ -1590,6 +1605,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                         status = cursor.getString(cursor.getColumnIndexOrThrow("status")),
                         events = events,
                         userId = cursor.getColumnIndex("user_id").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else "" },
+                        riderId = cursor.getColumnIndex("rider_id").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else "" },
                         idempotencyKey = cursor.getColumnIndex("idempotency_key").let { i -> if (i >= 0 && !cursor.isNull(i)) cursor.getString(i) else null }
                     )
                 )
@@ -3829,7 +3845,10 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 reason TEXT NOT NULL,
                 reference_id TEXT NOT NULL DEFAULT '',
                 actor TEXT NOT NULL DEFAULT 'System',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                rider_id TEXT NOT NULL DEFAULT '',
+                idempotency_key TEXT
             );
             """.trimIndent()
         )
@@ -4003,7 +4022,10 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 actor_role TEXT NOT NULL,
                 target_id TEXT NOT NULL,
                 details TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT '',
+                rider_id TEXT NOT NULL DEFAULT '',
+                idempotency_key TEXT
             );
             """.trimIndent()
         )
@@ -4284,7 +4306,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         val completed = getCompletedOfferIds(riderId)
 
         val liveOrderOffers = getAllOrders()
-            .filter { it.status != DeliveryOrderStatus.DELIVERED && it.status != DeliveryOrderStatus.CANCELLED }
+            .filter { it.status != DeliveryOrderStatus.DELIVERED && it.status != DeliveryOrderStatus.CANCELLED && !it.id.startsWith("ORD-SEED") && (it.riderId.isBlank() || it.riderId == riderId) }
             .mapIndexed { idx, order ->
                 val distKm = ((idx + 2) * 1.3).let { Math.round(it * 10.0) / 10.0 }
                 val estMins = 22 + (distKm * 3.5).toInt()

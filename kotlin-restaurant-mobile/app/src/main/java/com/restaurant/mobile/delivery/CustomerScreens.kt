@@ -1475,7 +1475,16 @@ fun OrdersScreen(vm: DeliveryViewModel) {
             Page {
                 Heading(RestroI18n.t("orders_title"), RestroI18n.t("orders_subtitle"))
 
-                if (vm.orders.isEmpty()) {
+                val currentUid = vm.profile?.id.orEmpty()
+                val userScopedOrders = if (vm.profile?.role?.isStaff == true) {
+                    vm.orders.filterNot { it.id.startsWith("ORD-SEED") }
+                } else if (currentUid.isNotBlank()) {
+                    vm.orders.filter { it.userId == currentUid && !it.id.startsWith("ORD-SEED") }
+                } else {
+                    emptyList()
+                }
+
+                if (userScopedOrders.isEmpty()) {
                     Column(
                         Modifier.fillMaxWidth().padding(top = 32.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1494,7 +1503,7 @@ fun OrdersScreen(vm: DeliveryViewModel) {
                         Action("Explore Restaurants") { vm.route = "Home" }
                     }
                 } else {
-                    vm.orders.forEach { order ->
+                    userScopedOrders.forEach { order ->
                         Card(
                             colors = CardDefaults.cardColors(containerColor = RestroTokens.surface),
                             shape = RoundedCornerShape(16.dp),

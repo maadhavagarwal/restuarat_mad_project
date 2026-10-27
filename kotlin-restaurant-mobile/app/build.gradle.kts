@@ -16,7 +16,7 @@ val restroLocalProperties = Properties().apply {
 
 val restroDebugApiUrl = providers.gradleProperty("restroDebugApiUrl").orNull
     ?: restroLocalProperties.getProperty("restro.debug.apiUrl")
-    ?: "http://10.0.2.2:8080/api/delivery"
+    ?: "http://127.0.0.1:8080/api/delivery"
 
 android {
     namespace = "com.restaurant.mobile"
