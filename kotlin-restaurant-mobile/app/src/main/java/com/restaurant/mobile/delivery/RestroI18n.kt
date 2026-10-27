@@ -561,6 +561,20 @@ object RestroI18n {
         "rzp_processing" to mapOf("en" to "Processing RazorpayX Payout...", "hi" to "रेज़रपे एक्स भुगतान संसाधित हो रहा है...", "mr" to "रेझरपे एक्स पगार प्रक्रिया सुरू आहे..."),
         "master_admin_privileges" to mapOf("en" to "All-access privileges: Full multi-venue Mumbai telemetry, staff payroll, and system performance.", "hi" to "पूर्ण अधिकार: मुंबई रेस्टोरेंट डेटा, कर्मचारी वेतन, और सिस्टम प्रदर्शन।", "mr" to "पूर्ण अधिकार: मुंबई रेस्टॉरंट डेटा, कर्मचारी पगार आणि सिस्टीम कामगिरी."),
         "rider_complete_order" to mapOf("en" to "Complete & Collect", "hi" to "डिलीवरी पूरी करें", "mr" to "वितरण पूर्ण करा"),
+        "save_delivery_address_title" to mapOf("en" to "Save Delivery Address", "hi" to "डिलीवरी पता सहेजें", "mr" to "डिलिव्हरी पत्ता सेव्ह करा"),
+        "save_delivery_address_subtitle" to mapOf("en" to "Where should we deliver your food?", "hi" to "हम आपका खाना कहाँ पहुँचाएँ?", "mr" to "आम्ही तुमचे जेवण कुठे पोहोचवायचे?"),
+        "tap_to_pin_location" to mapOf("en" to "Tap to Pin Exact Location", "hi" to "सटीक स्थान पिन करने के लिए टैप करें", "mr" to "अचूक स्थान पिन करण्यासाठी टॅप करा"),
+        "pinned_map_coordinates" to mapOf("en" to "Pinned Map Coordinates", "hi" to "पिन किए गए मानचित्र निर्देशांक", "mr" to "पिन केलेले नकाशाचे निर्देशांक"),
+        "my_gps_btn" to mapOf("en" to "My GPS", "hi" to "मेरा जीपीएस", "mr" to "माझे जीपीएस"),
+        "label_field_hint" to mapOf("en" to "Label (e.g. Home, Office, Gym)", "hi" to "लेबल (उदा. घर, कार्यालय, जिम)", "mr" to "लेबल (उदा. घर, कार्यालय, जिम)"),
+        "address_line_hint" to mapOf("en" to "House / Flat / Street address", "hi" to "मकान / फ्लैट / सड़क का पता", "mr" to "घर / फ्लॅट / रस्त्याचा पत्ता"),
+        "city_field_hint" to mapOf("en" to "City", "hi" to "शहर", "mr" to "शहर"),
+        "postcode_field_hint" to mapOf("en" to "Pin / Postal code", "hi" to "पिन कोड", "mr" to "पिन कोड"),
+        "save_address_btn" to mapOf("en" to "Save Address", "hi" to "पता सहेजें", "mr" to "पत्ता सेव्ह करा"),
+        "selected_location_label" to mapOf("en" to "Selected Location", "hi" to "चयनित स्थान", "mr" to "निवडलेले स्थान"),
+        "quick_localities_label" to mapOf("en" to "Quick Mumbai Localities:", "hi" to "त्वरित मुंबई क्षेत्र:", "mr" to "जलद मुंबई भाग:"),
+        "tap_map_pin_hint" to mapOf("en" to "Tap map or drag pin to select exact delivery spot", "hi" to "डिलीवरी स्थान चुनने के लिए मानचित्र पर टैप करें या पिन खींचें", "mr" to "वितरण स्थान निवडण्यासाठी नकाशावर टॅप करा किंवा पिन ड्रॅग करा"),
+        "no_pin_selected" to mapOf("en" to "No pin coordinates selected", "hi" to "कोई पिन नहीं चुना गया", "mr" to "कोणताही पिन निवडला नाही"),
     )
 
     fun t(key: String): String {

@@ -1580,10 +1580,10 @@ fun AddressesScreen(vm: DeliveryViewModel) {
         var longitude by rememberSaveable { mutableStateOf<Double?>(startLng) }
 
         Page {
-            Heading("Save Delivery Address", "Where should we deliver your food?")
+            Heading(RestroI18n.t("save_delivery_address_title"), RestroI18n.t("save_delivery_address_subtitle"))
 
             // Interactive Mini Map Pin Selector
-            Text("Tap to Pin Exact Location", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(RestroI18n.t("tap_to_pin_location"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
             AddressPickerMiniMap(
                 initialLat = latitude ?: 19.0596,
                 initialLng = longitude ?: 72.8295,
@@ -1616,7 +1616,7 @@ fun AddressesScreen(vm: DeliveryViewModel) {
                     Icon(Icons.Default.Place, null, tint = RestroTokens.coral, modifier = Modifier.size(22.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Pinned Map Coordinates",
+                            RestroI18n.t("pinned_map_coordinates"),
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 12.sp,
                             color = RestroTokens.coral
@@ -1624,7 +1624,7 @@ fun AddressesScreen(vm: DeliveryViewModel) {
                         Text(
                             if (latitude != null && longitude != null)
                                 "Lat: " + String.format(java.util.Locale.US, "%.5f", latitude) + ", Lng: " + String.format(java.util.Locale.US, "%.5f", longitude)
-                            else "No pin coordinates selected",
+                            else RestroI18n.t("no_pin_selected"),
                             fontSize = 11.sp,
                             color = RestroTokens.muted
                         )
@@ -1640,19 +1640,19 @@ fun AddressesScreen(vm: DeliveryViewModel) {
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text("My GPS", fontSize = 11.sp, color = RestroTokens.coral)
+                        Text(RestroI18n.t("my_gps_btn"), fontSize = 11.sp, color = RestroTokens.coral)
                     }
                 }
             }
 
-            Field("Label (e.g. Home, Office, Gym)", label, { label = it })
-            Field("House / Flat / Street address", line, { line = it })
-            Field("City", city, { city = it })
-            Field("PIN / Postal Code", postcode, { postcode = it })
-            Field("Contact Phone Number", phone, { phone = it })
+            Field(RestroI18n.t("label_field_hint"), label, { label = it })
+            Field(RestroI18n.t("address_line_hint"), line, { line = it })
+            Field(RestroI18n.t("city_field_hint"), city, { city = it })
+            Field(RestroI18n.t("postcode_field_hint"), postcode, { postcode = it })
+            Field(RestroI18n.t("auth_phone_number"), phone, { phone = it })
 
             Action(
-                label = "Save Address",
+                label = RestroI18n.t("save_address_btn"),
                 enabled = line.isNotBlank() && postcode.isNotBlank() && phone.isNotBlank() && !vm.busy
             ) {
                 vm.saveAddress(

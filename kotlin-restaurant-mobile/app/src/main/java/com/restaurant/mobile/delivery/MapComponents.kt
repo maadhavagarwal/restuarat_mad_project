@@ -1021,26 +1021,35 @@ fun AddressPickerMiniMap(
         <html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <style>
-                html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #121418; overflow: hidden; }
-                .center-pin {
-                    position: absolute;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -100%);
-                    pointer-events: none;
-                    z-index: 1000;
-                    font-size: 28px;
-                    filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
-                }
+                html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; min-height: 220px; background: #20242B; overflow: hidden; }
+                .leaflet-control-attribution { display: none !important; }
             </style>
         </head>
         <body>
             <div id="map"></div>
             <script>
-                var map, marker, geocoder, isGoogle = false;
                 var curLat = $initialLat, curLng = $initialLng;
+                var map = L.map('map', { zoomControl: true, attributionControl: false }).setView([curLat, curLng], 15);
+
+                // Live Google Maps High-Definition Road Map Tiles
+                var googleTiles = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                    maxZoom: 20
+                }).addTo(map);
+
+                googleTiles.on('tileerror', function() {
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+                });
+
+                var pinIcon = L.divIcon({
+                    html: '<div style="font-size:32px;filter:drop-shadow(0 4px 6px rgba(0,0,0,0.5));cursor:pointer;">📍</div>',
+                    iconSize: [36, 36],
+                    iconAnchor: [18, 36]
+                });
+
+                var marker = L.marker([curLat, curLng], { icon: pinIcon, draggable: true }).addTo(map);
 
                 function notifyAndroid(lat, lng, addr) {
                     curLat = lat;
@@ -1050,123 +1059,40 @@ fun AddressPickerMiniMap(
                     }
                 }
 
-                window.initGoogleMap = function() {
-                    try {
-                        isGoogle = true;
-                        geocoder = new google.maps.Geocoder();
-                        var centerPos = { lat: curLat, lng: curLng };
-                        map = new google.maps.Map(document.getElementById('map'), {
-                            zoom: 15,
-                            center: centerPos,
-                            disableDefaultUI: true,
-                            zoomControl: true,
-                            gestureHandling: "greedy",
-                            styles: [
-                                { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
-                                { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
-                                { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
-                                { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
-                                { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
-                                { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
-                                { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] }
-                            ]
-                        });
-
-                        marker = new google.maps.Marker({
-                            position: centerPos,
-                            map: map,
-                            draggable: true,
-                            animation: google.maps.Animation.DROP,
-                            title: "Delivery Pin"
-                        });
-
-                        google.maps.event.addListener(map, 'click', function(ev) {
-                            var lat = ev.latLng.lat();
-                            var lng = ev.latLng.lng();
-                            marker.setPosition(ev.latLng);
-                            reverseGeocode(lat, lng);
-                        });
-
-                        google.maps.event.addListener(marker, 'dragend', function(ev) {
-                            var lat = ev.latLng.lat();
-                            var lng = ev.latLng.lng();
-                            reverseGeocode(lat, lng);
-                        });
-
-                        reverseGeocode(curLat, curLng);
-                    } catch (e) {
-                        initLeafletFallback();
-                    }
-                }
-
                 function reverseGeocode(lat, lng) {
-                    if (geocoder) {
-                        geocoder.geocode({ location: { lat: lat, lng: lng } }, function(results, status) {
-                            var label = "Pinned Location (" + lat.toFixed(4) + ", " + lng.toFixed(4) + ")";
-                            if (status === 'OK' && results && results[0]) {
-                                label = results[0].formatted_address;
-                            }
-                            notifyAndroid(lat, lng, label);
+                    fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lng + '&zoom=18&addressdetails=1')
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            var addr = data.display_name || ('Pinned Location (' + lat.toFixed(5) + ', ' + lng.toFixed(5) + ')');
+                            notifyAndroid(lat, lng, addr);
+                        })
+                        .catch(function() {
+                            notifyAndroid(lat, lng, 'Pinned Spot (' + lat.toFixed(5) + ', ' + lng.toFixed(5) + ')');
                         });
-                    } else {
-                        notifyAndroid(lat, lng, "Location near " + lat.toFixed(4) + ", " + lng.toFixed(4));
-                    }
                 }
 
-                window.initLeafletFallback = function() {
-                    if (map && isGoogle) return;
-                    try {
-                        var script = document.createElement('script');
-                        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-                        script.onload = function() {
-                            map = L.map('map', { zoomControl: false }).setView([curLat, curLng], 15);
-                            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                                maxZoom: 19
-                            }).addTo(map);
+                map.on('click', function(e) {
+                    marker.setLatLng(e.latlng);
+                    reverseGeocode(e.latlng.lat, e.latlng.lng);
+                });
 
-                            var customIcon = L.divIcon({
-                                html: '<span style="font-size:28px;">📍</span>',
-                                iconSize: [32, 32],
-                                iconAnchor: [16, 32]
-                            });
-
-                            marker = L.marker([curLat, curLng], { icon: customIcon, draggable: true }).addTo(map);
-
-                            map.on('click', function(e) {
-                                marker.setLatLng(e.latlng);
-                                notifyAndroid(e.latlng.lat, e.latlng.lng, "Pinned Location (" + e.latlng.lat.toFixed(4) + ", " + e.latlng.lng.toFixed(4) + ")");
-                            });
-
-                            marker.on('dragend', function(e) {
-                                var pos = marker.getLatLng();
-                                notifyAndroid(pos.lat, pos.lng, "Pinned Location (" + pos.lat.toFixed(4) + ", " + pos.lng.toFixed(4) + ")");
-                            });
-                        };
-                        document.head.appendChild(script);
-                    } catch(err) {}
-                }
+                marker.on('dragend', function(e) {
+                    var pos = marker.getLatLng();
+                    reverseGeocode(pos.lat, pos.lng);
+                });
 
                 window.panToPreset = function(lat, lng, name) {
                     curLat = lat;
                     curLng = lng;
-                    if (isGoogle && map) {
-                        var pos = new google.maps.LatLng(lat, lng);
-                        map.panTo(pos);
-                        map.setZoom(16);
-                        if (marker) marker.setPosition(pos);
-                        reverseGeocode(lat, lng);
-                    } else if (map && map.setView) {
-                        map.setView([lat, lng], 16);
-                        if (marker) marker.setLatLng([lat, lng]);
-                        notifyAndroid(lat, lng, name + ", Mumbai");
-                    }
-                }
+                    map.setView([lat, lng], 16);
+                    marker.setLatLng([lat, lng]);
+                    reverseGeocode(lat, lng);
+                };
 
                 setTimeout(function() {
-                    if (!map) initLeafletFallback();
-                }, 4000);
+                    map.invalidateSize();
+                }, 300);
             </script>
-            <script src="https://maps.googleapis.com/maps/api/js?key=$apiKey&callback=initGoogleMap&loading=async" async defer onerror="initLeafletFallback()"></script>
         </body>
         </html>
         """.trimIndent()
@@ -1242,7 +1168,7 @@ fun AddressPickerMiniMap(
                     ) {
                         Icon(Icons.Default.Place, null, tint = RestroTokens.coral, modifier = Modifier.size(14.dp))
                         Text(
-                            "Tap map or drag pin to select exact delivery spot",
+                            RestroI18n.t("tap_map_pin_hint"),
                             fontSize = 11.sp,
                             color = Color(0xFFE2E8F0),
                             fontWeight = FontWeight.Medium
@@ -1266,7 +1192,7 @@ fun AddressPickerMiniMap(
             ) {
                 Icon(Icons.Default.LocationOn, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Selected Location", fontSize = 10.sp, color = RestroTokens.muted)
+                    Text(RestroI18n.t("selected_location_label"), fontSize = 10.sp, color = RestroTokens.muted)
                     Text(
                         pinnedAddress,
                         fontSize = 12.sp,
@@ -1281,7 +1207,7 @@ fun AddressPickerMiniMap(
 
         // Quick Locality Presets
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Quick Mumbai Localities:", fontSize = 11.sp, color = RestroTokens.muted, fontWeight = FontWeight.Medium)
+            Text(RestroI18n.t("quick_localities_label"), fontSize = 11.sp, color = RestroTokens.muted, fontWeight = FontWeight.Medium)
             androidx.compose.foundation.lazy.LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 contentPadding = PaddingValues(horizontal = 2.dp)
