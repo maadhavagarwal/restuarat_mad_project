@@ -1364,8 +1364,13 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         try {
             val fetchedProfile: Profile? = runCatching { api.call<Profile>("/profile") }.getOrNull()
             if (fetchedProfile != null && (currentProfile == null || fetchedProfile.id == currentProfile.id)) {
-                profile = fetchedProfile
-                session.saveProfile(fetchedProfile)
+                val sanitized = if (fetchedProfile.role == null) {
+                    fetchedProfile.copy(role = currentProfile?.role ?: UserRole.CUSTOMER)
+                } else {
+                    fetchedProfile
+                }
+                profile = sanitized
+                session.saveProfile(sanitized)
             } else if (currentProfile != null) {
                 profile = currentProfile
             }

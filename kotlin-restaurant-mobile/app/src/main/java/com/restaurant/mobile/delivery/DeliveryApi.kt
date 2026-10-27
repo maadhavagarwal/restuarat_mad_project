@@ -118,7 +118,8 @@ class SessionStore(context: Context) {
                 null
             } else {
                 prefs.getString("profile_json", null)?.let {
-                    Gson().fromJson(it, Profile::class.java)
+                    val p = Gson().fromJson(it, Profile::class.java)
+                    if (p != null && p.role == null) p.copy(role = UserRole.CUSTOMER) else p
                 }
             }
         } catch (_: Exception) {

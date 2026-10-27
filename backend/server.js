@@ -1320,7 +1320,7 @@ router.get("/restaurants", (req, res) => {
 // ------------------------------------------
 router.get("/profile", authMiddleware, (req, res) => {
   const u = req.user;
-  res.json({ id: u.id, name: u.name, email: u.email, phone: u.phone, reducedGlass: false, isDarkMode: u.isDarkMode !== false });
+  res.json({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role || 'CUSTOMER', reducedGlass: false, isDarkMode: u.isDarkMode !== false });
 });
 
 router.put("/profile", authMiddleware, (req, res) => {
@@ -1329,7 +1329,7 @@ router.put("/profile", authMiddleware, (req, res) => {
   if (phone) req.user.phone = phone;
   if (reducedGlass !== undefined) req.user.reducedGlass = !!reducedGlass;
   if (isDarkMode !== undefined) req.user.isDarkMode = !!isDarkMode;
-  res.json({ id: req.user.id, name: req.user.name, email: req.user.email, phone: req.user.phone, reducedGlass: !!req.user.reducedGlass, isDarkMode: req.user.isDarkMode !== false });
+  res.json({ id: req.user.id, name: req.user.name, email: req.user.email, phone: req.user.phone, role: req.user.role || 'CUSTOMER', reducedGlass: !!req.user.reducedGlass, isDarkMode: req.user.isDarkMode !== false });
 });
 
 router.get("/addresses", authMiddleware, (req, res) => {

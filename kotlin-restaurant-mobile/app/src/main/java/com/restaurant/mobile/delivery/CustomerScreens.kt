@@ -1848,7 +1848,7 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = if (p.role == UserRole.KIOSK) "Kiosk POS" else "Staff Portal",
+                        text = if ((p?.role ?: UserRole.CUSTOMER) == UserRole.KIOSK) "Kiosk POS" else "Staff Portal",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
@@ -1908,14 +1908,14 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
 
                         Surface(
                             color = if (p == null) RestroTokens.muted.copy(alpha = 0.2f)
-                            else if (p.role.isStaff) RestroTokens.green.copy(alpha = 0.2f)
+                            else if (p?.role?.isStaff == true) RestroTokens.green.copy(alpha = 0.2f)
                             else RestroTokens.coral.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(6.dp)
                         ) {
                             Text(
                                 text = (p?.role?.label ?: "GUEST MODE").uppercase(),
                                 color = if (p == null) RestroTokens.muted
-                                else if (p.role.isStaff) RestroTokens.green
+                                else if (p?.role?.isStaff == true) RestroTokens.green
                                 else RestroTokens.coral,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,

@@ -134,9 +134,10 @@ class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataList
 
             LaunchedEffect(deliveryVm.profile?.id, deliveryVm.profile?.role) {
                 val p = deliveryVm.profile
-                if (p != null && p.role.isStaff && !userRequestedCustomerApp) {
+                val isStaff = (p?.role ?: com.restaurant.mobile.delivery.UserRole.CUSTOMER).isStaff
+                if (p != null && isStaff && !userRequestedCustomerApp) {
                     isStaffMode = true
-                } else if (p == null || !p.role.isStaff) {
+                } else if (p == null || !isStaff) {
                     isStaffMode = false
                     userRequestedCustomerApp = false
                 }
@@ -144,7 +145,8 @@ class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataList
 
             // 3-Minute (180,000 ms) Inactivity Auto-Lock Timer for Staff Portal (Kiosk stays locked in Kiosk mode)
             LaunchedEffect(isStaffMode, lastStaffInteractionMs, deliveryVm.profile?.role) {
-                if (isStaffMode && deliveryVm.profile?.role != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                val curRole = deliveryVm.profile?.role ?: com.restaurant.mobile.delivery.UserRole.CUSTOMER
+                if (isStaffMode && curRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
                     kotlinx.coroutines.delay(180_000L)
                     if (System.currentTimeMillis() - lastStaffInteractionMs >= 180_000L) {
                         isStaffMode = false
