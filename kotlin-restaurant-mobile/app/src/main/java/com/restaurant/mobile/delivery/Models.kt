@@ -45,15 +45,15 @@ data class Restaurant(
     val rating: Double = 4.8,
     val reviewCount: Int = 1240,
     val costForTwo: Int = 850,
-    val vibes: List<String> = listOf("Fine Dining", "Romantic", "Family Friendly"),
-    val amenities: List<String> = listOf("AC Dining", "Valet Parking", "Full Bar"),
+    val vibes: List<String>? = listOf("Fine Dining", "Romantic", "Family Friendly"),
+    val amenities: List<String>? = listOf("AC Dining", "Valet Parking", "Full Bar"),
     val tableBookingAvailable: Boolean = true,
     val maxPartySize: Int = 12,
     val prepMinutes: Int = 22,
     val acceptsDiningPayment: Boolean = true,
-    val logoUrl: String = "",
-    val fssaiNumber: String = "11523006000482",
-    val gstNumber: String = "27AABCU9603R1ZM",
+    val logoUrl: String? = "",
+    val fssaiNumber: String? = "11523006000482",
+    val gstNumber: String? = "27AABCU9603R1ZM",
 )
 
 data class Offer(

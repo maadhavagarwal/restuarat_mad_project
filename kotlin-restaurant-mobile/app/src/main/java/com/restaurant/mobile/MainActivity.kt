@@ -3780,7 +3780,7 @@ fun AdminMenuManagementScreenView(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            val activeLogo = rest.logoUrl.ifBlank { rest.image }
+                            val activeLogo = (rest.logoUrl ?: "").ifBlank { rest.image }
                             com.restaurant.mobile.delivery.Photo(
                                 url = activeLogo,
                                 description = rest.name,

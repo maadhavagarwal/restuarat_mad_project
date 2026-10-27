@@ -208,7 +208,7 @@ object RestroMultilingualSearch {
         if (query.isBlank()) return true
         val intent = parseQueryIntent(query)
 
-        val restText = "${restaurant.name} ${restaurant.cuisine} ${restaurant.vibes.joinToString(" ")} ${restaurant.address}".lowercase(Locale.ROOT)
+        val restText = "${restaurant.name} ${restaurant.cuisine} ${(restaurant.vibes ?: emptyList()).joinToString(" ")} ${restaurant.address}".lowercase(Locale.ROOT)
         val normalizedRestText = Normalizer.normalize(restText, Normalizer.Form.NFC)
 
         for (kw in intent.normalizedKeywords) {

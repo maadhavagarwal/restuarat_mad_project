@@ -829,8 +829,8 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         }
         db.insertWithOnConflict("restaurant_settings", null, setCv, SQLiteDatabase.CONFLICT_REPLACE)
 
-        if (restaurant.logoUrl.isNotBlank()) {
-            firebasePrefs.edit().putString("rest_logo_${restaurant.id}", restaurant.logoUrl).apply()
+        if (!restaurant.logoUrl.isNullOrBlank()) {
+            firebasePrefs.edit().putString("rest_logo_${restaurant.id}", restaurant.logoUrl ?: "").apply()
         }
         return ok
     }
@@ -1459,7 +1459,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
     fun storeOtp(target: String, code: String, expiryMs: Long) {
         val db = writableDatabase
         val cv = ContentValues().apply {
-            put("target", target.trim())
+            put("target", target.trim().lowercase())
             put("code", code.trim())
             put("expires_at", System.currentTimeMillis() + expiryMs)
             put("attempts", 0)
@@ -1468,7 +1468,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
     }
 
     fun verifyOtp(target: String, code: String): Pair<Boolean, String?> {
-        val cleanTarget = target.trim()
+        val cleanTarget = target.trim().lowercase()
         val cleanCode = code.trim()
         val db = writableDatabase
         val cursor = db.rawQuery("SELECT * FROM $TABLE_OTPS WHERE target = ?", arrayOf(cleanTarget))

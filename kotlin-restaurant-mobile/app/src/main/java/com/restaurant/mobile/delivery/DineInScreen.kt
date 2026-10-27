@@ -627,7 +627,7 @@ fun DineInRestaurantCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    restaurant.vibes.take(2).forEach { vibe ->
+                    (restaurant.vibes ?: emptyList()).take(2).forEach { vibe ->
                         Surface(
                             color = RestroTokens.coral.copy(alpha = 0.12f),
                             shape = RoundedCornerShape(8.dp),
@@ -642,7 +642,7 @@ fun DineInRestaurantCard(
                             )
                         }
                     }
-                    restaurant.amenities.take(2).forEach { amenity ->
+                    (restaurant.amenities ?: emptyList()).take(2).forEach { amenity ->
                         Surface(
                             color = Color.White.copy(alpha = 0.08f),
                             shape = RoundedCornerShape(8.dp)

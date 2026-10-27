@@ -14,8 +14,8 @@ class DineInRequirementsAndLocationTest {
             assertTrue("Rating should be >= 4.0: ${r.name}", r.rating >= 4.0)
             assertTrue("Review count should be positive: ${r.name}", r.reviewCount > 0)
             assertTrue("Cost for two should be positive: ${r.name}", r.costForTwo > 0)
-            assertTrue("Vibes list should not be empty: ${r.name}", r.vibes.isNotEmpty())
-            assertTrue("Amenities list should not be empty: ${r.name}", r.amenities.isNotEmpty())
+            assertTrue("Vibes list should not be empty: ${r.name}", (r.vibes ?: emptyList()).isNotEmpty())
+            assertTrue("Amenities list should not be empty: ${r.name}", (r.amenities ?: emptyList()).isNotEmpty())
             assertTrue("Max party size should be at least 4: ${r.name}", r.maxPartySize >= 4)
             assertTrue("Table booking should be available: ${r.name}", r.tableBookingAvailable)
         }
@@ -42,13 +42,13 @@ class DineInRequirementsAndLocationTest {
         val catalog = MockCatalog.sample
 
         val rooftopRestos = catalog.restaurants.filter { rest ->
-            rest.vibes.any { it.contains("Rooftop", ignoreCase = true) }
+            (rest.vibes ?: emptyList()).any { it.contains("Rooftop", ignoreCase = true) }
         }
         assertEquals(1, rooftopRestos.size)
         assertEquals("Trattoria Milano", rooftopRestos.first().name)
 
         val fineDiningRestos = catalog.restaurants.filter { rest ->
-            rest.vibes.any { it.contains("Fine Dining", ignoreCase = true) }
+            (rest.vibes ?: emptyList()).any { it.contains("Fine Dining", ignoreCase = true) }
         }
         assertTrue("Fine dining matches at least 2 restaurants", fineDiningRestos.size >= 2)
     }

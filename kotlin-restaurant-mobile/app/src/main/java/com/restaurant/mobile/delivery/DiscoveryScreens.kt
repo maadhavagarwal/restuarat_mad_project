@@ -2767,7 +2767,7 @@ fun RestaurantPartnerConsoleDialog(
 
                         HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
 
-                        var logoStatus by remember { mutableStateOf(restaurant.logoUrl.ifBlank { restaurant.image }) }
+                        var logoStatus by remember { mutableStateOf((restaurant.logoUrl ?: "").ifBlank { restaurant.image }) }
                         var isUploadingLogo by remember { mutableStateOf(false) }
                         var logoUploadProgress by remember { mutableStateOf(0f) }
 
