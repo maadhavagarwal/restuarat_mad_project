@@ -99,7 +99,7 @@ class RestroFirebaseBackendEngine(
             lower.startsWith("admin@") || lower.contains("admin") -> UserRole.ADMIN
             lower.startsWith("waiter@") || lower.contains("waiter") -> UserRole.WAITER
             lower.startsWith("chef@") || lower.contains("chef") -> UserRole.CHEF_KDS
-            lower.startsWith("rider@") || lower.contains("rider") -> UserRole.RIDER
+            lower.startsWith("rider@") || lower.contains("rider") || lower.contains("suresh") -> UserRole.RIDER
             lower.startsWith("kiosk@") || lower.contains("kiosk") -> UserRole.KIOSK
             else -> UserRole.fromString(requestedRole)
         }

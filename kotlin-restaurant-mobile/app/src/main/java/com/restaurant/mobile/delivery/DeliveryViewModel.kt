@@ -1504,7 +1504,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         val clean = target.trim()
         if (clean.isBlank()) return false
         val lower = clean.lowercase()
-        if (lower in listOf("aarav@example.com", "admin@restro.app", "master@restro.app", "waiter@restro.app", "chef@restro.app", "rider@restro.app", "kiosk@restro.app", "admin", "waiter", "chef", "rider", "kiosk", "master", "aarav")) return true
+        if (lower in listOf("aarav@example.com", "admin@restro.app", "master@restro.app", "waiter@restro.app", "chef@restro.app", "rider@restro.app", "suresh@restro.app", "kiosk@restro.app", "admin", "waiter", "chef", "rider", "suresh", "kiosk", "master", "aarav")) return true
         if (sqlDb.getUserByTarget(clean) != null) return true
         val digits = clean.filter { it.isDigit() }.takeLast(10)
         if (digits.length == 10) {

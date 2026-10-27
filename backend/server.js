@@ -369,6 +369,15 @@ const db = {
       role: "MASTER_ADMIN"
     },
     {
+      id: "rider-103",
+      email: "suresh@restro.app",
+      password: "Rider@123",
+      pin: "4321",
+      name: "Suresh Patil (Delivery Partner)",
+      phone: "+91 98334 56789",
+      role: "RIDER"
+    },
+    {
       id: "usr-rider",
       email: "rider@restro.app",
       password: "Rider@123",
@@ -393,7 +402,7 @@ const db = {
   razorpayOrders: new Map(), // orderId -> { id, amount, currency, restaurantId, orderType, tabId, deliveryOrderId, status, createdAt }
   razorpayPayments: new Map(), // paymentId -> { orderId, paymentId, amount, currency, restaurantId, orderType, verifiedAt }
   riderBalances: new Map([
-    ["usr-rider", 5000] // Initial balance ₹5000.00 for demo delivery partner
+    ["usr-rider", 5000], ["rider-103", 5000] // Initial balance ₹5000.00 for demo delivery partner
   ]),
   riderPayouts: new Map(), // payoutId -> payoutRecord
   payoutIdempotency: new Map(), // idempotencyKey -> payoutId

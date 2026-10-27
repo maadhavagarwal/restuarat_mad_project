@@ -981,6 +981,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             Pair(Profile("staff-admin-1", "Ananya Rao (Manager)", "admin@restro.app", "+91 90000 99999", role = UserRole.ADMIN), "Admin@123"),
             Pair(Profile("staff-master-1", "Master Administrator", "master@restro.app", "+91 90000 00000", role = UserRole.MASTER_ADMIN), "Master@123"),
             Pair(Profile("staff-rider-1", "Ramesh Rider (Delivery Partner)", "rider@restro.app", "+91 98765 12345", role = UserRole.RIDER), "Rider@123"),
+            Pair(Profile("rider-103", "Suresh Patil (Delivery Partner)", "suresh@restro.app", "+91 98334 56789", role = UserRole.RIDER), "Rider@123"),
             Pair(Profile("staff-kiosk-1", "Self-Order Kiosk Terminal", "kiosk@restro.app", "+91 90000 77777", role = UserRole.KIOSK), "Kiosk@123")
         )
         val defaultGoogleUser = Profile(
@@ -1258,6 +1259,9 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             "rider@restro.app" to setOf("Rider@123", "rider123", "Rider123", "password123", "123456"),
             "rider@restro.com" to setOf("Rider@123", "rider123", "Rider123", "password123", "123456"),
             "rider" to setOf("Rider@123", "rider123", "Rider123", "password123", "123456"),
+            "suresh@restro.app" to setOf("Rider@123", "rider123", "Rider123", "password123", "123456", "suresh123", "Suresh@123"),
+            "suresh" to setOf("Rider@123", "rider123", "Rider123", "password123", "123456", "suresh123", "Suresh@123"),
+            "suresh patil" to setOf("Rider@123", "rider123", "Rider123", "password123", "123456", "suresh123", "Suresh@123"),
             "kiosk@restro.app" to setOf("Kiosk@123", "kiosk123", "Kiosk123", "password123", "123456"),
             "kiosk@restro.com" to setOf("Kiosk@123", "kiosk123", "Kiosk123", "password123", "123456"),
             "kiosk" to setOf("Kiosk@123", "kiosk123", "Kiosk123", "password123", "123456"),
@@ -1402,6 +1406,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
             "waiter" -> "waiter@restro.app"
             "chef", "kitchen" -> "chef@restro.app"
             "rider", "delivery" -> "rider@restro.app"
+            "suresh", "suresh patil" -> "suresh@restro.app"
             "kiosk" -> "kiosk@restro.app"
             "aarav", "customer" -> "aarav@example.com"
             "google", "googleuser" -> "google.user@restro.app"
