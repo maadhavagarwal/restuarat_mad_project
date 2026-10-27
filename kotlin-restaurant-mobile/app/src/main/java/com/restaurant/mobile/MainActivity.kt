@@ -59,7 +59,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import com.restaurant.mobile.delivery.TopDishStat
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataListener {
 
     private var onNewIntentCallback: ((Intent) -> Unit)? = null
     private var deliveryVmRef: com.restaurant.mobile.delivery.DeliveryViewModel? = null
@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.razorpay.Checkout.preload(applicationContext)
         com.restaurant.mobile.delivery.RestroI18n.init(this)
         val requiredPerms = mutableListOf(
             android.Manifest.permission.ACCESS_FINE_LOCATION,
@@ -191,6 +192,14 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onPaymentSuccess(razorpayPaymentID: String?, paymentData: com.razorpay.PaymentData?) {
+        com.restaurant.mobile.delivery.RazorpayCheckoutLauncher.handleSuccess(razorpayPaymentID, paymentData)
+    }
+
+    override fun onPaymentError(code: Int, response: String?, paymentData: com.razorpay.PaymentData?) {
+        com.restaurant.mobile.delivery.RazorpayCheckoutLauncher.handleError(code, response, paymentData)
     }
 }
 

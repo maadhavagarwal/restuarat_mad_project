@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.sp
  * Allows customers to browse restaurants tailored for dining out, filter by party size /
  * number of guests, ambiance/vibe, and cuisine requirements, and book tables with instant confirmation.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun DineInScreen(
     vm: DeliveryViewModel,
@@ -89,8 +89,8 @@ fun DineInScreen(
 
     LazyColumn(
         modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = 6.dp, bottom = 80.dp)
     ) {
         // 1. Header with Active GPS Location Pill
         item {
@@ -487,6 +487,7 @@ fun DineInScreen(
  * Dedicated Card for Dine-In Display with Table Capacity, Distance, Vibes, and Direct Booking CTA.
  */
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 fun DineInRestaurantCard(
     restaurant: Restaurant,
     vm: DeliveryViewModel,
@@ -509,7 +510,7 @@ fun DineInRestaurantCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp)
+                    .height(160.dp)
                     .clickable { onExploreMenu() }
             ) {
                 Photo(restaurant.image, restaurant.name, Modifier.fillMaxSize())
@@ -590,8 +591,8 @@ fun DineInRestaurantCard(
 
             // Info & Attributes Body
             Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -621,9 +622,10 @@ fun DineInRestaurantCard(
                 )
 
                 // Vibes & Amenities Flow
-                Row(
+                androidx.compose.foundation.layout.FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     restaurant.vibes.take(2).forEach { vibe ->
                         Surface(

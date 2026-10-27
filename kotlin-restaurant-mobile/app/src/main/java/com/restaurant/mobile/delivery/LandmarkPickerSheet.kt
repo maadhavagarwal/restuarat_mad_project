@@ -112,11 +112,11 @@ fun LandmarkPickerSheet(
             longitude = 72.8346
         ),
         DeliveryLandmarkPreset(
-            name = "Pune Out-of-Range Demo",
-            description = "Demonstrates Out-of-Range Guard (>15km)",
-            latitude = 18.5204,
-            longitude = 73.8567,
-            isDemoOutOfRange = true
+            name = "Navi Mumbai, Vashi",
+            description = "Sector 17 · Vashi, Navi Mumbai",
+            latitude = 19.0770,
+            longitude = 72.9986,
+            isDemoOutOfRange = false
         )
     )
 

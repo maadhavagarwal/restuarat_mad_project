@@ -53,6 +53,27 @@ fun AuthScreen(vm: DeliveryViewModel) {
     var confirmPassword by remember { mutableStateOf("") }
     var showForgotPasswordDialog by rememberSaveable { mutableStateOf(false) }
     var forgotPasswordTarget by rememberSaveable { mutableStateOf("") }
+    var showRegisterEmailOtpDialog by rememberSaveable { mutableStateOf(false) }
+    var registerOtpCode by rememberSaveable { mutableStateOf("") }
+    var isSendingRegisterOtp by remember { mutableStateOf(false) }
+    var registerOtpError by rememberSaveable { mutableStateOf<String?>(null) }
+    var registerRole by rememberSaveable { mutableStateOf(UserRole.CUSTOMER.name) }
+    var vehicleNumber by rememberSaveable { mutableStateOf("") }
+    var dlUri by rememberSaveable { mutableStateOf("") }
+    var dlVerifiedMsg by rememberSaveable { mutableStateOf("") }
+    var dlVerifying by remember { mutableStateOf(false) }
+
+    var restaurantNameInput by rememberSaveable { mutableStateOf("") }
+    var restaurantLogoUri by rememberSaveable { mutableStateOf("") }
+    var fssaiNumber by rememberSaveable { mutableStateOf("") }
+    var fssaiCertUri by rememberSaveable { mutableStateOf("") }
+    var fssaiVerifiedMsg by rememberSaveable { mutableStateOf("") }
+    var fssaiVerifying by remember { mutableStateOf(false) }
+
+    var gstNumber by rememberSaveable { mutableStateOf("") }
+    var gstCertUri by rememberSaveable { mutableStateOf("") }
+    var gstVerifiedMsg by rememberSaveable { mutableStateOf("") }
+    var gstVerifying by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     fun showToast(msg: String) {
@@ -262,73 +283,6 @@ fun AuthScreen(vm: DeliveryViewModel) {
             else RestroI18n.t("auth_signin_sub"),
         )
 
-        // 1-Tap Quick Demo Accounts Login
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = RestroTokens.surfaceElevated),
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f))
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(Icons.Default.VpnKey, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
-                        Text(RestroI18n.t("demo_accounts_title"), fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RestroTokens.text)
-                    }
-                    Text(RestroI18n.t("demo_instant_access"), fontSize = 10.sp, color = RestroTokens.coral, fontWeight = FontWeight.SemiBold)
-                }
-
-                val demoList = listOf(
-                    Triple("Customer", "aarav@example.com", "password123"),
-                    Triple("Manager", "admin@restro.app", "admin123"),
-                    Triple("Master Admin", "master@restro.app", "master123"),
-                    Triple("Waiter POS", "waiter@restro.app", "waiter123"),
-                    Triple("Chef KDS", "chef@restro.app", "chef123"),
-                    Triple("Rider", "rider@restro.app", "rider123"),
-                    Triple("Kiosk", "kiosk@restro.app", "kiosk123")
-                )
-
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(vertical = 2.dp)
-                ) {
-                    items(demoList) { (roleName, demoEmail, demoPass) ->
-                        Surface(
-                            onClick = {
-                                email = demoEmail
-                                password = demoPass
-                                authMode = 1
-                                register = false
-                                vm.auth(demoEmail, demoPass, roleName, register = false)
-                            },
-                            color = RestroTokens.surface,
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.5f))
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(RestroI18n.roleLabel(roleName), fontWeight = FontWeight.Bold, fontSize = 11.sp, color = RestroTokens.coral)
-                                Text(demoEmail, fontSize = 10.sp, color = RestroTokens.text)
-                                Text("${RestroI18n.t("password_label")}: $demoPass", fontSize = 9.sp, color = RestroTokens.muted)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-
         // Auth Mode Switcher Tab
         Row(
             modifier = Modifier
@@ -387,7 +341,9 @@ fun AuthScreen(vm: DeliveryViewModel) {
         }
 
         if (authMode == 0) {
-            // Email OTP Authentication Flow (No Phone SMS Verification Required)
+            // Email OTP Authentication Flow (Login asks only for Email; checks if account exists)
+            var isCheckingEmail by remember { mutableStateOf(false) }
+
             if (!vm.otpSent) {
                 val emailMsg = RestroValidationUtils.getEmailValidationMessage(emailOtpInput)
                 OutlinedTextField(
@@ -410,51 +366,24 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     shape = RoundedCornerShape(14.dp)
                 )
 
-                // Mobile number requested with strict 10 digits input limit (No phone SMS verification)
-                OutlinedTextField(
-                    value = phoneInput,
-                    onValueChange = {
-                        if (it.length <= 10) {
-                            phoneInput = it.filter { ch -> ch.isDigit() }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Mobile Number (10 Digits)") },
-                    placeholder = { Text("9876543210") },
-                    leadingIcon = { Icon(Icons.Default.Call, null, tint = RestroTokens.coral) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    isError = phoneInput.isNotEmpty() && phoneInput.length != 10,
-                    supportingText = {
-                        if (phoneInput.isNotEmpty() && phoneInput.length != 10) {
-                            Text("${phoneInput.length}/10 digits - Please enter 10 digits", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-                        } else {
-                            Text("For order & delivery updates (No SMS OTP verification needed)", fontSize = 11.sp, color = RestroTokens.muted)
-                        }
-                    },
-                    shape = RoundedCornerShape(14.dp)
-                )
-
-                if (register) {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(RestroI18n.t("auth_your_name")) },
-                        placeholder = { Text("Aarav Sharma") },
-                        leadingIcon = { Icon(Icons.Default.Person, null) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                }
-
-                val isTargetValid = RestroValidationUtils.isValidEmail(emailOtpInput) && (phoneInput.isBlank() || phoneInput.length == 10)
+                val isTargetValid = RestroValidationUtils.isValidEmail(emailOtpInput)
                 Action(
-                    label = RestroI18n.t("auth_send_otp"),
-                    enabled = !vm.busy && isTargetValid
+                    label = if (isCheckingEmail) "Checking Account..." else RestroI18n.t("auth_send_otp"),
+                    enabled = !vm.busy && !isCheckingEmail && isTargetValid
                 ) {
-                    vm.pendingAuthPhone = phoneInput
-                    vm.sendOtp(emailOtpInput.trim(), isPhone = false)
+                    isCheckingEmail = true
+                    vm.checkEmailExists(emailOtpInput.trim()) { exists ->
+                        isCheckingEmail = false
+                        if (!exists) {
+                            authMode = 1
+                            register = true
+                            email = emailOtpInput.trim()
+                            showToast("No account found for this email. Please create an account.")
+                            vm.authReasonBanner = "No account found with \"${emailOtpInput.trim()}\". Please create your account to proceed."
+                        } else {
+                            vm.sendOtp(emailOtpInput.trim(), isPhone = false)
+                        }
+                    }
                 }
             } else {
                 // OTP Sent View
@@ -502,7 +431,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                             label = RestroI18n.t("auth_verify_signin"),
                             enabled = !vm.busy && otpCode.length == 6
                         ) {
-                            vm.verifyOtp(otpCode, name = name, phoneNumber = phoneInput)
+                            vm.verifyOtp(otpCode, name = name, phoneNumber = "")
                         }
 
                         Row(
@@ -529,23 +458,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
         } else {
             // Password & Account Creation Flow
             if (register) {
-                var registerRole by rememberSaveable { mutableStateOf(UserRole.CUSTOMER.name) }
-                var vehicleNumber by rememberSaveable { mutableStateOf("") }
-                var dlUri by rememberSaveable { mutableStateOf("") }
-                var dlVerifiedMsg by rememberSaveable { mutableStateOf("") }
-                var dlVerifying by remember { mutableStateOf(false) }
-
-                var restaurantNameInput by rememberSaveable { mutableStateOf("") }
-                var restaurantLogoUri by rememberSaveable { mutableStateOf("") }
-                var fssaiNumber by rememberSaveable { mutableStateOf("") }
-                var fssaiCertUri by rememberSaveable { mutableStateOf("") }
-                var fssaiVerifiedMsg by rememberSaveable { mutableStateOf("") }
-                var fssaiVerifying by remember { mutableStateOf(false) }
-
-                var gstNumber by rememberSaveable { mutableStateOf("") }
-                var gstCertUri by rememberSaveable { mutableStateOf("") }
-                var gstVerifiedMsg by rememberSaveable { mutableStateOf("") }
-                var gstVerifying by remember { mutableStateOf(false) }
+                // Registration variables lifted to AuthScreen top-level scope
                 var isUploadingDl by remember { mutableStateOf(false) }
                 var dlUploadProgress by remember { mutableStateOf(0f) }
                 var dlUploadError by remember { mutableStateOf<String?>(null) }
@@ -840,6 +753,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                     onClick = {
                                         if (!isUploadingDl && !dlVerifying) {
                                             if (vehicleNumber.isBlank()) vehicleNumber = "MH-02-EM-8821"
+                                            if (dlUri.isBlank()) dlUri = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
                                             dlVerifying = true
                                             dlVerifiedMsg = ""
                                             dlUploadError = null
@@ -974,6 +888,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                     onClick = {
                                         if (!isUploadingFssai && !fssaiVerifying) {
                                             if (fssaiNumber.isBlank()) fssaiNumber = "11524006000421"
+                                            if (fssaiCertUri.isBlank()) fssaiCertUri = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
                                             fssaiVerifying = true
                                             fssaiVerifiedMsg = ""
                                             fssaiUploadError = null
@@ -1044,6 +959,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                     onClick = {
                                         if (!isUploadingGst && !gstVerifying) {
                                             if (gstNumber.isBlank()) gstNumber = "27AABCU9603R1ZM"
+                                            if (gstCertUri.isBlank()) gstCertUri = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600"
                                             gstVerifying = true
                                             gstVerifiedMsg = ""
                                             gstUploadError = null
@@ -1096,25 +1012,23 @@ fun AuthScreen(vm: DeliveryViewModel) {
                 }
 
                 Action(
-                    label = RestroI18n.t("auth_create_btn"),
-                    enabled = !vm.busy && name.trim().length >= 2 && email.contains("@") && email.contains(".") && (registerPhone.isBlank() || RestroValidationUtils.isValidPhone(registerPhone)) && password.length >= 6 && confirmPassword == password && isPartnerDocsReady
+                    label = if (isSendingRegisterOtp) "Sending Email OTP..." else RestroI18n.t("auth_create_btn"),
+                    enabled = !vm.busy && !isSendingRegisterOtp && name.trim().length >= 2 && email.contains("@") && email.contains(".") && (registerPhone.isBlank() || registerPhone.length == 10) && password.length >= 6 && confirmPassword == password && isPartnerDocsReady
                 ) {
-                    vm.auth(
-                        email = email,
-                        password = password,
-                        name = name,
-                        register = true,
-                        role = UserRole.fromString(registerRole),
-                        phone = registerPhone,
-                        vehicleNumber = vehicleNumber,
-                        drivingLicenseUri = dlUri,
-                        fssaiNumber = fssaiNumber,
-                        fssaiCertUri = fssaiCertUri,
-                        gstNumber = gstNumber,
-                        gstCertUri = gstCertUri,
-                        restaurantName = restaurantNameInput,
-                        restaurantLogoUri = restaurantLogoUri
-                    )
+                    isSendingRegisterOtp = true
+                    vm.checkEmailExists(email.trim()) { exists ->
+                        if (exists) {
+                            isSendingRegisterOtp = false
+                            vm.error = "An account already exists with this email. Please sign in instead."
+                            showToast("An account already exists with this email.")
+                        } else {
+                            vm.sendOtp(email.trim(), isPhone = false)
+                            isSendingRegisterOtp = false
+                            registerOtpCode = ""
+                            registerOtpError = null
+                            showRegisterEmailOtpDialog = true
+                        }
+                    }
                 }
 
                 OutlinedButton(
@@ -1139,7 +1053,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     }
                 }
             } else {
-                val isLoginEmailValid = email.isBlank() || (email.contains("@") && email.length >= 5) || RestroValidationUtils.isValidPhone(email) || email.length in 3..12
+                val isLoginEmailValid = email.isBlank() || (email.contains("@") && email.length >= 5)
                 val isLoginPassValid = password.isBlank() || password.length >= 6
 
                 Field(
@@ -1279,6 +1193,98 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     )
                 }
             }
+        }
+
+        if (showRegisterEmailOtpDialog) {
+            AlertDialog(
+                onDismissRequest = { showRegisterEmailOtpDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.MarkEmailRead, null, tint = RestroTokens.coral)
+                        Text("Verify Email to Create Account", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("A 6-digit verification code has been sent to your email:\n${email.trim()}", fontSize = 13.sp, color = RestroTokens.text)
+                        Text("Enter the code to verify your email and activate your account.", fontSize = 11.sp, color = RestroTokens.muted)
+
+                        OutlinedTextField(
+                            value = registerOtpCode,
+                            onValueChange = {
+                                if (it.length <= 6) registerOtpCode = it.filter { ch -> ch.isDigit() }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Enter 6-Digit OTP") },
+                            placeholder = { Text("• • • • • •") },
+                            leadingIcon = { Icon(Icons.Default.Lock, null, tint = RestroTokens.coral) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            singleLine = true,
+                            isError = registerOtpError != null,
+                            supportingText = registerOtpError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (registerOtpCode.length == 6) {
+                                vm.verifyOtp(
+                                    code = registerOtpCode,
+                                    name = name,
+                                    phoneNumber = registerPhone,
+                                    role = UserRole.fromString(registerRole)
+                                )
+                                if (vm.error == null) {
+                                    showRegisterEmailOtpDialog = false
+                                    vm.auth(
+                                        email = email,
+                                        password = password,
+                                        name = name,
+                                        register = true,
+                                        role = UserRole.fromString(registerRole),
+                                        phone = registerPhone,
+                                        vehicleNumber = vehicleNumber,
+                                        drivingLicenseUri = dlUri,
+                                        fssaiNumber = fssaiNumber,
+                                        fssaiCertUri = fssaiCertUri,
+                                        gstNumber = gstNumber,
+                                        gstCertUri = gstCertUri,
+                                        restaurantName = restaurantNameInput,
+                                        restaurantLogoUri = restaurantLogoUri
+                                    )
+                                    showToast("Email verified! Account created successfully.")
+                                } else {
+                                    registerOtpError = vm.error ?: "Invalid OTP code"
+                                }
+                            } else {
+                                registerOtpError = "Please enter 6 digits"
+                            }
+                        },
+                        enabled = registerOtpCode.length == 6,
+                        colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Verify & Create Account", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            vm.sendOtp(email.trim(), isPhone = false)
+                            showToast("New OTP sent to $email")
+                        }) {
+                            Text("Resend OTP", color = RestroTokens.coral)
+                        }
+                        TextButton(onClick = { showRegisterEmailOtpDialog = false }) {
+                            Text(RestroI18n.t("cancel_btn"))
+                        }
+                    }
+                },
+                containerColor = RestroTokens.surfaceElevated,
+                shape = RoundedCornerShape(18.dp)
+            )
         }
 
         if (showForgotPasswordDialog) {
@@ -1615,7 +1621,7 @@ fun Discovery(vm: DeliveryViewModel) {
         LazyColumn(
             Modifier.fillMaxSize().testTag("discovery-list"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // Live Dine-In Tab Card (if customer has an active seated session)
             vm.activeTableTab?.let { tab ->
@@ -2013,7 +2019,7 @@ fun DiscoveryDishRow(dish: Dish, vm: DeliveryViewModel, showRestaurantBadge: Boo
     val restaurantOpen = dishRestaurant?.open ?: true
 
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2522,7 +2528,7 @@ fun RestaurantCard(r: Restaurant, vm: DeliveryViewModel, clickable: Boolean) {
 
     Box(
         Modifier.fillMaxWidth()
-            .height(270.dp)
+            .height(230.dp)
             .clip(RestroTokens.shape)
             .then(
                 if (clickable && inRange) Modifier.clickable { vm.openRestaurant(r.id) }

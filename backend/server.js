@@ -674,6 +674,21 @@ router.post("/auth/login", (req, res) => {
 });
 
 // Forgot Password - Generate New Password & Send via Email
+// Check if an email has an existing account in the system
+router.post("/auth/check-email", (req, res) => {
+  const { email } = req.body || {};
+  if (!email || typeof email !== "string") {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "Email is required." });
+  }
+
+  const cleanTarget = email.trim().toLowerCase();
+  const user = db.users.find(u => u.email && u.email.toLowerCase() === cleanTarget);
+  res.json({
+    exists: !!user,
+    email: cleanTarget
+  });
+});
+
 router.post("/auth/password/forgot", async (req, res) => {
   const { target } = req.body || {};
   if (!target || typeof target !== "string") {
@@ -1615,44 +1630,27 @@ router.get("/orders/:id/tracking", optionalAuth, (req, res) => {
     return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "Order not found." });
   }
 
-  // Calculate simulated progression based on elapsed time (in seconds)
-  const elapsedSeconds = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 1000);
-  
-  // Progression: 0s to 120s full delivery cycle
-  const totalDuration = 120; // 2 minutes simulated trip
-  const progress = Math.min(1.0, elapsedSeconds / totalDuration);
+  // Authoritative Order Status from Kitchen, Rider, or Admin
+  const status = order.status || "Confirmed";
+  const progress = status === "Delivered" ? 1.0 : (status === "Out for delivery" ? 0.7 : (status === "Preparing" ? 0.35 : 0.1));
 
-  // Determine Order Status based on progress
-  let prevStatus = order.status;
-  let status = "Confirmed";
-  if (progress > 0.15) status = "Preparing";
-  if (progress > 0.40) status = "Out for delivery";
-  if (progress >= 1.0) status = "Delivered";
-
-  if (status !== prevStatus) {
-    order.status = status;
-    order.events = order.events || [];
-    order.events.push({ status, at: new Date().toISOString() });
-    const user = db.users.find(u => u.id === order.userId);
-    dispatchOrderUpdateEmail(user, order, status);
-  } else {
-    order.status = status;
-  }
-
-  // Compute Current Rider Coordinates (Interpolation between Start and Destination)
+  // Rider Location
   const riderInfo = order.rider || {
     startLat: 12.9716, startLng: 77.5946,
     destLat: 12.9290, destLng: 77.6740,
     totalDistanceKm: 4.8
   };
 
-  const riderLat = riderInfo.startLat + (riderInfo.destLat - riderInfo.startLat) * progress;
-  const riderLng = riderInfo.startLng + (riderInfo.destLng - riderInfo.startLng) * progress;
+  const currLoc = riderInfo.currentLocation || {
+    latitude: riderInfo.startLat,
+    longitude: riderInfo.startLng
+  };
+  const riderLat = currLoc.latitude;
+  const riderLng = currLoc.longitude;
 
   const distanceRemainingKm = Math.max(0, Math.round((riderInfo.totalDistanceKm * (1 - progress)) * 10) / 10);
   const etaMinutes = Math.max(0, Math.ceil(distanceRemainingKm * 3.5));
 
-  // Proximity Alert Trigger: Within 500 meters (0.5 km)
   const isNearby = distanceRemainingKm <= 0.5 && status !== "Delivered";
   const isDelivered = status === "Delivered";
 
@@ -1710,6 +1708,31 @@ router.post("/orders/:id/rider-location", (req, res) => {
     orderId: order.id,
     assignedUserId: order.userId,
     currentLocation: order.rider.currentLocation,
+    status: order.status,
+    updatedAt: new Date().toISOString()
+  });
+});
+
+// Authoritative Staff/Kitchen/Rider Order Status Update
+router.patch("/orders/:id/status", optionalAuth, async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body || {};
+  if (!status || typeof status !== "string") {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "Order status string is required." });
+  }
+  const order = db.orders.find(o => o.id === id);
+  if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND", message: "Order not found." });
+  
+  order.status = status;
+  order.events = order.events || [];
+  order.events.push({ status, at: new Date().toISOString() });
+  
+  const user = db.users.find(u => u.id === order.userId);
+  await dispatchOrderUpdateEmail(user, order, status);
+  
+  res.json({
+    success: true,
+    orderId: order.id,
     status: order.status,
     updatedAt: new Date().toISOString()
   });
@@ -1970,18 +1993,59 @@ function getRazorpaySecret() {
   if (process.env.RAZORPAY_KEY_SECRET !== undefined) {
     return process.env.RAZORPAY_KEY_SECRET;
   }
-  return "rzp_test_secret_RestroUp2026";
+  return "ytfxsjaKtZFvZNqSzoCSHFBX";
 }
 
 function getRazorpayKeyId() {
   if (process.env.RAZORPAY_KEY_ID !== undefined) {
     return process.env.RAZORPAY_KEY_ID;
   }
-  return "rzp_test_TVWv9D7UlaUgFJ";
+  return "rzp_test_TsoUycZ6YiDeDi";
 }
 
 // Create Razorpay Order
-function handleRazorpayCreateOrder(req, res) {
+function callRazorpayApiCreateOrder(keyId, keySecret, payload) {
+  return new Promise((resolve, reject) => {
+    const authHeader = "Basic " + Buffer.from(keyId + ":" + keySecret).toString("base64");
+    const data = JSON.stringify(payload);
+    const req = https.request({
+      hostname: "api.razorpay.com",
+      port: 443,
+      path: "/v1/orders",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(data),
+        "Authorization": authHeader
+      },
+      timeout: 6000
+    }, (res) => {
+      let raw = "";
+      res.on("data", chunk => raw += chunk);
+      res.on("end", () => {
+        try {
+          const parsed = JSON.parse(raw);
+          if (res.statusCode >= 200 && res.statusCode < 300 && parsed.id) {
+            resolve(parsed);
+          } else {
+            reject(new Error(parsed.error?.description || `Razorpay API HTTP ${res.statusCode}`));
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Razorpay API request timed out"));
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
+async function handleRazorpayCreateOrder(req, res) {
   const secret = getRazorpaySecret();
   if (!secret) {
     return res.status(503).json({
@@ -2033,10 +2097,29 @@ function handleRazorpayCreateOrder(req, res) {
     });
   }
 
-  const orderId = "order_" + crypto.randomBytes(8).toString("hex");
-  const numAmount = Math.round(Number(amount));
 
-  const razorpayOrder = {
+  const numAmount = Math.round(Number(amount));
+  let razorpayOrder = null;
+  const keyId = getRazorpayKeyId();
+
+  if (keyId && secret && keyId.startsWith("rzp_") && !secret.includes("test_secret_RestroUp")) {
+    try {
+      razorpayOrder = await callRazorpayApiCreateOrder(keyId, secret, {
+        amount: numAmount,
+        currency: cleanCurrency,
+        receipt: receipt || ("rcpt_" + Date.now()),
+        notes: typeof notes === "object" && notes !== null ? notes : {}
+      });
+      console.log(`[Razorpay] Created live order on Razorpay cloud: ${razorpayOrder.id} for amount ${numAmount}`);
+    } catch (apiErr) {
+      console.warn("[Razorpay API] Live order creation notice:", apiErr.message);
+    }
+  }
+
+  const orderId = razorpayOrder ? razorpayOrder.id : ("order_" + crypto.randomBytes(8).toString("hex"));
+
+
+  if (!razorpayOrder) razorpayOrder = {
     id: orderId,
     entity: "order",
     amount: numAmount,

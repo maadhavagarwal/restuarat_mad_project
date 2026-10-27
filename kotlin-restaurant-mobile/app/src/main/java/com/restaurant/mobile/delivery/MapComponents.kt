@@ -521,19 +521,7 @@ fun OrderTrackingRouteMap(
 ) {
     val context = LocalContext.current
 
-    // Heartbeat state tracking (10-second ticks)
-    var progress by rememberSaveable(order?.id) {
-        mutableFloatStateOf(
-            when (order?.status) {
-                "Confirmed" -> 0.15f
-                "Preparing" -> 0.35f
-                "Out for delivery" -> 0.65f
-                "Delivered" -> 1.0f
-                else -> 0.20f
-            }
-        )
-    }
-
+    // Real authoritative order status & GPS progress tracking (No simulation)
     var proximityAlertFired by rememberSaveable(order?.id) { mutableStateOf(false) }
     var deliveredAlertFired by rememberSaveable(order?.id) { mutableStateOf(order?.status == "Delivered") }
     var mapMode by rememberSaveable(order?.id) { mutableStateOf("GoogleMaps") }
@@ -554,19 +542,21 @@ fun OrderTrackingRouteMap(
         }
     }
 
-    // 10-Second Auto-Updating Coroutine Heartbeat
-    LaunchedEffect(order?.id) {
-        while (progress < 1.0f) {
-            kotlinx.coroutines.delay(10_000L) // 10-second heartbeat
-            val next = (progress + 0.12f).coerceAtMost(1.0f)
-            progress = next
-        }
+    val currentStatus = order?.status ?: "Confirmed"
+    val progress = when (currentStatus) {
+        "Placed", "Pending", "Confirmed" -> 0.15f
+        "Preparing" -> 0.40f
+        "Ready" -> 0.60f
+        "Out for delivery", "On the way" -> 0.80f
+        "Delivered" -> 1.0f
+        "Cancelled" -> 0.0f
+        else -> 0.20f
     }
 
     val animatedProgress by animateFloatAsState(
         targetValue = progress,
-        animationSpec = tween(durationMillis = 2000, easing = LinearEasing),
-        label = "heartbeatProgress"
+        animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
+        label = "orderStatusProgress"
     )
 
     // Calculate real live distance remaining and ETA (20-25m restaurant prep + user-to-restaurant travel time)
@@ -618,20 +608,19 @@ fun OrderTrackingRouteMap(
         }
     }
 
-    // Trigger Notification 2 (Proximity Alert) when < 500 m
-    LaunchedEffect(remainingDistanceKm) {
-        if (remainingDistanceKm <= 0.5 && !proximityAlertFired && progress < 1.0f) {
+    // Trigger Notification 2 (Proximity Alert) when < 500 m and order is out for delivery
+    LaunchedEffect(remainingDistanceKm, currentStatus) {
+        if (remainingDistanceKm <= 0.5 && !proximityAlertFired && currentStatus == "Out for delivery") {
             proximityAlertFired = true
             vm?.notifyProximityAlert(order?.id ?: "ORD-LIVE", "Ramesh Kumar")
         }
     }
 
-    // Trigger Notification 3 (Delivered Alert) when rider reaches doorstep
-    LaunchedEffect(animatedProgress) {
-        if (animatedProgress >= 1.0f && !deliveredAlertFired) {
+    // Trigger Notification 3 (Delivered Alert) when order is marked Delivered by Staff/Rider
+    LaunchedEffect(currentStatus) {
+        if (currentStatus == "Delivered" && !deliveredAlertFired) {
             deliveredAlertFired = true
             vm?.notifyOrderDelivered(order?.id ?: "ORD-LIVE")
-            order?.id?.let { vm?.markOrderDelivered(it) }
         }
     }
 

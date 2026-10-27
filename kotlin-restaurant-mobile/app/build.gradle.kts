@@ -32,7 +32,7 @@ android {
         val rawMapsKey = providers.gradleProperty("MAPS_API_KEY").orNull ?: restroLocalProperties.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
         val mapsKey = if (rawMapsKey.startsWith("AIza")) rawMapsKey else "AIzaSyC51qVAdTuym7zIMscR9qROaDd7OxeIfV4"
         val geminiKey = providers.gradleProperty("GEMINI_API_KEY").orNull ?: restroLocalProperties.getProperty("GEMINI_API_KEY") ?: System.getenv("GEMINI_API_KEY") ?: ""
-        val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: "rzp_test_RestroDeliveryLive"
+        val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: "rzp_test_TsoUycZ6YiDeDi"
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
         buildConfigField("String", "RAZORPAY_KEY_ID", "\"$rzpKey\"")
@@ -121,6 +121,7 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging-ktx")
     implementation("com.google.firebase:firebase-storage-ktx")
     implementation("com.google.android.gms:play-services-auth:21.3.0")
+    implementation("com.razorpay:checkout:1.6.40")
 }
 
 

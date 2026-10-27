@@ -272,7 +272,7 @@ object RestroI18n {
 
         // Additional Auth & Partner Registration Keys
         "auth_enter_otp" to mapOf("en" to "6-Digit Verification OTP", "hi" to "6-अंकीय सत्यापन ओटीपी", "mr" to "६-अंकी सत्यापन ओटीपी"),
-        "auth_login_id" to mapOf("en" to "Email or Mobile Number", "hi" to "ईमेल या मोबाइल नंबर", "mr" to "ईमेल किंवा मोबाईल नंबर"),
+        "auth_login_id" to mapOf("en" to "Email Address", "hi" to "ईमेल पता", "mr" to "ईमेल पत्ता"),
         "auth_password_min" to mapOf("en" to "Password (min 6 characters)", "hi" to "पासवर्ड (कम से कम 6 अक्षर)", "mr" to "पासवर्ड (किमान ६ अक्षरे)"),
         "auth_password" to mapOf("en" to "Password", "hi" to "पासवर्ड", "mr" to "पासवर्ड"),
         "auth_switch_to_signin" to mapOf("en" to "Already have an account? Sign in", "hi" to "पहले से खाता है? साइन इन करें", "mr" to "आधीच खाते आहे? साईन इन करा"),

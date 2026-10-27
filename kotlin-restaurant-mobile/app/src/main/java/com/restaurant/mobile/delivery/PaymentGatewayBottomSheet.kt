@@ -1,17 +1,18 @@
 package com.restaurant.mobile.delivery
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -22,15 +23,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
+
+private fun Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
 
 enum class PaymentProcessingState {
     INPUT,
@@ -40,12 +49,8 @@ enum class PaymentProcessingState {
 }
 
 /**
- * Interactive Payment Gateway Bottom Sheet.
- * Features:
- * 1. UPI Apps (Google Pay, PhonePe, Paytm) + instant UPI ID validation regex.
- * 2. Card Checkout with formatted inputs, card brand detection, and Luhn algorithm validation.
- * 3. Server-side cryptographic Razorpay signature verification.
- * 4. Dining payment eligibility enforcement and Counter Bill Request routing.
+ * Official Razorpay Standard Checkout Bottom Sheet.
+ * Direct bridge to Razorpay SDK Activity with server-side HMAC-SHA256 verification.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,175 +66,152 @@ fun PaymentGatewayBottomSheet(
     onCounterBillRequested: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
     val effectiveDiningTab = diningTab ?: if (selectedAddressId.startsWith("DINE_IN")) vm.activeTableTab else null
     val isDineIn = effectiveDiningTab != null || selectedAddressId.startsWith("DINE_IN")
     val effectiveTotal = if (isDineIn && effectiveDiningTab != null) effectiveDiningTab.total
         else if (totalAmount > 0L) totalAmount
         else (vm.quote?.total ?: 0L)
 
-    var selectedTab by rememberSaveable {
-        mutableStateOf(
-            when (initialMethod.trim().lowercase()) {
-                "card" -> 1
-                "netbanking" -> 2
-                else -> 0
-            }
-        )
-    } // 0: UPI, 1: Card, 2: Netbanking
     var processingState by remember { mutableStateOf(PaymentProcessingState.INPUT) }
+    var statusMessage by remember { mutableStateOf("Preparing Razorpay Checkout...") }
     var verificationErrorMessage by remember { mutableStateOf("") }
-    var transactionId by remember { mutableStateOf(razorpayCallback?.razorpay_payment_id ?: "rzp_pay_${UUID.randomUUID().toString().take(10).uppercase()}") }
+    var transactionId by remember { mutableStateOf(razorpayCallback?.razorpay_payment_id ?: "") }
+    var hasAutoLaunched by rememberSaveable { mutableStateOf(false) }
 
-    // UPI State
-    var selectedUpiApp by rememberSaveable { mutableStateOf("Google Pay") }
-    var customUpiId by rememberSaveable { mutableStateOf("") }
-    val isCustomUpi = selectedUpiApp == "Custom"
-    val upiRegex = remember { Regex("^[a-zA-Z0-9.\\-_]{2,49}@[a-zA-Z]{2,49}$") }
-    val isUpiValid = remember(customUpiId, selectedUpiApp) {
-        if (!isCustomUpi) true
-        else customUpiId.isNotBlank() && upiRegex.matches(customUpiId.trim())
+    val targetRestaurant = vm.catalog.restaurants.find {
+        it.id == effectiveDiningTab?.restaurantId?.ifBlank { vm.restaurantId } ?: vm.restaurantId
     }
 
-    // Card State
-    var cardNumber by rememberSaveable { mutableStateOf("") }
-    var cardExpiry by rememberSaveable { mutableStateOf("") }
-    var cardCvv by rememberSaveable { mutableStateOf("") }
-    var cardName by rememberSaveable { mutableStateOf("") }
+    val restaurantName = targetRestaurant?.name ?: "Restro Food Delivery"
 
-    val cleanCardNumber = cardNumber.filter { it.isDigit() }
-    val isLuhnValid = remember(cleanCardNumber) {
-        if (cleanCardNumber.length >= 13) vm.validateCardLuhn(cleanCardNumber) else false
-    }
-    val cardIssuer = remember(cleanCardNumber) {
-        when {
-            cleanCardNumber.startsWith("4") -> "Visa"
-            cleanCardNumber.matches(Regex("^(5[1-5]|2[2-7]).*")) -> "Mastercard"
-            cleanCardNumber.matches(Regex("^(60|65|81|82).*")) -> "RuPay"
-            cleanCardNumber.matches(Regex("^(34|37).*")) -> "Amex"
-            else -> "Card"
+    // Core function to launch official Razorpay Checkout SDK
+    fun startRazorpayCheckout() {
+        val activity = context.findActivity()
+        if (activity == null) {
+            verificationErrorMessage = "Could not find host activity to open Razorpay checkout."
+            processingState = PaymentProcessingState.FAILED
+            onPaymentFailure?.invoke("NO_ACTIVITY", verificationErrorMessage)
+            return
+        }
+
+        // 1. Enforce restaurant.acceptsDiningPayment for Dine-In
+        if (isDineIn && !DineInPaymentRules.isPaymentEligible(targetRestaurant, isDineIn = true)) {
+            verificationErrorMessage = "Online dining payment is unavailable for this restaurant. Please request a counter bill."
+            processingState = PaymentProcessingState.FAILED
+            onPaymentFailure?.invoke("DINING_PAYMENT_DISABLED", verificationErrorMessage)
+            return
+        }
+
+        processingState = PaymentProcessingState.VERIFYING
+        statusMessage = "Opening Razorpay Secure Checkout..."
+
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                // 2. Authoritative server order creation
+                val orderResp: Map<String, Any> = vm.api.call(
+                    "/payments/razorpay/create-order",
+                    "POST",
+                    mapOf(
+                        "amount" to effectiveTotal,
+                        "currency" to "INR",
+                        "receipt" to "rcpt_${System.currentTimeMillis()}",
+                        "orderType" to if (isDineIn) "DINE_IN" else "DELIVERY",
+                        "restaurantId" to (targetRestaurant?.id ?: vm.restaurantId),
+                        "tabId" to effectiveDiningTab?.id,
+                        "tableNumber" to effectiveDiningTab?.tableNumber
+                    )
+                )
+
+                val orderObj = orderResp["order"] as? Map<*, *>
+                val createdOrderId = orderObj?.get("id")?.toString().orEmpty()
+                val serverKeyId = orderResp["key_id"]?.toString().orEmpty().ifBlank {
+                    com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID
+                }
+
+                withContext(Dispatchers.Main) {
+                    statusMessage = "Awaiting payment in Razorpay window..."
+
+                    RazorpayCheckoutLauncher.openCheckout(
+                        activity = activity,
+                        keyId = serverKeyId,
+                        orderId = createdOrderId,
+                        amountInPaise = effectiveTotal,
+                        restaurantName = restaurantName,
+                        description = if (isDineIn) "Table ${effectiveDiningTab?.tableNumber ?: ""} Bill Settlement" else "Food Order Payment",
+                        customerEmail = vm.profile?.email.orEmpty(),
+                        customerPhone = vm.profile?.phone.orEmpty(),
+                        onSuccess = { payId, paymentData ->
+                            val ordId = paymentData?.orderId ?: createdOrderId
+                            val sig = paymentData?.signature.orEmpty()
+
+                            statusMessage = "Verifying payment signature with server..."
+
+                            coroutineScope.launch(Dispatchers.IO) {
+                                val callback = RazorpayPaymentCallback(
+                                    razorpay_order_id = ordId,
+                                    razorpay_payment_id = payId,
+                                    razorpay_signature = sig
+                                )
+
+                                val verifyResult = vm.verifyAndProcessRazorpayPayment(
+                                    callback = callback,
+                                    isDineIn = isDineIn,
+                                    diningTab = effectiveDiningTab,
+                                    addressId = selectedAddressId,
+                                    paymentMethod = "Razorpay"
+                                )
+
+                                withContext(Dispatchers.Main) {
+                                    if (verifyResult.verified && verifyResult.success) {
+                                        transactionId = payId
+                                        processingState = PaymentProcessingState.AUTHORIZED
+                                        delay(1000L)
+                                        onPaymentSuccess?.invoke("Razorpay", payId)
+                                        onDismiss()
+                                    } else {
+                                        verificationErrorMessage = verifyResult.message.ifBlank { "Server cryptographic verification failed." }
+                                        processingState = PaymentProcessingState.FAILED
+                                        onPaymentFailure?.invoke(verifyResult.errorCode ?: "VERIFICATION_FAILED", verificationErrorMessage)
+                                    }
+                                }
+                            }
+                        },
+                        onError = { code, response, _ ->
+                            val msg = when (code) {
+                                com.razorpay.Checkout.PAYMENT_CANCELED -> "Payment was cancelled."
+                                com.razorpay.Checkout.NETWORK_ERROR -> "Network error occurred during payment. Please check your internet connection."
+                                else -> response ?: "Razorpay payment encountered an error (Code: $code)"
+                            }
+                            verificationErrorMessage = msg
+                            processingState = PaymentProcessingState.FAILED
+                            onPaymentFailure?.invoke("RAZORPAY_ERROR_$code", msg)
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    verificationErrorMessage = e.message ?: "Failed to initiate payment with server."
+                    processingState = PaymentProcessingState.FAILED
+                    onPaymentFailure?.invoke("CREATE_ORDER_FAILED", verificationErrorMessage)
+                }
+            }
         }
     }
-    val isExpiryValid = remember(cardExpiry) {
-        cardExpiry.length == 5 && cardExpiry.contains("/") &&
-                cardExpiry.take(2).toIntOrNull()?.let { it in 1..12 } == true
-    }
-    val isCvvValid = remember(cardCvv) {
-        cardCvv.length in 3..4
-    }
-    val isCardFormValid = cleanCardNumber.length in 15..16 && isLuhnValid && isExpiryValid && isCvvValid
 
-    // Netbanking State
-    var selectedBank by rememberSaveable { mutableStateOf("HDFC Bank") }
-
-    // Server-side cryptographic Razorpay verification & auto-settlement completion
-    LaunchedEffect(processingState) {
-        when (processingState) {
-            PaymentProcessingState.VERIFYING -> {
-                withContext(Dispatchers.IO) {
-                    val methodLabel = when (selectedTab) {
-                        0 -> "UPI ($selectedUpiApp)"
-                        1 -> "Card ($cardIssuer)"
-                        2 -> "Netbanking ($selectedBank)"
-                        else -> "UPI"
-                    }
-
-                    val targetRestaurant = vm.catalog.restaurants.find {
-                        it.id == effectiveDiningTab?.restaurantId?.ifBlank { vm.restaurantId } ?: vm.restaurantId
-                    }
-
-                    // 1. Enforce restaurant.acceptsDiningPayment for Dine-In
-                    if (isDineIn && !DineInPaymentRules.isPaymentEligible(targetRestaurant, isDineIn = true)) {
-                        withContext(Dispatchers.Main) {
-                            verificationErrorMessage = "Online dining payment is unavailable for this restaurant. Please request a counter bill."
-                            processingState = PaymentProcessingState.FAILED
-                            onPaymentFailure?.invoke("DINING_PAYMENT_DISABLED", verificationErrorMessage)
-                        }
-                        return@withContext
-                    }
-
-                    // 2. Submit genuine callback or create authoritative Razorpay order
-                    try {
-                        val orderResp: Map<String, Any> = vm.api.call(
-                            "/payments/razorpay/create-order",
-                            "POST",
-                            mapOf(
-                                "amount" to effectiveTotal,
-                                "currency" to "INR",
-                                "receipt" to "rcpt_${System.currentTimeMillis()}",
-                                "orderType" to if (isDineIn) "DINE_IN" else "DELIVERY",
-                                "restaurantId" to (targetRestaurant?.id ?: vm.restaurantId),
-                                "tabId" to effectiveDiningTab?.id
-                            )
-                        )
-                        val orderObj = orderResp["order"] as? Map<*, *>
-                        val createdOrderId = orderObj?.get("id")?.toString() ?: ""
-
-                        delay(800L) // Issuing bank verification delay
-
-                        val callbackToVerify = razorpayCallback ?: if (createdOrderId.isNotBlank()) {
-                            val rzpPayId = "pay_" + UUID.randomUUID().toString().replace("-", "").take(14)
-                            val rzpSig = "rzp_test_sig_" + UUID.randomUUID().toString().replace("-", "").take(16)
-                            RazorpayPaymentCallback(
-                                razorpay_order_id = createdOrderId,
-                                razorpay_payment_id = rzpPayId,
-                                razorpay_signature = rzpSig
-                            )
-                        } else null
-
-                        if (callbackToVerify == null) {
-                            withContext(Dispatchers.Main) {
-                                verificationErrorMessage = "Payment signature callback required: cannot mark payment as verified without genuine Razorpay signature."
-                                processingState = PaymentProcessingState.FAILED
-                                onPaymentFailure?.invoke("MISSING_SIGNATURE", verificationErrorMessage)
-                            }
-                            return@withContext
-                        }
-
-                        val verifyResult = vm.verifyAndProcessRazorpayPayment(
-                            callback = callbackToVerify,
-                            isDineIn = isDineIn,
-                            diningTab = effectiveDiningTab,
-                            addressId = selectedAddressId,
-                            paymentMethod = methodLabel
-                        )
-
-                        withContext(Dispatchers.Main) {
-                            if (verifyResult.verified && verifyResult.success) {
-                                transactionId = callbackToVerify.razorpay_payment_id
-                                processingState = PaymentProcessingState.AUTHORIZED
-                            } else {
-                                verificationErrorMessage = verifyResult.message.ifBlank { "Payment verification failed server-side." }
-                                processingState = PaymentProcessingState.FAILED
-                                onPaymentFailure?.invoke(verifyResult.errorCode ?: "VERIFICATION_FAILED", verificationErrorMessage)
-                            }
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) {
-                            verificationErrorMessage = e.message ?: "Payment verification failed."
-                            processingState = PaymentProcessingState.FAILED
-                            onPaymentFailure?.invoke("VERIFICATION_FAILED", verificationErrorMessage)
-                        }
-                    }
-                }
-            }
-            PaymentProcessingState.AUTHORIZED -> {
-                delay(1200L) // Display authorization confirmation to user
-                val methodLabel = when (selectedTab) {
-                    0 -> "UPI ($selectedUpiApp)"
-                    1 -> "Card ($cardIssuer)"
-                    2 -> "Netbanking ($selectedBank)"
-                    else -> "UPI"
-                }
-                onPaymentSuccess?.invoke(methodLabel, transactionId)
-                onDismiss()
-            }
-            else -> {}
+    // Auto-launch checkout once bottom sheet is presented
+    LaunchedEffect(Unit) {
+        if (!hasAutoLaunched) {
+            hasAutoLaunched = true
+            startRazorpayCheckout()
         }
     }
 
     ModalBottomSheet(
         onDismissRequest = {
-            if (processingState == PaymentProcessingState.INPUT) onDismiss()
+            if (processingState != PaymentProcessingState.VERIFYING) onDismiss()
         },
         containerColor = RestroTokens.surface,
         dragHandle = { BottomSheetDefaults.DragHandle(color = RestroTokens.muted) }
@@ -237,536 +219,11 @@ fun PaymentGatewayBottomSheet(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = 20.dp, vertical = 12.dp)
                 .imePadding()
         ) {
             when (processingState) {
-                PaymentProcessingState.INPUT -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Header
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(Icons.Default.Lock, null, tint = RestroTokens.green, modifier = Modifier.size(16.dp))
-                                    Text(
-                                        if (isDineIn && effectiveDiningTab != null) "Table ${effectiveDiningTab.tableNumber} Bill"
-                                        else "Secure Payment Gateway",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 17.sp
-                                    )
-                                }
-                                Text(
-                                    if (isDineIn && effectiveDiningTab != null) "Dine-In Settlement · 256-bit Encrypted"
-                                    else "256-bit Bank Grade Encrypted",
-                                    fontSize = 11.sp,
-                                    color = RestroTokens.muted
-                                )
-                            }
-                            Text(
-                                money(effectiveTotal),
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = RestroTokens.coral
-                            )
-                        }
-
-                        // Razorpay Official Gateway Branding Bar
-                        Surface(
-                            color = Color(0xFF0C2340),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(Icons.Default.VerifiedUser, null, tint = Color(0xFF3395FF), modifier = Modifier.size(16.dp))
-                                    Text("Razorpay Trusted Gateway", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
-                                }
-                                Surface(
-                                    color = Color(0xFF3395FF).copy(alpha = 0.25f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    val keyConfigured = com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID.isNotBlank()
-                                    val envBadge = if (com.restaurant.mobile.BuildConfig.RAZORPAY_KEY_ID.startsWith("rzp_live_")) "LIVE MODE" else if (keyConfigured) "SANDBOX TEST MODE" else "UNCONFIGURED"
-                                    Text(envBadge, color = Color(0xFF3395FF), fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                                }
-                            }
-                        }
-
-                        // Tab Switcher (UPI vs Card vs Netbanking)
-                        TabRow(
-                            selectedTabIndex = selectedTab,
-                            containerColor = RestroTokens.surfaceElevated,
-                            contentColor = RestroTokens.coral,
-                            divider = {}
-                        ) {
-                            Tab(
-                                selected = selectedTab == 0,
-                                onClick = { selectedTab = 0 },
-                                text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Icon(Icons.Default.QrCodeScanner, null, modifier = Modifier.size(16.dp))
-                                        Text("UPI", fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            )
-                            Tab(
-                                selected = selectedTab == 1,
-                                onClick = { selectedTab = 1 },
-                                text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Icon(Icons.Default.CreditCard, null, modifier = Modifier.size(16.dp))
-                                        Text("Card", fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            )
-                            Tab(
-                                selected = selectedTab == 2,
-                                onClick = { selectedTab = 2 },
-                                text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Icon(Icons.Default.AccountBalance, null, modifier = Modifier.size(16.dp))
-                                        Text("Netbanking", fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            )
-                        }
-
-                        // Tab 0: UPI
-                        if (selectedTab == 0) {
-                            Text("Fast UPI Checkout", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-
-                            // Quick UPI Apps
-                            val upiApps = listOf(
-                                "Google Pay" to "⚡ 1-Tap GPay",
-                                "PhonePe" to "📱 PhonePe Direct",
-                                "Paytm" to "💰 Paytm Wallet/UPI",
-                                "Custom" to "✍️ Other UPI ID"
-                            )
-
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                upiApps.forEach { (appName, appDesc) ->
-                                    val isSelected = selectedUpiApp == appName
-                                    Surface(
-                                        onClick = { selectedUpiApp = appName },
-                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else RestroTokens.surfaceElevated,
-                                        shape = RoundedCornerShape(14.dp),
-                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, RestroTokens.coral) else null,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(14.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                        ) {
-                                            RadioButton(
-                                                selected = isSelected,
-                                                onClick = { selectedUpiApp = appName },
-                                                colors = RadioButtonDefaults.colors(selectedColor = RestroTokens.coral)
-                                            )
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(appName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                                Text(appDesc, fontSize = 12.sp, color = RestroTokens.muted)
-                                            }
-                                            if (appName != "Custom") {
-                                                Surface(
-                                                    color = RestroTokens.green.copy(alpha = 0.2f),
-                                                    shape = RoundedCornerShape(6.dp)
-                                                ) {
-                                                    Text(
-                                                        "INSTANT",
-                                                        fontSize = 10.sp,
-                                                        color = RestroTokens.green,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Custom UPI Input Field with Real-Time Validation
-                            if (isCustomUpi) {
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    OutlinedTextField(
-                                        value = customUpiId,
-                                        onValueChange = { customUpiId = it.trim().lowercase() },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        label = { Text("Enter UPI ID (VPA)") },
-                                        placeholder = { Text("e.g. mobile@upi, name@okhdfcbank") },
-                                        leadingIcon = { Icon(Icons.Default.AlternateEmail, null, tint = RestroTokens.coral) },
-                                        trailingIcon = {
-                                            if (customUpiId.isNotBlank()) {
-                                                if (isUpiValid) {
-                                                    Icon(Icons.Default.CheckCircle, "Valid UPI", tint = RestroTokens.green)
-                                                } else {
-                                                    Icon(Icons.Default.ErrorOutline, "Invalid UPI", tint = MaterialTheme.colorScheme.error)
-                                                }
-                                            }
-                                        },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
-
-                                    if (customUpiId.isNotBlank()) {
-                                        Text(
-                                            text = if (isUpiValid) "✓ Valid UPI VPA address" else "Enter a valid UPI ID (e.g. user@okhdfcbank or 9876543210@paytm)",
-                                            fontSize = 11.sp,
-                                            color = if (isUpiValid) RestroTokens.green else MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.padding(start = 4.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // Tab 1: Card Checkout with Luhn Validation
-                        if (selectedTab == 1) {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                // 1-Tap Razorpay Test Card Autofill
-                                Surface(
-                                    onClick = {
-                                        cardNumber = "4111 2222 3333 4444"
-                                        cardExpiry = "12/28"
-                                        cardCvv = "123"
-                                        cardName = "Razorpay Test User"
-                                    },
-                                    color = RestroTokens.coral.copy(alpha = 0.12f),
-                                    shape = RoundedCornerShape(10.dp),
-                                    border = BorderStroke(1.dp, RestroTokens.coral.copy(alpha = 0.35f)),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Icon(Icons.Default.VpnKey, null, tint = RestroTokens.coral, modifier = Modifier.size(16.dp))
-                                            Text("Razorpay Test Card (4111...)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = RestroTokens.coral)
-                                        }
-                                        Text("1-Tap Fill", fontSize = 11.sp, color = RestroTokens.text, fontWeight = FontWeight.SemiBold)
-                                    }
-                                }
-
-                                // Card Number Field
-                                OutlinedTextField(
-                                    value = cardNumber,
-                                    onValueChange = { input ->
-                                        val digits = input.filter { it.isDigit() }.take(16)
-                                        // Auto-format into 4-digit groups (XXXX XXXX XXXX XXXX)
-                                        val formatted = digits.chunked(4).joinToString(" ")
-                                        cardNumber = formatted
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Card Number") },
-                                    placeholder = { Text("4111 2222 3333 4444") },
-                                    leadingIcon = { Icon(Icons.Default.CreditCard, null, tint = RestroTokens.coral) },
-                                    trailingIcon = {
-                                        Surface(
-                                            color = RestroTokens.surface,
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Text(
-                                                cardIssuer,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp,
-                                                color = RestroTokens.coral,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-
-                                // Real-Time Luhn Validation Feedback
-                                if (cleanCardNumber.length >= 13) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        modifier = Modifier.padding(start = 4.dp)
-                                    ) {
-                                        Icon(
-                                            if (isLuhnValid) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                            null,
-                                            tint = if (isLuhnValid) RestroTokens.green else Color(0xFFEF4444),
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Text(
-                                            text = if (isLuhnValid) "Luhn Algorithm Verified: Valid Card Number" else "Invalid Card Number: Failed Luhn Checksum",
-                                            fontSize = 11.sp,
-                                            color = if (isLuhnValid) RestroTokens.green else Color(0xFFEF4444),
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
-                                }
-
-                                // Expiry and CVV Row
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = cardExpiry,
-                                        onValueChange = { input ->
-                                            val digits = input.filter { it.isDigit() }.take(4)
-                                            cardExpiry = if (digits.length >= 3) "${digits.take(2)}/${digits.drop(2)}" else digits
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                        label = { Text("Valid Thru") },
-                                        placeholder = { Text("MM/YY") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
-
-                                    OutlinedTextField(
-                                        value = cardCvv,
-                                        onValueChange = { input ->
-                                            cardCvv = input.filter { it.isDigit() }.take(4)
-                                        },
-                                        modifier = Modifier.weight(1f),
-                                        label = { Text("CVV") },
-                                        placeholder = { Text("•••") },
-                                        visualTransformation = PasswordVisualTransformation(),
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
-                                }
-
-                                OutlinedTextField(
-                                    value = cardName,
-                                    onValueChange = { cardName = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Name on Card") },
-                                    placeholder = { Text("Aarav Sharma") },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                            }
-                        }
-
-                        // Tab 2: Netbanking
-                        if (selectedTab == 2) {
-                            Text("Select Netbanking Bank", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-
-                            val banks = listOf(
-                                "HDFC Bank" to "Popular · Instant authorization",
-                                "ICICI Bank" to "iMobile & Retail Internet Banking",
-                                "State Bank of India" to "SBI YONO & Retail Banking",
-                                "Axis Bank" to "Axis NetBanking Direct",
-                                "Kotak Mahindra Bank" to "Kotak 811 & Retail Banking",
-                                "Punjab National Bank" to "PNB One & Retail Banking"
-                            )
-
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                banks.forEach { (bankName, bankDesc) ->
-                                    val isSelected = selectedBank == bankName
-                                    Surface(
-                                        onClick = { selectedBank = bankName },
-                                        color = if (isSelected) RestroTokens.coral.copy(alpha = 0.15f) else RestroTokens.surfaceElevated,
-                                        shape = RoundedCornerShape(14.dp),
-                                        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, RestroTokens.coral) else null,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(14.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                        ) {
-                                            RadioButton(
-                                                selected = isSelected,
-                                                onClick = { selectedBank = bankName },
-                                                colors = RadioButtonDefaults.colors(selectedColor = RestroTokens.coral)
-                                            )
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(bankName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                                Text(bankDesc, fontSize = 12.sp, color = RestroTokens.muted)
-                                            }
-                                            if (bankName in listOf("HDFC Bank", "ICICI Bank", "State Bank of India")) {
-                                                Surface(
-                                                    color = RestroTokens.green.copy(alpha = 0.2f),
-                                                    shape = RoundedCornerShape(6.dp)
-                                                ) {
-                                                    Text(
-                                                        "INSTANT",
-                                                        fontSize = 10.sp,
-                                                        color = RestroTokens.green,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(4.dp))
-
-                        // Pay Button
-                        val isActionEnabled = when (selectedTab) {
-                            0 -> isUpiValid
-                            1 -> isCardFormValid
-                            2 -> selectedBank.isNotBlank()
-                            else -> false
-                        }
-
-                        Button(
-                            onClick = {
-                                processingState = PaymentProcessingState.VERIFYING
-                            },
-                            enabled = isActionEnabled && !vm.busy,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Icon(Icons.Default.Security, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "Pay ${money(effectiveTotal)}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-
-                        Text(
-                            "By paying, you authorize Restro to initiate standard PCI-DSS bank debit protocols.",
-                            fontSize = 11.sp,
-                            color = RestroTokens.muted,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
-                    }
-                }
-
-                // 1.5-Second Simulated Bank Verification Animation
                 PaymentProcessingState.VERIFYING -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(18.dp)
-                    ) {
-                        CircularProgressIndicator(
-                            color = RestroTokens.coral,
-                            strokeWidth = 4.dp,
-                            modifier = Modifier.size(56.dp)
-                        )
-                        Text(
-                            if (selectedTab == 2) "Connecting to $selectedBank via Razorpay..."
-                            else "Connecting to Razorpay Gateway...",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RestroTokens.text
-                        )
-                        Text(
-                            "Authorizing 256-bit secure Razorpay token with issuing bank...",
-                            fontSize = 12.sp,
-                            color = RestroTokens.muted
-                        )
-                        Surface(
-                            color = RestroTokens.surfaceElevated,
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text(
-                                "Secured by Razorpay · Please do not close the app",
-                                fontSize = 11.sp,
-                                color = RestroTokens.coral,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Payment Authorized ✓ Screen
-                PaymentProcessingState.AUTHORIZED -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(RestroTokens.green.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = RestroTokens.green,
-                                modifier = Modifier.size(44.dp)
-                            )
-                        }
-                        Text(
-                            "Razorpay Payment Authorized ✓",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RestroTokens.green
-                        )
-                        Text(
-                            "Razorpay Payment ID: $transactionId",
-                            fontSize = 12.sp,
-                            color = RestroTokens.muted
-                        )
-                        Text(
-                            if (isDineIn && effectiveDiningTab != null) "Payment authorized for Table ${effectiveDiningTab.tableNumber}..."
-                            else "Placing your order with restaurant...",
-                            fontSize = 13.sp,
-                            color = RestroTokens.text
-                        )
-                    }
-                }
-
-                // Payment Failed / Verification Rejected Screen
-                PaymentProcessingState.FAILED -> {
-                    val targetRestaurant = vm.catalog.restaurants.find {
-                        it.id == effectiveDiningTab?.restaurantId?.ifBlank { vm.restaurantId } ?: vm.restaurantId
-                    }
-                    val isDiningDisabled = isDineIn && !DineInPaymentRules.isPaymentEligible(targetRestaurant, isDineIn = true)
-
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -774,56 +231,245 @@ fun PaymentGatewayBottomSheet(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(RestroTokens.coral.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
+                        CircularProgressIndicator(
+                            color = RestroTokens.coral,
+                            strokeWidth = 3.dp,
+                            modifier = Modifier.size(52.dp)
+                        )
+                        Text(
+                            text = statusMessage,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            color = RestroTokens.text
+                        )
+                        Text(
+                            text = "Secured by Razorpay · 256-bit SSL Encryption",
+                            fontSize = 12.sp,
+                            color = RestroTokens.muted
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = {
+                                processingState = PaymentProcessingState.FAILED
+                                verificationErrorMessage = "Payment cancelled by user."
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, RestroTokens.border)
                         ) {
-                            Icon(
-                                Icons.Default.Error,
-                                contentDescription = null,
-                                tint = RestroTokens.coral,
-                                modifier = Modifier.size(44.dp)
-                            )
+                            Text("Cancel", color = RestroTokens.muted, fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                PaymentProcessingState.AUTHORIZED -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = RestroTokens.green.copy(alpha = 0.15f),
+                            modifier = Modifier.size(64.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.green, modifier = Modifier.size(40.dp))
+                            }
                         }
                         Text(
-                            if (isDiningDisabled) "Online Dining Pay Unavailable" else "Payment Verification Failed",
+                            "Payment Authorized ✓",
+                            fontWeight = FontWeight.ExtraBold,
                             fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = RestroTokens.coral
+                            color = RestroTokens.text
                         )
-                        Text(
-                            verificationErrorMessage.ifBlank { "Could not securely verify Razorpay transaction." },
-                            fontSize = 13.sp,
-                            color = RestroTokens.text,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-                        if (isDiningDisabled) {
-                            OutlinedButton(
+                        if (transactionId.isNotBlank()) {
+                            Text(
+                                "Razorpay ID: $transactionId",
+                                fontSize = 12.sp,
+                                color = RestroTokens.muted
+                            )
+                        }
+                    }
+                }
+
+                PaymentProcessingState.FAILED, PaymentProcessingState.INPUT -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Official Razorpay Gateway Branding Header
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF0C2340), // Official Razorpay dark blue branding
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Lock, null, tint = Color(0xFF3395FF), modifier = Modifier.size(16.dp))
+                                    Text("Razorpay Trusted Checkout", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = Color(0xFF3395FF).copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        text = "LIVE GATEWAY",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF52A8FF),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Order Amount Summary
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = RestroTokens.surfaceElevated,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Total Payable Amount", fontSize = 13.sp, color = RestroTokens.muted)
+                                    Text(
+                                        "₹${"%.2f".format(effectiveTotal / 100.0)}",
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = RestroTokens.coral
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Restaurant", fontSize = 12.sp, color = RestroTokens.muted)
+                                    Text(restaurantName, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RestroTokens.text)
+                                }
+
+                                if (isDineIn && effectiveDiningTab != null) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Table", fontSize = 12.sp, color = RestroTokens.muted)
+                                        Text("Table ${effectiveDiningTab.tableNumber}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RestroTokens.text)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Payment Methods Supported
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = RestroTokens.surfaceElevated.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, RestroTokens.border),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(Icons.Default.CreditCard, null, tint = RestroTokens.coral, modifier = Modifier.size(20.dp))
+                                Column {
+                                    Text("Supports All Payment Modes", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = RestroTokens.text)
+                                    Text("Google Pay, PhonePe, Paytm, UPI, Cards, Netbanking & Wallets", fontSize = 11.sp, color = RestroTokens.muted)
+                                }
+                            }
+                        }
+
+                        // Error Banner if payment failed
+                        if (processingState == PaymentProcessingState.FAILED && verificationErrorMessage.isNotBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                    Text(
+                                        text = verificationErrorMessage,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Dine-In Disabled Handler
+                        if (isDineIn && targetRestaurant?.acceptsDiningPayment == false) {
+                            Button(
                                 onClick = {
                                     onCounterBillRequested?.invoke()
                                     onDismiss()
                                 },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, RestroTokens.coral)
+                                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surfaceElevated),
+                                shape = RoundedCornerShape(14.dp)
                             ) {
-                                Icon(Icons.Default.Storefront, null, tint = RestroTokens.coral, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Request Counter Bill (${money(effectiveTotal)})", color = RestroTokens.coral, fontWeight = FontWeight.Bold)
+                                Text("Request Counter Bill", fontWeight = FontWeight.Bold, color = RestroTokens.text)
+                            }
+                        } else {
+                            // Primary CTA: Open Razorpay Checkout
+                            Button(
+                                onClick = { startRazorpayCheckout() },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.coral),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Text(
+                                        text = if (processingState == PaymentProcessingState.FAILED) "Retry with Razorpay" else "Pay ₹${"%.2f".format(effectiveTotal / 100.0)} via Razorpay",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 15.sp,
+                                        color = Color.White
+                                    )
+                                }
                             }
                         }
-                        Button(
+
+                        // Dismiss button
+                        TextButton(
                             onClick = onDismiss,
-                            colors = ButtonDefaults.buttonColors(containerColor = RestroTokens.surfaceElevated),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Close", color = RestroTokens.text, fontWeight = FontWeight.SemiBold)
+                            Text("Cancel", color = RestroTokens.muted, fontSize = 13.sp)
                         }
+
+                        Spacer(Modifier.height(8.dp))
                     }
                 }
             }

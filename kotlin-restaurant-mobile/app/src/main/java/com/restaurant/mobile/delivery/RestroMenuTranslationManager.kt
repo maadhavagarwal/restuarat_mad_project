@@ -71,6 +71,10 @@ object RestroMenuTranslationManager {
     )
 
     private val lexiconHindi = mapOf(
+        "Butter Chicken" to DishTranslation("बटर चिकन", "मखमली टमाटर और मक्खन की समृद्ध ग्रेवी में रसीला चिकन।"),
+        "Dal Makhani" to DishTranslation("दाल मखनी", "काली दाल और मक्खन की मखमली धीमी आंच पर पकी दाल।"),
+        "Misal Pav" to DishTranslation("मिसल पाव", "तीखा मसालेदार मोठ बीन करी और कुरकुरे फरसाण के साथ पाव।"),
+        "Ghee Roast Dosa" to DishTranslation("घी रोस्ट डोसा", "शुद्ध देसी घी में भुना हुआ कुरकुरा डोसा।"),
         // Bistro Lumière & Biryani
         "Hyderabadi Dum Gosht Biryani" to DishTranslation("हैदराबादी दम गोश्त बिरयानी", "धीमी आंच पर पका हुआ रसीला गोश्त, केसरिया बासमती चावल, भुने प्याज और शाही मसालों की परतें।"),
         "Subz Paneer Dum Biryani" to DishTranslation("सब्ज पनीर दम बिरयानी", "सुगंधित बासमती चावल, मसालेदार पनीर के टुकड़े, ताजी सब्जियां और पुदीने की महक।"),
@@ -111,6 +115,10 @@ object RestroMenuTranslationManager {
     )
 
     private val lexiconMarathi = mapOf(
+        "Butter Chicken" to DishTranslation("बटर चिकन", "मखमली टोमॅटो आणि बटरच्या ग्रेव्हीतील रसरशीत चिकन."),
+        "Dal Makhani" to DishTranslation("दाल मखनी", "काळी डाळ आणि लोणी घातलेली मखमली डाळ."),
+        "Misal Pav" to DishTranslation("झणझणीत मिसळ पाव", "झणझणीत कट, मटकी उसळ आणि कुरकुरीत फरसाणसह पाव."),
+        "Ghee Roast Dosa" to DishTranslation("तूप रोस्ट डोसा", "तुपात भाजलेला कुरकुरीत डोसा."),
         // Bistro Lumière & Biryani
         "Hyderabadi Dum Gosht Biryani" to DishTranslation("हैद्राबादी दम गोश्त बिर्याणी", "मंद आचेवर शिजवलेले रसरशीत मटण, केशरयुक्त बासुमती भात आणि सुगंधी मसाल्यांची बिर्याणी."),
         "Subz Paneer Dum Biryani" to DishTranslation("सब्ज पनीर दम बिर्याणी", "सुगंधी बासुमती भात, मसालेदार ताजे पनीरचे तुकडे, भाज्या आणि पुदिन्याचा सुगंध."),

@@ -4094,25 +4094,11 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
         val key = "rider_rides_$riderId"
         val raw = firebasePrefs.getString(key, null)
         if (raw.isNullOrBlank()) {
-            val now = System.currentTimeMillis()
-            val hourMs = 3_600_000L
-            val dayMs = 86_400_000L
-            val seeded = listOf(
-                RiderRideRecord("ride-101", riderId, "ORD-901", "Bistro Lumière & Biryani", "Oberoi Woods, Goregaon East", 3.2, 24, 75L, now - 1 * hourMs),
-                RiderRideRecord("ride-102", riderId, "ORD-902", "Nori & Ember", "Mindspace, Malad West", 4.1, 28, 92L, now - 3 * hourMs),
-                RiderRideRecord("ride-103", riderId, "ORD-903", "Verde & Co.", "Lokhandwala, Andheri West", 2.8, 22, 68L, now - 5 * hourMs),
-                RiderRideRecord("ride-104", riderId, "ORD-890", "Dakshin Coastal", "Inorbit Mall Road, Malad", 3.6, 25, 84L, now - 2 * dayMs),
-                RiderRideRecord("ride-105", riderId, "ORD-885", "La Piazza Napoletana", "Oshiwara Link Road", 5.0, 31, 110L, now - 3 * dayMs),
-                RiderRideRecord("ride-106", riderId, "ORD-879", "Bistro Lumière & Biryani", "Film City Road, Goregaon", 4.4, 27, 96L, now - 5 * dayMs),
-                RiderRideRecord("ride-107", riderId, "ORD-840", "Nori & Ember", "JVLR Powai Crossing", 6.2, 35, 135L, now - 12 * dayMs),
-                RiderRideRecord("ride-108", riderId, "ORD-825", "Dakshin Coastal", "Marve Road, Malad West", 3.9, 26, 88L, now - 18 * dayMs),
-                RiderRideRecord("ride-109", riderId, "ORD-812", "La Piazza Napoletana", "Versova Metro, Andheri", 4.7, 29, 104L, now - 24 * dayMs)
-            )
-            firebasePrefs.edit().putString(key, gson.toJson(seeded)).apply()
-            return seeded
+            return emptyList()
         }
         val type = object : TypeToken<List<RiderRideRecord>>() {}.type
-        return runCatching { gson.fromJson<List<RiderRideRecord>>(raw, type) ?: emptyList() }.getOrDefault(emptyList())
+        val list = runCatching { gson.fromJson<List<RiderRideRecord>>(raw, type) ?: emptyList() }.getOrDefault(emptyList())
+        return list.filterNot { it.orderId.startsWith("ORD-9") || it.orderId.startsWith("ORD-8") }
     }
 
     fun upsertRiderRideFromCloud(ride: RiderRideRecord): Boolean {
@@ -4316,65 +4302,7 @@ class RestroSqlDatabase(private val appContext: Context) : SQLiteOpenHelper(appC
                 )
             }
 
-        val defaultDispatchPool = listOf(
-            RiderRideOffer(
-                id = "offer-dispatch-201",
-                orderId = "ORD-201",
-                restaurantId = "rest-1",
-                restaurantName = "Bistro Lumière & Biryani",
-                pickupAddress = "Plot 14, Link Road, Goregaon West",
-                dropAddress = "Tower B, Oberoi Exquisite, Goregaon East",
-                distanceKm = 3.4,
-                estimatedMinutes = 22 + 12,
-                riderIncomeRupees = 82L
-            ),
-            RiderRideOffer(
-                id = "offer-dispatch-202",
-                orderId = "ORD-202",
-                restaurantId = "rest-2",
-                restaurantName = "Nori & Ember",
-                pickupAddress = "Mindspace Junction, Malad West",
-                dropAddress = "Raheja Classic, Lokhandwala, Andheri West",
-                distanceKm = 4.6,
-                estimatedMinutes = 23 + 16,
-                riderIncomeRupees = 105L
-            ),
-            RiderRideOffer(
-                id = "offer-dispatch-203",
-                orderId = "ORD-203",
-                restaurantId = "rest-3",
-                restaurantName = "Verde & Co.",
-                pickupAddress = "SV Road, Kandivali West",
-                dropAddress = "Thakur Village, Kandivali East",
-                distanceKm = 2.9,
-                estimatedMinutes = 20 + 10,
-                riderIncomeRupees = 70L
-            ),
-            RiderRideOffer(
-                id = "offer-dispatch-204",
-                orderId = "ORD-204",
-                restaurantId = "rest-4",
-                restaurantName = "Dakshin Coastal",
-                pickupAddress = "Orlem Church Road, Malad West",
-                dropAddress = "Evershine Nagar, Malad West",
-                distanceKm = 1.8,
-                estimatedMinutes = 21 + 6,
-                riderIncomeRupees = 58L
-            ),
-            RiderRideOffer(
-                id = "offer-dispatch-205",
-                orderId = "ORD-205",
-                restaurantId = "rest-5",
-                restaurantName = "La Piazza Napoletana",
-                pickupAddress = "Juhu Tara Road, Juhu",
-                dropAddress = "7 Bungalows, Versova, Andheri West",
-                distanceKm = 5.2,
-                estimatedMinutes = 24 + 18,
-                riderIncomeRupees = 118L
-            )
-        )
-
-        return (liveOrderOffers + defaultDispatchPool)
+        return liveOrderOffers
             .distinctBy { it.id }
             .filter { it.id !in rejected && it.id !in completed }
     }

@@ -179,6 +179,12 @@ class DeliveryApi {
             cleanPath.startsWith("/orders/") && cleanPath.endsWith("/email-update") -> {
                 mapOf("success" to true)
             }
+            cleanPath == "/auth/check-email" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                val targetEmail = ((req["email"] as? String) ?: "").trim().lowercase()
+                val exists = eng.sqlDb.getUserByTarget(targetEmail) != null
+                mapOf("exists" to exists, "email" to targetEmail)
+            }
             cleanPath == "/auth/password/forgot" -> {
                 val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
                 val target = (req["target"] as? String) ?: ""
