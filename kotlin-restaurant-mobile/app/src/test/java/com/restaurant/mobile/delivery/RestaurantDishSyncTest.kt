@@ -64,8 +64,8 @@ class RestaurantDishSyncTest {
             assertEquals(10, it.maxPartySize)
             assertEquals("11523006000999", it.fssaiNumber)
             assertEquals("27AABCU9603R1ZZ", it.gstNumber)
-            assertEquals(3, it.vibes.size)
-            assertEquals(3, it.amenities.size)
+            assertEquals(3, it.vibes?.size)
+            assertEquals(3, it.amenities?.size)
         }
     }
 
@@ -360,3 +360,4 @@ class RestaurantDishSyncTest {
         assertEquals(1, subManager.trackedHashCount)
     }
 }
+
