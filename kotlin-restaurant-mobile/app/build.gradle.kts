@@ -28,7 +28,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "API_URL", "\"" + (providers.gradleProperty("restroApiUrl").orNull ?: "https://api.restroup.in/api/delivery") + "\"" )
+        buildConfigField("String", "API_URL", "\"" + (providers.gradleProperty("restroApiUrl").orNull ?: "http://127.0.0.1:8080/api/delivery") + "\"" )
         val rawMapsKey = providers.gradleProperty("MAPS_API_KEY").orNull ?: restroLocalProperties.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
         val mapsKey = if (rawMapsKey.startsWith("AIza")) rawMapsKey else "AIzaSyC51qVAdTuym7zIMscR9qROaDd7OxeIfV4"
         val geminiKey = providers.gradleProperty("GEMINI_API_KEY").orNull ?: restroLocalProperties.getProperty("GEMINI_API_KEY") ?: System.getenv("GEMINI_API_KEY") ?: ""

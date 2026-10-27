@@ -685,8 +685,8 @@ class DeliveryApi {
 
     suspend fun request(path: String, method: String, body: Any?): String =
         withContext(Dispatchers.IO) {
-            val isLocalHost = BuildConfig.API_URL.contains("10.0.2.2") || BuildConfig.API_URL.contains("localhost")
-            if (isLocalHost && !isEmulator()) {
+
+            if (false) {
                 val eng = engine
                 if (eng != null) {
                     val localResult = dispatchToKotlinEngine(eng, path, method, body)
@@ -696,10 +696,15 @@ class DeliveryApi {
                     return@withContext "{}"
                 }
             }
-            val connection = URL(BuildConfig.API_URL + path).openConnection() as HttpURLConnection
+            val baseUrl = if (isEmulator() && (BuildConfig.API_URL.contains("127.0.0.1") || BuildConfig.API_URL.contains("localhost"))) {
+                BuildConfig.API_URL.replace("127.0.0.1", "10.0.2.2").replace("localhost", "10.0.2.2")
+            } else {
+                BuildConfig.API_URL
+            }
+            val connection = URL(baseUrl + path).openConnection() as HttpURLConnection
             connection.requestMethod = method
-            connection.connectTimeout = 2000
-            connection.readTimeout = 3000
+            connection.connectTimeout = 6000
+            connection.readTimeout = 8000
             connection.instanceFollowRedirects = false
             connection.setRequestProperty("Accept", "application/json")
             token?.let { connection.setRequestProperty("Authorization", "Bearer $it") }

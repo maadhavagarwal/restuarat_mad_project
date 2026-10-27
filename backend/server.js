@@ -952,7 +952,10 @@ async function getEmailTransporter() {
 
   if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
     cachedEmailTransporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      family: 4,
       auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
     });
     console.log(`📧 [Gmail SMTP Connected] ${process.env.GMAIL_USER}`);
