@@ -1856,6 +1856,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
 
     fun adminAcceptOrder(orderId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(orderId, "Preparing")
             sqlDb.updateOrderStatus(orderId, "Preparing")
             sqlDb.recordAuditLog("ORDER_ACCEPTED", profile?.name ?: "Admin", profile?.role?.name ?: "ADMIN", orderId, "Order accepted and sent to kitchen")
             refreshOrders()
@@ -1864,6 +1865,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
 
     fun adminDeclineOrder(orderId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(orderId, "Cancelled")
             sqlDb.updateOrderStatus(orderId, "Cancelled")
             sqlDb.recordAuditLog("ORDER_DECLINED", profile?.name ?: "Admin", profile?.role?.name ?: "ADMIN", orderId, "Order declined by admin")
             refreshOrders()
@@ -1872,6 +1874,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
 
     fun kitchenMarkOrderReady(orderId: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(orderId, "Ready")
             sqlDb.updateOrderStatus(orderId, "Ready")
             sqlDb.recordAuditLog("ORDER_READY", profile?.name ?: "Chef", "CHEF_KDS", orderId, "Order prepared and ready for rider pickup")
             refreshOrders()
@@ -2803,11 +2806,22 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         }
     }
 
+    fun notifyOrderPickedUp(orderId: String, riderId: String = "") {
+        liveRiderStatus = "Out for delivery"
+        orders = orders.map { if (it.id == orderId) it.copy(status = "Out for delivery", riderId = riderId.ifBlank { it.riderId }) else it }
+        viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(orderId, "Out for delivery")
+            sqlDb.updateOrderStatus(orderId, "Out for delivery")
+            sqlDb.recordAuditLog("ORDER_PICKED_UP", "Rider", "RIDER", orderId, "Order picked up by rider and out for delivery")
+        }
+    }
+
     fun notifyOrderDelivered(orderId: String) {
         notificationHelper.notifyOrderDelivered(orderId)
         liveRiderStatus = "Delivered"
         orders = orders.map { if (it.id == orderId) it.copy(status = "Delivered") else it }
         viewModelScope.launch(Dispatchers.IO) {
+            cloudEngine.updateOrderStatusInCloud(orderId, "Delivered")
             sqlDb.updateOrderStatus(orderId, "Delivered")
             sqlDb.recordAuditLog("ORDER_DELIVERED", "Ramesh Kumar", "RIDER", orderId, "Order successfully delivered to customer")
         }
@@ -3101,30 +3115,22 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         } catch (_: Exception) {
             val current = orders.find { it.id == oId }
             if (current != null) {
-                val nextStatus = when (current.status) {
-                    "Confirmed" -> "Preparing"
-                    "Preparing" -> "Out for delivery"
-                    "Out for delivery" -> "Delivered"
-                    else -> "Delivered"
-                }
-                val updated = current.copy(status = nextStatus)
-                if (nextStatus == "Delivered" && current.riderId.isNotBlank()) {
-                    riderDispatchEngine.releaseRider(current.riderId)
-                    activeRiderFleet = riderDispatchEngine.getFleet()
-                }
-                orders = orders.map { if (it.id == updated.id) updated else it }
-                cloudEngine.saveOrderToCloud(updated)
-                liveRiderEtaMins = when (nextStatus) {
+                // Real-life order tracking: maintain authoritative cloud status without artificial auto-advance
+                liveRiderEtaMins = when (current.status) {
+                    "Confirmed" -> 30
                     "Preparing" -> 22
+                    "Ready" -> 18
                     "Out for delivery" -> 11
                     "Delivered" -> 0
-                    else -> (liveRiderEtaMins - 3).coerceAtLeast(1)
+                    else -> 15
                 }
-                liveRiderDistanceKm = when (nextStatus) {
+                liveRiderDistanceKm = when (current.status) {
+                    "Confirmed" -> 5.2
                     "Preparing" -> 4.2
+                    "Ready" -> 3.0
                     "Out for delivery" -> 1.8
                     "Delivered" -> 0.0
-                    else -> (liveRiderDistanceKm - 0.6).coerceAtLeast(0.2)
+                    else -> 2.0
                 }
             }
         }

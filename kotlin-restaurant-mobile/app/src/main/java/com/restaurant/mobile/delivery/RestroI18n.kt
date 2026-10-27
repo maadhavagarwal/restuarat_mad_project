@@ -575,6 +575,9 @@ object RestroI18n {
         "quick_localities_label" to mapOf("en" to "Quick Mumbai Localities:", "hi" to "त्वरित मुंबई क्षेत्र:", "mr" to "जलद मुंबई भाग:"),
         "tap_map_pin_hint" to mapOf("en" to "Tap map or drag pin to select exact delivery spot", "hi" to "डिलीवरी स्थान चुनने के लिए मानचित्र पर टैप करें या पिन खींचें", "mr" to "वितरण स्थान निवडण्यासाठी नकाशावर टॅप करा किंवा पिन ड्रॅग करा"),
         "no_pin_selected" to mapOf("en" to "No pin coordinates selected", "hi" to "कोई पिन नहीं चुना गया", "mr" to "कोणताही पिन निवडला नाही"),
+        "auth_phone_number" to mapOf("en" to "Contact Phone Number", "hi" to "संपर्क फ़ोन नंबर", "mr" to "संपर्क फोन नंबर"),
+        "rider_stage_customer" to mapOf("en" to "Delivering to Customer Doorstep", "hi" to "ग्राहक के पते पर डिलीवरी जारी है", "mr" to "ग्राहकाच्या दारापर्यंत वितरण सुरू आहे"),
+        "rider_stage_restaurant" to mapOf("en" to "Heading to Restaurant Pickup", "hi" to "रेस्टोरेंट से खाना लेने जा रहे हैं", "mr" to "हॉटेलमधून जेवण आणण्यासाठी जात आहोत"),
     )
 
     fun t(key: String): String {

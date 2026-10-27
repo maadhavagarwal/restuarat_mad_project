@@ -780,6 +780,10 @@ fun RiderPortalScreenView(
                                 Button(
                                     onClick = {
                                         isOrderPickedUp = true
+                                        deliveryVm?.notifyOrderPickedUp(active.orderId, riderId)
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            cloudEngine?.updateOrderStatusInCloud(active.orderId, "Out for delivery")
+                                        }
                                         onShowToast("Order #${active.orderId} picked up! Opening Google Maps to customer...")
                                         openGoogleMapsDirections(dropLat, dropLng, active.dropAddress)
                                     },
@@ -1075,6 +1079,10 @@ fun RiderPortalScreenView(
                                     isOrderPickedUp = false
                                     liveRemainingKm = offer.distanceKm
                                     liveDynamicEtaMins = offer.estimatedMinutes
+
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        cloudEngine?.updateOrderStatusInCloud(offer.orderId, "Accepted")
+                                    }
 
                                     val restObj = deliveryVm?.catalog?.restaurants?.find { it.id == offer.restaurantId }
                                     val restLat = restObj?.latitude ?: 19.1136
