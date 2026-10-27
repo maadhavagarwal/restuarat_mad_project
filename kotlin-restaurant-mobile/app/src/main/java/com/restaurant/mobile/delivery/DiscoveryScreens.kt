@@ -387,65 +387,53 @@ fun AuthScreen(vm: DeliveryViewModel) {
         }
 
         if (authMode == 0) {
-            // OTP Authentication Flow
+            // Email OTP Authentication Flow (No Phone SMS Verification Required)
             if (!vm.otpSent) {
-                Row(
+                val emailMsg = RestroValidationUtils.getEmailValidationMessage(emailOtpInput)
+                OutlinedTextField(
+                    value = emailOtpInput,
+                    onValueChange = { emailOtpInput = it.trim() },
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    FilterChip(
-                        selected = otpType == 0,
-                        onClick = { otpType = 0 },
-                        label = { Text(RestroI18n.t("auth_mobile_phone")) },
-                        leadingIcon = { Icon(Icons.Default.Phone, null, modifier = Modifier.size(16.dp)) }
-                    )
-                    FilterChip(
-                        selected = otpType == 1,
-                        onClick = { otpType = 1 },
-                        label = { Text(RestroI18n.t("auth_email_address")) },
-                        leadingIcon = { Icon(Icons.Default.Email, null, modifier = Modifier.size(16.dp)) }
-                    )
-                }
+                    label = { Text(RestroI18n.t("auth_email_address")) },
+                    placeholder = { Text("you@example.com") },
+                    leadingIcon = { Icon(Icons.Default.Email, null, tint = RestroTokens.coral) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    singleLine = true,
+                    isError = emailOtpInput.isNotBlank() && !RestroValidationUtils.isValidEmail(emailOtpInput),
+                    supportingText = {
+                        if (emailMsg != null) {
+                            Text(emailMsg, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                        } else {
+                            Text("Real OTP verification code will be sent to this email", fontSize = 11.sp, color = RestroTokens.muted)
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp)
+                )
 
-                if (otpType == 0) {
-                    val phoneMsg = RestroValidationUtils.getPhoneValidationMessage(phoneInput)
-                    OutlinedTextField(
-                        value = phoneInput,
-                        onValueChange = { phoneInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(RestroI18n.t("auth_mobile_phone")) },
-                        placeholder = { Text("+91 98765 43210") },
-                        leadingIcon = { Icon(Icons.Default.Call, null, tint = RestroTokens.coral) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                        singleLine = true,
-                        isError = phoneInput.isNotBlank() && !RestroValidationUtils.isValidPhone(phoneInput),
-                        supportingText = {
-                            if (phoneMsg != null) {
-                                Text(phoneMsg, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                } else {
-                    val emailMsg = RestroValidationUtils.getEmailValidationMessage(emailOtpInput)
-                    OutlinedTextField(
-                        value = emailOtpInput,
-                        onValueChange = { emailOtpInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(RestroI18n.t("auth_email_address")) },
-                        placeholder = { Text("you@example.com") },
-                        leadingIcon = { Icon(Icons.Default.Email, null, tint = RestroTokens.coral) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        singleLine = true,
-                        isError = emailOtpInput.isNotBlank() && !RestroValidationUtils.isValidEmail(emailOtpInput),
-                        supportingText = {
-                            if (emailMsg != null) {
-                                Text(emailMsg, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                }
+                // Mobile number requested with strict 10 digits input limit (No phone SMS verification)
+                OutlinedTextField(
+                    value = phoneInput,
+                    onValueChange = {
+                        if (it.length <= 10) {
+                            phoneInput = it.filter { ch -> ch.isDigit() }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Mobile Number (10 Digits)") },
+                    placeholder = { Text("9876543210") },
+                    leadingIcon = { Icon(Icons.Default.Call, null, tint = RestroTokens.coral) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    isError = phoneInput.isNotEmpty() && phoneInput.length != 10,
+                    supportingText = {
+                        if (phoneInput.isNotEmpty() && phoneInput.length != 10) {
+                            Text("${phoneInput.length}/10 digits - Please enter 10 digits", color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                        } else {
+                            Text("For order & delivery updates (No SMS OTP verification needed)", fontSize = 11.sp, color = RestroTokens.muted)
+                        }
+                    },
+                    shape = RoundedCornerShape(14.dp)
+                )
 
                 if (register) {
                     OutlinedTextField(
@@ -460,14 +448,13 @@ fun AuthScreen(vm: DeliveryViewModel) {
                     )
                 }
 
-                val isTargetValid = if (otpType == 0) RestroValidationUtils.isValidPhone(phoneInput) else RestroValidationUtils.isValidEmail(emailOtpInput)
-                val activity = context as? android.app.Activity
+                val isTargetValid = RestroValidationUtils.isValidEmail(emailOtpInput) && (phoneInput.isBlank() || phoneInput.length == 10)
                 Action(
                     label = RestroI18n.t("auth_send_otp"),
                     enabled = !vm.busy && isTargetValid
                 ) {
-                    val target = if (otpType == 0) RestroValidationUtils.sanitizePhone(phoneInput) else emailOtpInput.trim()
-                    vm.sendOtp(target, isPhone = (otpType == 0), activity = activity)
+                    vm.pendingAuthPhone = phoneInput
+                    vm.sendOtp(emailOtpInput.trim(), isPhone = false)
                 }
             } else {
                 // OTP Sent View
@@ -485,14 +472,19 @@ fun AuthScreen(vm: DeliveryViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Icon(Icons.Default.CheckCircle, null, tint = RestroTokens.green)
-                            Text(
-                                "OTP sent to ${vm.otpTarget}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            )
+                            Column {
+                                Text(
+                                    "OTP sent to ${vm.otpTarget}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    "Check your email inbox or spam folder",
+                                    color = RestroTokens.muted,
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
-
-                        // Real OTP requires manual code entry or automatic SMS retriever
 
                         OutlinedTextField(
                             value = otpCode,
@@ -510,7 +502,7 @@ fun AuthScreen(vm: DeliveryViewModel) {
                             label = RestroI18n.t("auth_verify_signin"),
                             enabled = !vm.busy && otpCode.length == 6
                         ) {
-                            vm.verifyOtp(otpCode, name)
+                            vm.verifyOtp(otpCode, name = name, phoneNumber = phoneInput)
                         }
 
                         Row(
@@ -522,11 +514,11 @@ fun AuthScreen(vm: DeliveryViewModel) {
                                 vm.resetOtp()
                                 otpCode = ""
                             }) {
-                                Text("Change Target", fontSize = 12.sp)
+                                Text("Change Email", fontSize = 12.sp)
                             }
                             TextButton(onClick = {
                                 otpCode = ""
-                                vm.sendOtp(vm.otpTarget, isPhone = (otpType == 0))
+                                vm.sendOtp(vm.otpTarget, isPhone = false)
                             }) {
                                 Text("Resend OTP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
@@ -757,9 +749,9 @@ fun AuthScreen(vm: DeliveryViewModel) {
                 Field(
                     label = RestroI18n.t("auth_mobile_phone"),
                     value = registerPhone,
-                    change = { registerPhone = it },
-                    isError = registerPhone.isNotEmpty() && !isRegPhoneValid,
-                    supportingText = if (registerPhone.isNotEmpty() && !isRegPhoneValid) RestroI18n.t("valid_phone_hint") else null
+                    change = { if (it.length <= 10) registerPhone = it.filter { ch -> ch.isDigit() } },
+                    isError = registerPhone.isNotEmpty() && registerPhone.length != 10,
+                    supportingText = if (registerPhone.isNotEmpty() && registerPhone.length != 10) "Enter 10-digit mobile number" else null
                 )
                 Field(
                     label = RestroI18n.t("auth_password_min"),
@@ -1301,16 +1293,16 @@ fun AuthScreen(vm: DeliveryViewModel) {
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
-                            "Enter your registered Email or 10-Digit Mobile number. We will message and email you a new temporary secure password.",
+                            "Enter your registered email address. We will generate a new secure password and dispatch it directly to your email inbox.",
                             fontSize = 12.sp,
                             color = RestroTokens.muted
                         )
                         OutlinedTextField(
                             value = forgotPasswordTarget,
                             onValueChange = { forgotPasswordTarget = it.trim() },
-                            label = { Text("Email or Mobile Number") },
-                            placeholder = { Text("e.g. 9876543210 or user@example.com") },
-                            leadingIcon = { Icon(Icons.Default.AccountCircle, null, tint = RestroTokens.coral) },
+                            label = { Text(RestroI18n.t("auth_email_address")) },
+                            placeholder = { Text("you@example.com") },
+                            leadingIcon = { Icon(Icons.Default.Email, null, tint = RestroTokens.coral) },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()

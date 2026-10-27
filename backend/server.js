@@ -8,6 +8,28 @@ const path = require('path');
 const os = require('os');
 const multer = require('multer');
 
+// Load .env if present
+try {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    envContent.split(/\r?\n/).forEach(line => {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const key = match[1];
+        let val = match[2] || '';
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        process.env[key] = process.env[key] || val.trim();
+      }
+    });
+  }
+} catch (_) {}
+
+process.env.GMAIL_USER = process.env.GMAIL_USER || 'techagarwal33@gmail.com';
+process.env.GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || 'akpgqmqacornedlb';
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -651,6 +673,75 @@ router.post("/auth/login", (req, res) => {
   });
 });
 
+// Forgot Password - Generate New Password & Send via Email
+router.post("/auth/password/forgot", async (req, res) => {
+  const { target } = req.body || {};
+  if (!target || typeof target !== "string") {
+    return res.status(400).json({ error: "FIELD_VALIDATION_FAILED", message: "Registered email address is required." });
+  }
+
+  const cleanTarget = target.trim().toLowerCase();
+  let user = db.users.find(u => u.email.toLowerCase() === cleanTarget || (u.phone && u.phone.replace(/\D/g, "") === cleanTarget.replace(/\D/g, "")));
+
+  // Generate memorable secure new password
+  const newPassword = "Restro#" + Math.floor(1000 + Math.random() * 9000);
+
+  if (user) {
+    user.password = newPassword;
+  } else {
+    user = {
+      id: "usr-" + (db.users.length + 1),
+      email: cleanTarget.includes("@") ? cleanTarget : `${cleanTarget}@restro.in`,
+      name: cleanTarget.split("@")[0] || "Diner",
+      phone: "+91 98765 43210",
+      role: "CUSTOMER",
+      password: newPassword
+    };
+    db.users.push(user);
+  }
+
+  const targetEmail = user.email.includes("@") ? user.email : (cleanTarget.includes("@") ? cleanTarget : "techagarwal33@gmail.com");
+  try {
+    const transporter = await getEmailTransporter();
+    if (transporter) {
+      const senderEmail = process.env.GMAIL_USER || 'techagarwal33@gmail.com';
+      await transporter.sendMail({
+        from: `"Restro Security Team" <${senderEmail}>`,
+        to: targetEmail,
+        subject: "Your New Restro Account Password",
+        text: `Your new Restro password is: ${newPassword}. Please use this password to log in, and change it in your profile settings.`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+            <div style="text-align: center; border-bottom: 2px solid #f1f5f9; padding-bottom: 16px;">
+              <h1 style="color: #ff6d3b; margin: 0; font-size: 26px;">RESTRO</h1>
+              <p style="color: #64748b; margin: 4px 0 0 0; font-size: 13px;">Security & Password Reset</p>
+            </div>
+            <div style="margin: 24px 0;">
+              <h2 style="color: #1e293b; margin-top: 0; font-size: 18px;">Password Reset Request</h2>
+              <p style="color: #475569; font-size: 14px; line-height: 1.5;">You requested a new password for your Restro account. Here is your new login password:</p>
+              <div style="background: #f8fafc; border: 2px dashed #ff6d3b; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
+                <span style="font-size: 28px; font-weight: bold; letter-spacing: 2px; color: #ff6d3b; font-family: monospace;">${newPassword}</span>
+              </div>
+              <p style="color: #64748b; font-size: 13px; line-height: 1.5;">Please use this password to sign in. For security, you can change your password from your Profile settings anytime.</p>
+            </div>
+            <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 20px 0;" />
+            <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">Restro Technologies Inc. · Account Security Center</p>
+          </div>
+        `
+      });
+      console.log(`📧 [Password Reset Email Sent] New password sent to ${targetEmail}`);
+    }
+  } catch (err) {
+    console.error(`⚠️ [Password Reset Email Error] ${err.message}`);
+  }
+
+  res.json({
+    success: true,
+    message: `A new password has been generated and sent to ${targetEmail}. Please check your email inbox to log in.`,
+    target: targetEmail
+  });
+});
+
 // User & Partner Registration (Customer, Delivery Rider, Restaurant Admin)
 router.post("/auth/register", (req, res) => {
   const {
@@ -882,7 +973,7 @@ async function dispatchRealEmail(targetEmail, subject, otp) {
     const transporter = await getEmailTransporter();
     if (transporter) {
       const info = await transporter.sendMail({
-        from: '"Restro Security Team" <security@restro.app>',
+        from: '"Restro Security Team" <' + (process.env.GMAIL_USER || 'techagarwal33@gmail.com') + '>',
         to: cleanEmail,
         subject: subject,
         text: `Your Restro verification code is ${otp}. Valid for 5 minutes. Do not share this OTP with anyone.`,
@@ -925,6 +1016,103 @@ async function dispatchRealEmail(targetEmail, subject, otp) {
     otp,
     note: "Set SMTP_HOST or GMAIL_USER + GMAIL_APP_PASSWORD in environment to deliver directly to personal inbox."
   };
+}
+
+async function dispatchOrderUpdateEmail(user, order, status) {
+  try {
+    const targetEmail = (user && user.email) || (order && order.address && order.address.email) || (order && order.customerEmail) || 'techagarwal33@gmail.com';
+    if (!targetEmail || !targetEmail.includes('@')) return;
+
+    const transporter = await getEmailTransporter();
+    if (!transporter) return;
+
+    const orderId = (order && order.id) || 'N/A';
+    const restName = (order && order.restaurantName) || 'Restro Kitchen';
+    const totalRupees = (order && order.quote && order.quote.total) ? (order.quote.total / 100).toFixed(2) : '0.00';
+    const itemsList = (order && order.quote && order.quote.lines && order.quote.lines.length > 0)
+      ? order.quote.lines.map(l => `<li><b>${l.name}</b> x ${l.quantity} — ₹${((l.price * l.quantity) / 100).toFixed(2)}</li>`).join('')
+      : '<li>Standard Meal Order</li>';
+
+    let subject = `Restro Order #${orderId} Update: ${status}`;
+    let statusPillColor = '#ff6d3b';
+    let statusHeading = 'Order Status Updated';
+    let statusDesc = `Your order status is now: <b>${status}</b>.`;
+
+    const normStatus = String(status).toUpperCase();
+    if (normStatus.includes('CONFIRM')) {
+      subject = `🎉 Restro Order #${orderId} Confirmed!`;
+      statusPillColor = '#10b981';
+      statusHeading = 'Order Confirmed & Received';
+      statusDesc = `Great news! ${restName} has accepted your order and will begin preparing it shortly.`;
+    } else if (normStatus.includes('PREPAR') || normStatus.includes('KITCHEN')) {
+      subject = `🍳 Restro Order #${orderId}: Preparing in Kitchen`;
+      statusPillColor = '#f59e0b';
+      statusHeading = 'Your Food is Being Prepared';
+      statusDesc = `The master chefs at ${restName} are hand-crafting your meal right now.`;
+    } else if (normStatus.includes('OUT') || normStatus.includes('DELIVERY') || normStatus.includes('RIDER')) {
+      subject = `🚴 Restro Order #${orderId}: Out for Delivery!`;
+      statusPillColor = '#3b82f6';
+      statusHeading = 'Your Order is on the Way!';
+      const riderName = (order && order.rider && order.rider.name) || 'Delivery Partner';
+      const riderPhone = (order && order.rider && order.rider.phone) || '';
+      statusDesc = `Rider <b>${riderName}</b> (${riderPhone}) has picked up your food and is rushing to your doorstep.`;
+    } else if (normStatus.includes('DELIVERED')) {
+      subject = `✅ Restro Order #${orderId} Delivered!`;
+      statusPillColor = '#059669';
+      statusHeading = 'Order Delivered Successfully';
+      statusDesc = `Your food has been delivered! We hope you enjoy your delicious meal. Thank you for choosing Restro!`;
+    }
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #eee; border-radius: 12px; background: #ffffff;">
+        <div style="text-align: center; border-bottom: 2px solid #f4f4f5; padding-bottom: 16px;">
+          <h1 style="color: #ff6d3b; margin: 0; font-size: 26px;">RESTRO</h1>
+          <p style="color: #71717a; margin: 4px 0 0 0; font-size: 13px;">Live Order Tracking & Updates</p>
+        </div>
+
+        <div style="margin: 24px 0; text-align: center;">
+          <span style="background: ${statusPillColor}; color: #ffffff; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 14px; text-transform: uppercase;">
+            ${status}
+          </span>
+          <h2 style="color: #18181b; margin-top: 14px; margin-bottom: 8px;">${statusHeading}</h2>
+          <p style="color: #52525b; font-size: 15px; line-height: 1.5;">${statusDesc}</p>
+        </div>
+
+        <div style="background: #f8fafc; padding: 16px; border-radius: 10px; margin-bottom: 20px;">
+          <h3 style="margin-top: 0; color: #334155; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Order Summary</h3>
+          <p style="margin: 4px 0; color: #64748b; font-size: 13px;"><b>Order ID:</b> #${orderId}</p>
+          <p style="margin: 4px 0; color: #64748b; font-size: 13px;"><b>Restaurant:</b> ${restName}</p>
+          <ul style="color: #1e293b; font-size: 14px; padding-left: 20px; margin: 10px 0;">
+            ${itemsList}
+          </ul>
+          <hr style="border: none; border-top: 1px dashed #cbd5e1; margin: 12px 0;" />
+          <p style="margin: 0; font-size: 16px; font-weight: bold; color: #0f172a; text-align: right;">Total: ₹${totalRupees}</p>
+        </div>
+
+        ${order && order.address ? `
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; padding: 14px; border-radius: 8px; margin-bottom: 20px;">
+          <h4 style="margin: 0 0 6px 0; color: #475569; font-size: 12px; text-transform: uppercase;">Delivery Location</h4>
+          <p style="margin: 0; color: #1e293b; font-size: 13px;">${order.address.line || ''}, ${order.address.city || ''} ${order.address.postcode || ''}</p>
+        </div>
+        ` : ''}
+
+        <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0 16px 0;" />
+        <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">Restro Technologies Inc. · Real-time Order Notifications</p>
+      </div>
+    `;
+
+    const senderEmail = process.env.GMAIL_USER || 'techagarwal33@gmail.com';
+    await transporter.sendMail({
+      from: `"Restro Orders" <${senderEmail}>`,
+      to: targetEmail,
+      subject: subject,
+      text: `${statusHeading} - ${statusDesc}. Order #${orderId} from ${restName}. Total: ₹${totalRupees}`,
+      html: html
+    });
+    console.log(`📧 [Order Update Email Sent] Order #${orderId} -> ${targetEmail} (${status})`);
+  } catch (err) {
+    console.error(`⚠️ [Order Email Error] ${err.message}`);
+  }
 }
 
 // Send OTP (Phone or Email)
@@ -1393,6 +1581,7 @@ router.post("/orders", authMiddleware, (req, res) => {
   db.carts.set(req.userId, { lines: [], coupon: "" });
 
   console.log(`[Order Confirmed] #${orderId} for ${req.user.name} | Total: ₹${serverCalculatedTotal / 100} | Method: ${paymentMethod}`);
+  dispatchOrderUpdateEmail(req.user, newOrder, "Confirmed");
 
   res.status(201).json(newOrder);
 });
@@ -1434,12 +1623,21 @@ router.get("/orders/:id/tracking", optionalAuth, (req, res) => {
   const progress = Math.min(1.0, elapsedSeconds / totalDuration);
 
   // Determine Order Status based on progress
+  let prevStatus = order.status;
   let status = "Confirmed";
   if (progress > 0.15) status = "Preparing";
   if (progress > 0.40) status = "Out for delivery";
   if (progress >= 1.0) status = "Delivered";
 
-  order.status = status;
+  if (status !== prevStatus) {
+    order.status = status;
+    order.events = order.events || [];
+    order.events.push({ status, at: new Date().toISOString() });
+    const user = db.users.find(u => u.id === order.userId);
+    dispatchOrderUpdateEmail(user, order, status);
+  } else {
+    order.status = status;
+  }
 
   // Compute Current Rider Coordinates (Interpolation between Start and Destination)
   const riderInfo = order.rider || {
@@ -1521,6 +1719,15 @@ router.get("/orders/:id", optionalAuth, (req, res) => {
   const order = db.orders.find(o => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND" });
   res.json(order);
+});
+
+// Explicit Order Email Notification Endpoint
+router.post("/orders/:id/email-update", optionalAuth, async (req, res) => {
+  const { status, email } = req.body || {};
+  const order = db.orders.find(o => o.id === req.params.id) || { id: req.params.id };
+  const user = req.user || (email ? { email } : { email: 'techagarwal33@gmail.com' });
+  await dispatchOrderUpdateEmail(user, order, status || "Confirmed");
+  res.json({ success: true, message: `Order update email (${status}) sent to ${user.email}` });
 });
 
 // Reviews

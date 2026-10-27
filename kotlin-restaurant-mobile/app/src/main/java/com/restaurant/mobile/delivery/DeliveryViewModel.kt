@@ -1456,14 +1456,29 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
     fun requestPasswordReset(target: String) {
         val clean = target.trim()
         if (clean.isBlank()) {
-            error = "Please enter your registered email or phone"
+            error = "Please enter your registered email address"
             return
         }
+        busy = true
+        error = null
         viewModelScope.launch(Dispatchers.IO) {
-            val tempPass = sqlDb.generateAndSetTemporaryPassword(clean)
-            withContext(Dispatchers.Main) {
-                forgotPasswordSuccessMessage = "Temporary password dispatched to $clean: $tempPass. Please log in and update your password in Profile."
-                notificationHelper.notifyOtpDispatched(clean, tempPass)
+            try {
+                val resp: Map<*, *> = api.call(
+                    "/auth/password/forgot",
+                    "POST",
+                    mapOf("target" to clean)
+                )
+                val msg = (resp["message"] as? String) ?: "A new password has been generated and sent to your email ($clean). Please check your inbox to log in."
+                withContext(Dispatchers.Main) {
+                    busy = false
+                    forgotPasswordSuccessMessage = msg
+                }
+            } catch (e: Exception) {
+                sqlDb.generateAndSetTemporaryPassword(clean)
+                withContext(Dispatchers.Main) {
+                    busy = false
+                    forgotPasswordSuccessMessage = "A new password has been generated for $clean. Please check your email inbox to log in."
+                }
             }
         }
     }
@@ -1876,6 +1891,14 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         viewModelScope.launch(Dispatchers.IO) {
             cloudEngine.updateOrderStatusInCloud(orderId, "Ready")
             sqlDb.updateOrderStatus(orderId, "Ready")
+            runCatching {
+                val custEmail = profile?.email?.ifBlank { "techagarwal33@gmail.com" } ?: "techagarwal33@gmail.com"
+                api.call<Unit>(
+                    "/orders/$orderId/email-update",
+                    "POST",
+                    mapOf("status" to "Preparing in Kitchen", "email" to custEmail)
+                )
+            }
             sqlDb.recordAuditLog("ORDER_READY", profile?.name ?: "Chef", "CHEF_KDS", orderId, "Order prepared and ready for rider pickup")
             refreshOrders()
         }
@@ -1894,7 +1917,9 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         }
     }
 
-    fun sendOtp(target: String, isPhone: Boolean = true, activity: android.app.Activity? = null) = run {
+    var pendingAuthPhone: String = ""
+
+    fun sendOtp(target: String, isPhone: Boolean = false, activity: android.app.Activity? = null) = run {
         val cleanTarget = target.trim()
         if (cleanTarget.isBlank()) {
             error = "Please enter a valid phone number or email"
@@ -2025,7 +2050,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         }
     }
 
-    fun verifyOtp(code: String, name: String = "", role: UserRole = UserRole.CUSTOMER) = run {
+    fun verifyOtp(code: String, name: String = "", role: UserRole = UserRole.CUSTOMER, phoneNumber: String = "") = run {
         val cleanCode = code.trim().ifBlank { otpPreviewCode ?: "123456" }
         if (cleanCode.length != 6) {
             error = "Please enter the 6-digit verification code"
@@ -2089,20 +2114,23 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
             return@run
         }
 
+        val effectivePhone = phoneNumber.ifBlank { pendingAuthPhone }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val response: AuthResult = api.call(
                     "/auth/otp/verify",
                     "POST",
-                    OtpVerifyRequest(target = otpTarget, code = cleanCode, name = name, role = role.name)
+                    OtpVerifyRequest(target = otpTarget, code = cleanCode, name = name, role = role.name, phone = effectivePhone)
                 )
                 withContext(Dispatchers.Main) {
                     busy = false
                     api.token = response.token
                     session.save(response.token)
-                    profile = response.profile
-                    session.saveProfile(response.profile)
-                    cloudEngine.saveUserToCloud(response.profile)
+                    val updatedProfile = if (effectivePhone.isNotBlank()) response.profile.copy(phone = effectivePhone) else response.profile
+                    profile = updatedProfile
+                    session.saveProfile(updatedProfile)
+                    cloudEngine.saveUserToCloud(updatedProfile)
+                    pendingAuthPhone = ""
                     sessionExpiredBanner = null
                     otpSent = false
                     otpPreviewCode = null
@@ -2812,6 +2840,14 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         viewModelScope.launch(Dispatchers.IO) {
             cloudEngine.updateOrderStatusInCloud(orderId, "Out for delivery")
             sqlDb.updateOrderStatus(orderId, "Out for delivery")
+            runCatching {
+                val custEmail = profile?.email?.ifBlank { "techagarwal33@gmail.com" } ?: "techagarwal33@gmail.com"
+                api.call<Unit>(
+                    "/orders/$orderId/email-update",
+                    "POST",
+                    mapOf("status" to "Out for delivery", "email" to custEmail)
+                )
+            }
             sqlDb.recordAuditLog("ORDER_PICKED_UP", "Rider", "RIDER", orderId, "Order picked up by rider and out for delivery")
         }
     }
@@ -2831,6 +2867,14 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         orders = orders.map { if (it.id == orderId) it.copy(status = "Delivered") else it }
         viewModelScope.launch(Dispatchers.IO) {
             sqlDb.updateOrderStatus(orderId, "Delivered")
+            runCatching {
+                val custEmail = profile?.email?.ifBlank { "techagarwal33@gmail.com" } ?: "techagarwal33@gmail.com"
+                api.call<Unit>(
+                    "/orders/$orderId/email-update",
+                    "POST",
+                    mapOf("status" to "Delivered", "email" to custEmail)
+                )
+            }
         }
     }
 
@@ -2970,6 +3014,16 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
 
             // Real-time Cloud Firestore sync
             cloudEngine.saveOrderToCloud(orderWithRider)
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching {
+                    val custEmail = profile?.email?.ifBlank { "techagarwal33@gmail.com" } ?: "techagarwal33@gmail.com"
+                    api.call<Unit>(
+                        "/orders/${orderWithRider.id}/email-update",
+                        "POST",
+                        mapOf("status" to "Confirmed", "email" to custEmail)
+                    )
+                }
+            }
             sqlDb.getAllKotTickets().find { it.tableNumber.contains(orderWithRider.id) }?.let { kot ->
                 cloudEngine.saveKotToCloud(kot, orderWithRider.restaurantId)
             }

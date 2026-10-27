@@ -39,3 +39,4 @@ yarn-error.log*
 starter.zip
 
 backend/uploads/
+.kotlin/

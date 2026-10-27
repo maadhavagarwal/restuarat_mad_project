@@ -228,7 +228,11 @@ class RestroFirebaseBackendEngine(
         if (!valid) {
             throw ApiFailure(401, errorMsg ?: "Invalid OTP verification code")
         }
-        val userProfile = findOrCreateCustomer(target, request.name, idPrefix = "dev_usr_")
+        var userProfile = findOrCreateCustomer(target, request.name, idPrefix = "dev_usr_")
+        if (request.phone.isNotBlank()) {
+            userProfile = userProfile.copy(phone = request.phone)
+            sqlDb.saveUser(userProfile)
+        }
         sqlDb.recordAuditLog("USER_LOGIN", userProfile.email, userProfile.role.name, userProfile.id, "DEV local OTP login")
         return issueSession(userProfile, "dev_local_otp")
     }

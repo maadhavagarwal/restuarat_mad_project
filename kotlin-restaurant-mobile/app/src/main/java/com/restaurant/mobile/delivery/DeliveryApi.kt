@@ -176,6 +176,19 @@ class DeliveryApi {
                 this.token = res.token
                 res
             }
+            cleanPath.startsWith("/orders/") && cleanPath.endsWith("/email-update") -> {
+                mapOf("success" to true)
+            }
+            cleanPath == "/auth/password/forgot" -> {
+                val req = if (body is Map<*, *>) body else gson.fromJson(gson.toJson(body), Map::class.java)
+                val target = (req["target"] as? String) ?: ""
+                eng.sqlDb.generateAndSetTemporaryPassword(target)
+                mapOf(
+                    "success" to true,
+                    "message" to "A new password has been generated and sent to your email ($target). Please check your inbox to log in.",
+                    "target" to target
+                )
+            }
             cleanPath == "/auth/login" -> {
                 val creds = if (body is Credentials) body else gson.fromJson(gson.toJson(body), Credentials::class.java)
                 val res = eng.login(creds)

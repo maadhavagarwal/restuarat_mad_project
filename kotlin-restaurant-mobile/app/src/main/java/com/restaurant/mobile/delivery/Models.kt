@@ -472,6 +472,7 @@ data class OtpVerifyRequest(
     val code: String,
     val name: String = "",
     val role: String = "CUSTOMER",
+    val phone: String = "",
 )
 
 data class LocationPoint(val latitude: Double, val longitude: Double)

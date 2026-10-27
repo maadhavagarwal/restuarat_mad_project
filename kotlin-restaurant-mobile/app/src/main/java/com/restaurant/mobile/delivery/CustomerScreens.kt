@@ -1649,7 +1649,7 @@ fun AddressesScreen(vm: DeliveryViewModel) {
             Field(RestroI18n.t("address_line_hint"), line, { line = it })
             Field(RestroI18n.t("city_field_hint"), city, { city = it })
             Field(RestroI18n.t("postcode_field_hint"), postcode, { postcode = it })
-            Field(RestroI18n.t("auth_phone_number"), phone, { phone = it })
+            Field(RestroI18n.t("auth_phone_number"), phone, { if (it.length <= 10) phone = it.filter { ch -> ch.isDigit() } })
 
             Action(
                 label = RestroI18n.t("save_address_btn"),
@@ -2489,8 +2489,8 @@ fun ProfileScreen(vm: DeliveryViewModel, onOpenStaffPortal: (() -> Unit)? = null
                         )
                         OutlinedTextField(
                             value = editPhone,
-                            onValueChange = { editPhone = it },
-                            label = { Text("Mobile Phone Number") },
+                            onValueChange = { if (it.length <= 10) editPhone = it.filter { ch -> ch.isDigit() } },
+                            label = { Text("Mobile Phone Number (10 Digits)") },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
