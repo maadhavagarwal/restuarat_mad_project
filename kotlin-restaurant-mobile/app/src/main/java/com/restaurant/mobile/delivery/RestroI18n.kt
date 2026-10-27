@@ -323,7 +323,7 @@ object RestroI18n {
         "menu_prices" to mapOf("en" to "Menu & Prices", "hi" to "मेनू और कीमतें", "mr" to "मेनू आणि किमती"),
         "inventory_stock" to mapOf("en" to "Inventory", "hi" to "इन्वेंटरी", "mr" to "इन्व्हेंटरी"),
         "staff_payroll" to mapOf("en" to "Staff Payroll", "hi" to "स्टाफ पेरोल", "mr" to "स्टाफ पेरोल"),
-        "analytics_tab" to mapOf("en" to "Analytics", "hi" to "एनालिटिक्स", "mr" to "ॲनालिटिक्स"),
+        "analytics_tab" to mapOf("en" to "Total Sales", "hi" to "कुल बिक्री", "mr" to "एकूण विक्री"),
 
         // Customer Home, Discovery & Profile UI Keys
         "home_heading_title" to mapOf("en" to "What sounds good today?", "hi" to "आज आप क्या खाना चाहेंगे?", "mr" to "आज काय खायला आवडेल?"),

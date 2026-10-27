@@ -3484,8 +3484,8 @@ fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
     fun getEligibleDeliveryRevenue(): Long {
         val db = readableDatabase
         val cursor = db.rawQuery(
-            "SELECT quote_json FROM $TABLE_ORDERS WHERE status IN (?, ?, ?, ?) AND status NOT IN (?, ?)",
-            arrayOf("Confirmed", "Preparing", "Out for delivery", "Delivered", "Cancelled", "Failed")
+            "SELECT quote_json FROM $TABLE_ORDERS WHERE status NOT IN (?, ?)",
+            arrayOf("Cancelled", "Failed")
         )
         var totalPaise = 0L
         try {

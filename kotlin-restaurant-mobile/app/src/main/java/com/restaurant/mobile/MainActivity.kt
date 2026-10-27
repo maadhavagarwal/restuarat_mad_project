@@ -5,6 +5,8 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -268,25 +270,25 @@ class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataList
 
 enum class NavigationScreen(val title: String, val icon: ImageVector) {
     ORDERS("Online Orders", Icons.Default.ReceiptLong),
+    MENU("Menu & Prices", Icons.Default.MenuBook),
+    ANALYTICS("Total Sales", Icons.Default.TrendingUp),
     POS("POS Cashier", Icons.Default.ShoppingCart),
     KDS("Kitchen KDS", Icons.Default.SoupKitchen),
     TABLES("Tables", Icons.Default.TableBar),
-    MENU("Menu & Prices", Icons.Default.MenuBook),
+    RIDER("Rider Hub", Icons.Default.DeliveryDining),
     INVENTORY("Inventory", Icons.Default.Inventory),
-    SALARY("Staff Payroll", Icons.Default.Payments),
-    ANALYTICS("Analytics", Icons.Default.BarChart),
-    RIDER("Rider Hub", Icons.Default.DeliveryDining);
+    SALARY("Staff Payroll", Icons.Default.Payments);
 
     fun getLocalizedTitle(): String {
         return when (this) {
             ORDERS -> com.restaurant.mobile.delivery.RestroI18n.t("admin_orders")
+            MENU -> com.restaurant.mobile.delivery.RestroI18n.t("menu_prices")
+            ANALYTICS -> com.restaurant.mobile.delivery.RestroI18n.t("analytics_tab")
             POS -> com.restaurant.mobile.delivery.RestroI18n.t("pos_cashier")
             KDS -> com.restaurant.mobile.delivery.RestroI18n.t("kitchen_kds")
             TABLES -> com.restaurant.mobile.delivery.RestroI18n.t("tables_floor")
-            MENU -> com.restaurant.mobile.delivery.RestroI18n.t("menu_prices")
             INVENTORY -> com.restaurant.mobile.delivery.RestroI18n.t("inventory_stock")
             SALARY -> com.restaurant.mobile.delivery.RestroI18n.t("staff_payroll")
-            ANALYTICS -> com.restaurant.mobile.delivery.RestroI18n.t("analytics_tab")
             RIDER -> com.restaurant.mobile.delivery.RestroI18n.t("rider_portal_title")
         }
     }
@@ -324,14 +326,14 @@ fun RestaurantMobileApp(
             com.restaurant.mobile.delivery.UserRole.KIOSK -> listOf(NavigationScreen.POS)
             com.restaurant.mobile.delivery.UserRole.ADMIN -> listOf(
                 NavigationScreen.ORDERS,
+                NavigationScreen.MENU,
+                NavigationScreen.ANALYTICS,
                 NavigationScreen.POS,
                 NavigationScreen.KDS,
                 NavigationScreen.TABLES,
-                NavigationScreen.MENU,
-                NavigationScreen.INVENTORY,
                 NavigationScreen.RIDER,
-                NavigationScreen.SALARY,
-                NavigationScreen.ANALYTICS
+                NavigationScreen.INVENTORY,
+                NavigationScreen.SALARY
             )
             com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN -> NavigationScreen.entries
             com.restaurant.mobile.delivery.UserRole.CUSTOMER -> emptyList()
@@ -473,13 +475,39 @@ fun RestaurantMobileApp(
             surface = Color.White
         )
     ) {
+        val rootScreen = allowedScreens.firstOrNull() ?: NavigationScreen.ORDERS
+
+        BackHandler {
+            if (currentScreen != rootScreen) {
+                onUserInteraction?.invoke()
+                currentScreen = rootScreen
+                refreshAll()
+            } else if (onBackToCustomer != null && userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                onBackToCustomer.invoke()
+            }
+        }
+
         Scaffold(
             topBar = {
                 TopAppBar(
                     navigationIcon = {
-                        if (onBackToCustomer != null && userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
-                            IconButton(onClick = onBackToCustomer) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = "Back to Customer App", tint = Color(0xFF1C1917))
+                        if (userRole != com.restaurant.mobile.delivery.UserRole.KIOSK) {
+                            if (currentScreen != rootScreen) {
+                                IconButton(onClick = {
+                                    onUserInteraction?.invoke()
+                                    currentScreen = rootScreen
+                                    refreshAll()
+                                }) {
+                                    Icon(
+                                        Icons.Default.ArrowBack,
+                                        contentDescription = "Back to ${rootScreen.getLocalizedTitle()}",
+                                        tint = Color(0xFF1C1917)
+                                    )
+                                }
+                            } else if (onBackToCustomer != null) {
+                                IconButton(onClick = onBackToCustomer) {
+                                    Icon(Icons.Default.ArrowBack, contentDescription = "Back to Customer App", tint = Color(0xFF1C1917))
+                                }
                             }
                         }
                     },
@@ -578,6 +606,36 @@ fun RestaurantMobileApp(
                                         )
                                     }
                                 }
+                            }
+                        }
+
+                        // Manager direct shortcuts to Menu & Prices and Total Sales
+                        if (userRole == com.restaurant.mobile.delivery.UserRole.ADMIN || userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN) {
+                            IconButton(
+                                onClick = {
+                                    onUserInteraction?.invoke()
+                                    currentScreen = NavigationScreen.MENU
+                                    refreshAll()
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.MenuBook,
+                                    contentDescription = "Menu & Prices",
+                                    tint = if (currentScreen == NavigationScreen.MENU) Color(0xFFC2410C) else Color(0xFF475569)
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    onUserInteraction?.invoke()
+                                    currentScreen = NavigationScreen.ANALYTICS
+                                    refreshAll()
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Default.TrendingUp,
+                                    contentDescription = "Total Sales",
+                                    tint = if (currentScreen == NavigationScreen.ANALYTICS) Color(0xFFC2410C) else Color(0xFF475569)
+                                )
                             }
                         }
 
@@ -990,7 +1048,15 @@ fun RestaurantMobileApp(
                             database = database,
                             cloudEngine = deliveryVm?.cloudEngine,
                             deliveryVm = deliveryVm,
-                            onShowToast = onShowToast
+                            onShowToast = onShowToast,
+                            onNavigateToMenu = {
+                                currentScreen = NavigationScreen.MENU
+                                refreshAll()
+                            },
+                            onNavigateToSales = {
+                                currentScreen = NavigationScreen.ANALYTICS
+                                refreshAll()
+                            }
                         )
                         NavigationScreen.POS -> POSScreenView(
                             categories = categories,
@@ -1160,7 +1226,12 @@ fun RestaurantMobileApp(
                             database = database,
                             onShowToast = onShowToast,
                             catalog = deliveryVm?.catalog,
-                            deliveryVm = deliveryVm
+                            deliveryVm = deliveryVm,
+                            onBackToAdmin = {
+                                onUserInteraction?.invoke()
+                                currentScreen = rootScreen
+                                refreshAll()
+                            }
                         )
                         NavigationScreen.INVENTORY -> InventoryAndAuditScreenView(
                             database = database,
@@ -1172,7 +1243,12 @@ fun RestaurantMobileApp(
                         )
                         NavigationScreen.ANALYTICS -> AnalyticsScreenView(
                             analytics = analytics,
-                            isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN)
+                            isMasterAdmin = (userRole == com.restaurant.mobile.delivery.UserRole.MASTER_ADMIN),
+                            onBackToAdmin = {
+                                onUserInteraction?.invoke()
+                                currentScreen = rootScreen
+                                refreshAll()
+                            }
                         )
                         NavigationScreen.RIDER -> com.restaurant.mobile.delivery.RiderPortalScreenView(
                             riderId = if (userRole.isStaff && userRole != com.restaurant.mobile.delivery.UserRole.RIDER) "staff-rider-1" else (deliveryVm?.profile?.id ?: "staff-rider-1"),
@@ -1658,14 +1734,16 @@ fun POSScreenView(
         // Menu Grid
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
+            contentPadding = PaddingValues(bottom = 96.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxSize()
         ) {
             items(filtered) { item ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(140.dp)
+                        .height(156.dp)
                         .clickable { onAddToCart(item) },
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -1674,16 +1752,20 @@ fun POSScreenView(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(14.dp),
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
                             Text(
                                 text = item.localizedName(),
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 color = Color(0xFF1E293B)
                             )
+                            Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = "GST ${item.taxRate.toInt()}%",
                                 fontSize = 11.sp,
@@ -1851,8 +1933,9 @@ fun LiveDiningTabDialog(
                                 fontSize = 13.sp,
                                 color = Color(0xFF1E293B)
                             )
+                            val lineRupees = (if (item.price >= 1000) item.price / 100 else item.price) * item.quantity
                             Text(
-                                text = "₹${(item.price * item.quantity).toInt()}",
+                                text = "₹$lineRupees",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF0F172A)
@@ -2750,7 +2833,11 @@ fun StatusLegendChip(label: String, color: Color) {
 
 // 4. Analytics Screen Component — Unified Dine-In & Delivery Dashboard
 @Composable
-fun AnalyticsScreenView(analytics: AnalyticsData, isMasterAdmin: Boolean = false) {
+fun AnalyticsScreenView(
+    analytics: AnalyticsData,
+    isMasterAdmin: Boolean = false,
+    onBackToAdmin: (() -> Unit)? = null
+) {
     val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
@@ -2759,6 +2846,33 @@ fun AnalyticsScreenView(analytics: AnalyticsData, isMasterAdmin: Boolean = false
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
+        if (onBackToAdmin != null) {
+            Surface(
+                onClick = onBackToAdmin,
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFF1F5F9),
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back to Admin Orders",
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Back to Admin Orders",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+            }
+        }
         if (isMasterAdmin) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -3764,7 +3878,8 @@ fun AdminMenuManagementScreenView(
     database: com.restaurant.mobile.delivery.RestroSqlDatabase,
     onShowToast: (String) -> Unit,
     catalog: com.restaurant.mobile.delivery.Catalog? = null,
-    deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel? = null
+    deliveryVm: com.restaurant.mobile.delivery.DeliveryViewModel? = null,
+    onBackToAdmin: (() -> Unit)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -3814,6 +3929,33 @@ fun AdminMenuManagementScreenView(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (onBackToAdmin != null) {
+            Surface(
+                onClick = onBackToAdmin,
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFF1F5F9),
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back to Admin Orders",
+                        tint = Color(0xFF0F172A),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "Back to Admin Orders",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                }
+            }
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(restaurants, key = { it.id }) { rest ->
                 FilterChip(
@@ -3977,6 +4119,7 @@ fun AdminMenuManagementScreenView(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(filteredDishes, key = { it.id }) { dish ->

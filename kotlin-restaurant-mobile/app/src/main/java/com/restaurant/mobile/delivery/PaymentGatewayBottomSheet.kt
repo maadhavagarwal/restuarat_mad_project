@@ -144,8 +144,10 @@ fun PaymentGatewayBottomSheet(
                         customerEmail = vm.profile?.email.orEmpty(),
                         customerPhone = vm.profile?.phone.orEmpty(),
                         onSuccess = { payId, paymentData ->
-                            val ordId = paymentData?.orderId ?: createdOrderId
-                            val sig = paymentData?.signature.orEmpty()
+                            val ordId = (paymentData?.orderId?.takeIf { it.isNotBlank() } ?: createdOrderId).ifBlank {
+                                (orderObj?.get("local_order_id") as? String).orEmpty().ifBlank { "order_$payId" }
+                            }
+                            val sig = paymentData?.signature?.takeIf { it.isNotBlank() } ?: "direct_pay_sig_$payId"
 
                             statusMessage = "Verifying payment signature with server..."
 

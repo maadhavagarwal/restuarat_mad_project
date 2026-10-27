@@ -47,7 +47,9 @@ fun AdminOrdersScreenView(
     database: RestroSqlDatabase,
     cloudEngine: FirebaseCloudEngine? = null,
     deliveryVm: DeliveryViewModel? = null,
-    onShowToast: (String) -> Unit
+    onShowToast: (String) -> Unit,
+    onNavigateToMenu: (() -> Unit)? = null,
+    onNavigateToSales: (() -> Unit)? = null
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -179,6 +181,87 @@ fun AdminOrdersScreenView(
                     contentDescription = "Refresh",
                     tint = if (isRefreshing) Color(0xFFC2410C) else Color(0xFF0F172A)
                 )
+            }
+        }
+
+        // Quick Direct Access to Menu & Prices and Total Sales
+        if (onNavigateToMenu != null || onNavigateToSales != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (onNavigateToMenu != null) {
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onNavigateToMenu() },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFFEF2F2),
+                        border = BorderStroke(1.dp, Color(0xFFFECACA))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.MenuBook,
+                                contentDescription = "Menu & Prices",
+                                tint = Color(0xFFDC2626),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    "Menu & Prices",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF991B1B)
+                                )
+                                Text(
+                                    "Edit dishes & rates",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFFB91C1C)
+                                )
+                            }
+                        }
+                    }
+                }
+                if (onNavigateToSales != null) {
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onNavigateToSales() },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFEFF6FF),
+                        border = BorderStroke(1.dp, Color(0xFFBFDBFE))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.TrendingUp,
+                                contentDescription = "Total Sales",
+                                tint = Color(0xFF2563EB),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    "Total Sales",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF1E40AF)
+                                )
+                                Text(
+                                    "Revenue & Analytics",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF3B82F6)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 

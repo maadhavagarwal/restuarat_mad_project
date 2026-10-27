@@ -32,8 +32,8 @@ object MockCatalog {
         restaurants = listOf(
             Restaurant(
                 id = "rest-1",
-                name = "Bistro LumiÃ¨re & Biryani",
-                cuisine = "Awadhi Â· Mughlai Â· Biryani",
+                name = "Bistro Lumière & Biryani",
+                cuisine = "Awadhi · Mughlai · Biryani",
                 description = "Artisanal dum cooked biryanis and royal kebabs with slow-cooked aromatic spices.",
                 image = "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=800&auto=format&fit=crop",
                 address = "SV Road, Near Station, Goregaon West, Mumbai",
@@ -132,7 +132,7 @@ object MockCatalog {
             )
         ),
         dishes = listOf(
-            // Restaurant 1: Bistro LumiÃ¨re & Biryani
+            // Restaurant 1: Bistro Lumière & Biryani
             Dish(
                 id = "dish-1",
                 restaurantId = "rest-1",
@@ -2792,7 +2792,7 @@ var reviews by mutableStateOf<List<Review>>(emptyList())
         if (fromOrders.isNotEmpty()) return fromOrders.take(6)
 
         return catalog.dishes.take(5).map { dish ->
-            val restName = catalog.restaurants.find { it.id == dish.restaurantId }?.name ?: "Bistro LumiÃ¨re"
+            val restName = catalog.restaurants.find { it.id == dish.restaurantId }?.name ?: "Bistro Lumière"
             Pair(dish, restName)
         }
     }

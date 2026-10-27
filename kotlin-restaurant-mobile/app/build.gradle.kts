@@ -35,7 +35,9 @@ android {
         val rzpKey = providers.gradleProperty("RAZORPAY_KEY_ID").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_ID") ?: System.getenv("RAZORPAY_KEY_ID") ?: "rzp_test_TsoUycZ6YiDeDi"
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiKey\"")
+        val rzpSecret = providers.gradleProperty("RAZORPAY_KEY_SECRET").orNull ?: restroLocalProperties.getProperty("RAZORPAY_KEY_SECRET") ?: System.getenv("RAZORPAY_KEY_SECRET") ?: "ytfxsjaKtZFvZNqSzoCSHFBX"
         buildConfigField("String", "RAZORPAY_KEY_ID", "\"$rzpKey\"")
+        buildConfigField("String", "RAZORPAY_KEY_SECRET", "\"$rzpSecret\"")
         // Firebase is only treated as configured when google-services.json exists and does not
         // contain the known placeholder OAuth client IDs. A placeholder config makes every Firebase
         // call fail at runtime, so the app must not pretend phone auth / Firestore are available.
@@ -57,8 +59,18 @@ android {
         }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("debug")
             buildConfigField("String", "API_URL", "\"$restroDebugApiUrl\"" )
         }
         release {

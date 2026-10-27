@@ -40,7 +40,10 @@ object RazorpayCheckoutLauncher {
                 put("description", description.ifBlank { "Order Payment" })
                 put("currency", "INR")
                 put("amount", amountInPaise)
-                if (orderId.isNotBlank()) {
+                // Only pass order_id if it is an authentic Razorpay cloud order (starts with "order_", exactly 20 chars, no hyphens)
+                // Passing a fake/local UUID order ID causes Razorpay SDK to query api.razorpay.com and crash with Checkout.NETWORK_ERROR
+                val isAuthenticCloudOrder = orderId.isNotBlank() && orderId.startsWith("order_") && !orderId.contains("-") && orderId.length == 20
+                if (isAuthenticCloudOrder) {
                     put("order_id", orderId)
                 }
 

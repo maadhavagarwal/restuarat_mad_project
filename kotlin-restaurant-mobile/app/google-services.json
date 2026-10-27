@@ -1,33 +1,41 @@
 {
   "project_info": {
-    "project_number": "303645052740",
-    "project_id": "restro-42877",
-    "storage_bucket": "restro-42877.firebasestorage.app"
+    "project_number": "829626159270",
+    "project_id": "restro-live",
+    "storage_bucket": "restro-live.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:303645052740:android:b276b26328ed13927b9111",
+        "mobilesdk_app_id": "1:829626159270:android:eef5d156ddef51109ce467",
         "android_client_info": {
           "package_name": "com.restaurant.mobile"
         }
       },
       "oauth_client": [
         {
-          "client_id": "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com",
+          "client_id": "829626159270-rpu27dblpg6uni9b498o4vitjjnjti10.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.restaurant.mobile",
+            "certificate_hash": "a3fd11ceb85204f4173501b5955d5edbb8cc6ff0"
+          }
+        },
+        {
+          "client_id": "829626159270-gqdg4ijtu085eqltsiq6khj0m5e1e06v.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyBWvRxpife0G_uFRl2B4-www8yCakX3SRE"
+          "current_key": "AIzaSyBu-8ZC133TV2muu1mzXCY0lfT2mYmaJLQ"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "303645052740-745d4342lb4qs1uiqums8saom2tfkp56.apps.googleusercontent.com",
+              "client_id": "829626159270-gqdg4ijtu085eqltsiq6khj0m5e1e06v.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

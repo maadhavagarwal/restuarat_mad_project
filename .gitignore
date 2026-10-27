@@ -40,3 +40,4 @@ starter.zip
 
 backend/uploads/
 .kotlin/
+*_dump.xml
