@@ -450,14 +450,17 @@ fun PaymentGatewayBottomSheet(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Icon(Icons.Default.Lock, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
                                     Text(
                                         text = if (processingState == PaymentProcessingState.FAILED) "Retry with Razorpay" else "Pay ₹${"%.2f".format(effectiveTotal / 100.0)} via Razorpay",
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 15.sp,
-                                        color = Color.White
+                                        color = Color.White,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 }
                             }

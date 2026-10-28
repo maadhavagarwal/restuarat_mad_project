@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -96,7 +97,7 @@ fun AdminOrdersScreenView(
         allOrders.count { it.status.equals("Ready", ignoreCase = true) }
     }
     val outCount = remember(allOrders) {
-        allOrders.count { it.status.equals("Out for delivery", ignoreCase = true) || it.status.equals("Accepted", ignoreCase = true) }
+        allOrders.count { it.status.equals("Out for delivery", ignoreCase = true) || it.status.equals("Accepted", ignoreCase = true) || it.status.equals("Handed over", ignoreCase = true) }
     }
     val deliveredCount = remember(allOrders) {
         allOrders.count { it.status.equals("Delivered", ignoreCase = true) }
@@ -112,7 +113,7 @@ fun AdminOrdersScreenView(
                 AdminOrderStatusFilter.NEW -> order.status.equals("Placed", ignoreCase = true) || order.status.equals("Confirmed", ignoreCase = true)
                 AdminOrderStatusFilter.PREPARING -> order.status.equals("Preparing", ignoreCase = true)
                 AdminOrderStatusFilter.READY -> order.status.equals("Ready", ignoreCase = true)
-                AdminOrderStatusFilter.OUT_FOR_DELIVERY -> order.status.equals("Out for delivery", ignoreCase = true) || order.status.equals("Accepted", ignoreCase = true)
+                AdminOrderStatusFilter.OUT_FOR_DELIVERY -> order.status.equals("Out for delivery", ignoreCase = true) || order.status.equals("Accepted", ignoreCase = true) || order.status.equals("Handed over", ignoreCase = true)
                 AdminOrderStatusFilter.DELIVERED -> order.status.equals("Delivered", ignoreCase = true)
                 AdminOrderStatusFilter.CANCELLED -> order.status.equals("Cancelled", ignoreCase = true) || order.status.equals("Canceled", ignoreCase = true)
             }
@@ -505,6 +506,7 @@ private fun AdminOrderCardItem(
         "placed", "confirmed", "pending" -> Color(0xFFD97706)
         "preparing" -> Color(0xFF2563EB)
         "ready" -> Color(0xFF7C3AED)
+        "handed over" -> Color(0xFFEA580C)
         "accepted", "out for delivery" -> Color(0xFF059669)
         "delivered" -> Color(0xFF10B981)
         else -> Color(0xFF64748B)
@@ -514,6 +516,7 @@ private fun AdminOrderCardItem(
         "placed", "confirmed", "pending" -> Color(0xFFFEF3C7)
         "preparing" -> Color(0xFFDBEAFE)
         "ready" -> Color(0xFFEDE9FE)
+        "handed over" -> Color(0xFFFFEDD5)
         "accepted", "out for delivery" -> Color(0xFFD1FAE5)
         "delivered" -> Color(0xFFECFDF5)
         else -> Color(0xFFF1F5F9)
@@ -735,12 +738,18 @@ private fun AdminOrderCardItem(
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
-                            modifier = Modifier.weight(1.5f),
+                            modifier = Modifier.weight(1.5f).heightIn(min = 42.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Icon(Icons.Default.SoupKitchen, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Accept & Send to KDS", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.SoupKitchen, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Accept & Send to KDS", fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            }
                         }
 
                         OutlinedButton(
@@ -754,12 +763,20 @@ private fun AdminOrderCardItem(
                                     }
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).heightIn(min = 42.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFDC2626)),
                             border = BorderStroke(1.dp, Color(0xFFDC2626))
                         ) {
-                            Text("Reject", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.Close, null, tint = Color(0xFFDC2626), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Reject", fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            }
                         }
                     }
 
@@ -780,36 +797,72 @@ private fun AdminOrderCardItem(
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7C3AED)),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Icon(Icons.Default.DoneAll, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Mark Food Ready (Packed)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.DoneAll, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Mark Food Ready (Packed)", fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            }
                         }
                     }
 
                     "ready" -> {
-                        // 3. Handover to Rider (Mark Out for Delivery)
+                        // 3. Handover to Rider (Awaiting Rider Pickup)
                         Button(
                             onClick = {
                                 coroutineScope.launch(Dispatchers.IO) {
-                                    database.updateOrderStatus(order.id, "Out for delivery")
-                                    cloudEngine?.updateOrderStatusInCloud(order.id, "Out for delivery")
-                                    deliveryVm?.notifyOrderPickedUp(order.id, order.riderId)
+                                    database.updateOrderStatus(order.id, "Handed over")
+                                    cloudEngine?.updateOrderStatusInCloud(order.id, "Handed over")
                                     withContext(Dispatchers.Main) {
                                         onRefreshRequested()
-                                        onShowToast("Order #${order.id} dispatched! Out for delivery with ${order.riderName.ifBlank { "Rider" }}.")
+                                        onShowToast("Order #${order.id} handed over to ${order.riderName.ifBlank { "Rider" }}! Awaiting rider pickup confirmation.")
                                     }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Icon(Icons.Default.DeliveryDining, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Handover to Rider (Out for Delivery)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.DeliveryDining, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Handover to Rider", fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            }
+                        }
+                    }
+
+                    "handed over" -> {
+                        Surface(
+                            color = Color(0xFFFEF3C7),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color(0xFFFDE68A)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.HourglassTop, null, tint = Color(0xFFB45309), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "Handed over to Rider • Awaiting Rider Pickup Confirmation",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF92400E),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
                     }
 
@@ -827,14 +880,20 @@ private fun AdminOrderCardItem(
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF10B981)),
                             border = BorderStroke(1.dp, Color(0xFF10B981))
                         ) {
-                            Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Admin Confirm: Delivered", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Admin Confirm: Delivered", fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            }
                         }
                     }
 

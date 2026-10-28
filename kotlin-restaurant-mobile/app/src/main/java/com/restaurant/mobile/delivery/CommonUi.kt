@@ -39,9 +39,15 @@ fun Action(label: String, enabled: Boolean = true, action: () -> Unit) {
         onClick = action,
         enabled = enabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         shape = RoundedCornerShape(16.dp),
     ) {
-        Text(label, fontWeight = FontWeight.Bold)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text(label, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
     }
 }
 

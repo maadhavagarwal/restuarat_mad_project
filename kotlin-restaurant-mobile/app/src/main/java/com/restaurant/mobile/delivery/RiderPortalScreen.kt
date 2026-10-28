@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,6 +67,7 @@ fun RiderPortalScreenView(
     var liveDynamicEtaMins by remember { mutableIntStateOf(0) }
     var isWithin500m by remember { mutableStateOf(false) }
     var isOrderPickedUp by rememberSaveable { mutableStateOf(false) }
+    var activeOrderStatus by remember { mutableStateOf<String?>(null) }
     val appContext = LocalContext.current
 
     val openGoogleMapsDirections: (Double, Double, String) -> Unit = { latitude, longitude, destinationName ->
@@ -161,14 +163,15 @@ fun RiderPortalScreenView(
             val allOrders = database.getAllOrders()
             val ongoingOrder = allOrders.firstOrNull {
                 val notDone = !it.status.equals("Delivered", ignoreCase = true) && !it.status.equals("Cancelled", ignoreCase = true)
-                val matchesRider = it.riderId == riderId || it.riderId.isBlank() || riderId in listOf("staff-rider-1", "rider-103") || it.riderId in listOf("rider-103", "rider-101", "rider-102", "rider-104")
-                val isAcceptedOrOut = it.status.equals("Accepted", ignoreCase = true) || it.status.equals("Out for delivery", ignoreCase = true)
-                notDone && matchesRider && isAcceptedOrOut
+                val matchesRider = it.riderId == riderId || (riderId == "staff-rider-1" && it.riderId in listOf("staff-rider-1", "rider-103")) || (riderId == "rider-103" && it.riderId in listOf("rider-103", "staff-rider-1"))
+                val isExplicitlyAssignedToMe = it.riderId.isNotBlank() && matchesRider
+                val isAcceptedOrOut = it.status.equals("Accepted", ignoreCase = true) || it.status.equals("Handed over", ignoreCase = true) || it.status.equals("Out for delivery", ignoreCase = true)
+                notDone && (isExplicitlyAssignedToMe || isAcceptedOrOut)
             }
             withContext(Dispatchers.Main) {
                 completedRides = rides
                 payouts = payoutList
-                availableOffers = offers
+                availableOffers = offers.filter { it.orderId != ongoingOrder?.id }
                 partnerVerification = verification
                 if (ongoingOrder != null) {
                     activeRideOffer = RiderRideOffer(
@@ -182,9 +185,11 @@ fun RiderPortalScreenView(
                         estimatedMinutes = 12,
                         riderIncomeRupees = 65L
                     )
+                    activeOrderStatus = ongoingOrder.status
                     isOrderPickedUp = ongoingOrder.status.equals("Out for delivery", ignoreCase = true)
                 } else if (activeRideOffer != null && allOrders.find { it.id == activeRideOffer?.orderId }?.status?.equals("Delivered", ignoreCase = true) == true) {
                     activeRideOffer = null
+                    activeOrderStatus = null
                     isOrderPickedUp = false
                 }
             }
@@ -785,7 +790,35 @@ fun RiderPortalScreenView(
                             modifier = Modifier.padding(vertical = 4.dp)
                         )
 
+                        val isHandedOver = activeOrderStatus?.equals("Handed over", ignoreCase = true) == true ||
+                                activeOrderStatus?.equals("Out for delivery", ignoreCase = true) == true
+
                         if (!isOrderPickedUp) {
+                            if (!isHandedOver) {
+                                Surface(
+                                    color = Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Default.HourglassBottom, null, tint = Color(0xFFFBBF24), modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "Waiting for Restaurant Handover • Food being packed",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFFBBF24),
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+
                             // STAGE 1: Navigate to Restaurant & Mark Picked Up
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -795,19 +828,26 @@ fun RiderPortalScreenView(
                                     onClick = {
                                         openGoogleMapsDirections(restLat, restLng, active.restaurantName)
                                     },
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF38BDF8)),
                                     border = BorderStroke(1.dp, Color(0xFF38BDF8)),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Navigation, null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(RestroI18n.t("rider_open_maps"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Default.Navigation, null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(RestroI18n.t("rider_open_maps"), fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                    }
                                 }
 
                                 Button(
                                     onClick = {
                                         isOrderPickedUp = true
+                                        activeOrderStatus = "Out for delivery"
                                         deliveryVm?.notifyOrderPickedUp(active.orderId, riderId)
                                         coroutineScope.launch(Dispatchers.IO) {
                                             database.updateOrderStatus(active.orderId, "Out for delivery")
@@ -816,13 +856,34 @@ fun RiderPortalScreenView(
                                         onShowToast("Order #${active.orderId} picked up! Opening Google Maps to customer...")
                                         openGoogleMapsDirections(dropLat, dropLng, active.dropAddress)
                                     },
-                                    modifier = Modifier.weight(1.3f),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
+                                    enabled = isHandedOver,
+                                    modifier = Modifier.weight(1.3f).heightIn(min = 44.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFC2410C),
+                                        disabledContainerColor = Color(0xFF334155)
+                                    ),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.ShoppingBag, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(RestroI18n.t("rider_mark_picked_up"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isHandedOver) Icons.Default.ShoppingBag else Icons.Default.HourglassTop,
+                                            contentDescription = null,
+                                            tint = if (isHandedOver) Color.White else Color(0xFF94A3B8),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = if (isHandedOver) RestroI18n.t("rider_mark_picked_up") else "Awaiting Handover",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isHandedOver) Color.White else Color(0xFF94A3B8),
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
                                 }
                             }
                         } else {
@@ -835,14 +896,20 @@ fun RiderPortalScreenView(
                                     onClick = {
                                         openGoogleMapsDirections(dropLat, dropLng, active.dropAddress)
                                     },
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF34D399)),
                                     border = BorderStroke(1.dp, Color(0xFF34D399)),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Navigation, null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(RestroI18n.t("rider_open_maps"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Default.Navigation, null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(RestroI18n.t("rider_open_maps"), fontSize = 11.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                    }
                                 }
 
                                 Button(
@@ -867,19 +934,26 @@ fun RiderPortalScreenView(
                                             deliveryVm?.riderDispatchEngine?.releaseRider(riderId)
                                             withContext(Dispatchers.Main) {
                                                 activeRideOffer = null
+                                                activeOrderStatus = null
                                                 isOrderPickedUp = false
                                                 refreshRiderData()
                                                 onShowToast("Delivery #${active.orderId} completed! +₹${active.riderIncomeRupees} credited.")
                                             }
                                         }
                                     },
-                                    modifier = Modifier.weight(1.4f),
+                                    modifier = Modifier.weight(1.4f).heightIn(min = 44.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.TaskAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(RestroI18n.t("rider_complete_order"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(Icons.Default.TaskAlt, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(RestroI18n.t("rider_complete_order"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
+                                    }
                                 }
                             }
                         }
@@ -1091,22 +1165,30 @@ fun RiderPortalScreenView(
                                         }
                                     }
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).heightIn(min = 42.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                 shape = RoundedCornerShape(10.dp),
                                 border = BorderStroke(1.dp, Color(0xFFEF4444))
                             ) {
-                                Icon(Icons.Default.Close, null, tint = Color(0xFFEF4444), modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = RestroI18n.t("rider_reject_ride"),
-                                    color = Color(0xFFEF4444),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(Icons.Default.Close, null, tint = Color(0xFFEF4444), modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = RestroI18n.t("rider_reject_ride"),
+                                        color = Color(0xFFEF4444),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             }
                             Button(
                                 onClick = {
                                     activeRideOffer = offer
+                                    activeOrderStatus = "Accepted"
                                     isOrderPickedUp = false
                                     liveRemainingKm = offer.distanceKm
                                     liveDynamicEtaMins = offer.estimatedMinutes
@@ -1139,18 +1221,25 @@ fun RiderPortalScreenView(
                                     openGoogleMapsDirections(restLat, restLng, offer.restaurantName)
                                     onShowToast("Ride accepted! Opening Google Maps directions to ${offer.restaurantName}...")
                                 },
-                                modifier = Modifier.weight(1.4f),
+                                modifier = Modifier.weight(1.4f).heightIn(min = 42.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC2410C)),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
-                                Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    text = RestroI18n.t("rider_accept_ride"),
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = RestroI18n.t("rider_accept_ride"),
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             }
                         }
                     }

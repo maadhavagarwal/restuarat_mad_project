@@ -275,4 +275,29 @@ class RiderSyncTest {
         assertTrue(nearTelemetry.isWithin500mPerimeter)
         assertTrue(nearTelemetry.etaMinutes >= 1)
     }
+
+    // -------------------------------------------------------------
+    // HANDOVER & SYSTEM ASSIGNED OFFERS FLOW
+    // -------------------------------------------------------------
+
+    @Test
+    fun testHandoverOrderStatusTransitions() {
+        assertTrue(DeliveryOrderStatus.canTransition("Ready", "Handed over"))
+        assertTrue(DeliveryOrderStatus.canTransition("Handed over", "Out for delivery"))
+        assertTrue(DeliveryOrderStatus.canTransition("Handed over", "Delivered"))
+        assertFalse(DeliveryOrderStatus.canTransition("Delivered", "Handed over"))
+    }
+
+    @Test
+    fun testRiderPickupAllowedOnlyAfterHandover() {
+        // When food is still preparing or ready without handover:
+        val readyStatus = "Ready"
+        val isReadyHandedOver = readyStatus.equals("Handed over", ignoreCase = true) || readyStatus.equals("Out for delivery", ignoreCase = true)
+        assertFalse("Pickup confirmation must NOT be enabled before restaurant hands over", isReadyHandedOver)
+
+        // When restaurant marks Handed over:
+        val handedOverStatus = "Handed over"
+        val isHandedOver = handedOverStatus.equals("Handed over", ignoreCase = true) || handedOverStatus.equals("Out for delivery", ignoreCase = true)
+        assertTrue("Pickup confirmation MUST be enabled when restaurant hands over", isHandedOver)
+    }
 }

@@ -4323,9 +4323,9 @@ fun updateOrderStatus(orderId: String, newStatus: String): Boolean {
                 !it.status.equals("Delivered", ignoreCase = true) &&
                 !it.status.equals("Cancelled", ignoreCase = true) &&
                 !it.status.equals("Out for delivery", ignoreCase = true) &&
+                !it.status.equals("Handed over", ignoreCase = true) &&
                 !it.id.startsWith("ORD-SEED") &&
-                (it.riderId.isBlank() || it.riderId == riderId || riderId in listOf("staff-rider-1", "rider-103") || it.riderId in listOf("rider-103", "staff-rider-1") ||
-                 it.status in listOf("Placed", "Confirmed", "Preparing", "Ready", "Accepted"))
+                it.riderId.isBlank()
             }
             .mapIndexed { idx, order ->
                 val distKm = ((idx + 2) * 1.3).let { Math.round(it * 10.0) / 10.0 }

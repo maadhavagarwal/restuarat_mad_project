@@ -415,16 +415,18 @@ object DeliveryOrderStatus {
     const val PREPARING = "Preparing"
     const val READY = "Ready"
     const val ACCEPTED = "Accepted"
+    const val HANDED_OVER = "Handed over"
     const val OUT_FOR_DELIVERY = "Out for delivery"
     const val DELIVERED = "Delivered"
     const val CANCELLED = "Cancelled"
 
     private val allowed = mapOf(
-        PLACED to setOf(CONFIRMED, PREPARING, CANCELLED),
+        PLACED to setOf(CONFIRMED, PREPARING, READY, ACCEPTED, CANCELLED),
         CONFIRMED to setOf(PREPARING, READY, ACCEPTED, CANCELLED),
-        PREPARING to setOf(READY, ACCEPTED, OUT_FOR_DELIVERY, CANCELLED),
-        READY to setOf(ACCEPTED, OUT_FOR_DELIVERY),
-        ACCEPTED to setOf(OUT_FOR_DELIVERY, DELIVERED),
+        PREPARING to setOf(READY, ACCEPTED, HANDED_OVER, OUT_FOR_DELIVERY, CANCELLED),
+        READY to setOf(ACCEPTED, HANDED_OVER, OUT_FOR_DELIVERY, CANCELLED),
+        ACCEPTED to setOf(HANDED_OVER, OUT_FOR_DELIVERY, DELIVERED),
+        HANDED_OVER to setOf(OUT_FOR_DELIVERY, DELIVERED, CANCELLED),
         OUT_FOR_DELIVERY to setOf(DELIVERED),
         DELIVERED to emptySet(),
         CANCELLED to emptySet(),
